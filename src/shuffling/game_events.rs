@@ -15,6 +15,50 @@ use super::{
     unified_shuffler::UnifiedShuffleProof,
 };
 
+/// Summary of a shuffle proof for display purposes
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShuffleProofSummary {
+    /// First 2 elements of BayerGroth c_rows commitments (as hex strings)
+    pub bg_c_rows_snippet: Vec<String>,
+    /// First 2 elements of BayerGroth c_cols commitments (as hex strings)
+    pub bg_c_cols_snippet: Vec<String>,
+    /// First 2 elements of BayerGroth response values (as hex strings)
+    pub bg_resp_snippet: Vec<String>,
+    /// Whether RS Groth16 proof is present
+    pub has_rs_groth16: bool,
+    /// Number of total proof elements
+    pub total_elements: usize,
+}
+
+/// Summary of a ChaumPedersen proof for display
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChaumPedersenSummary {
+    /// T_g commitment (truncated hex)
+    pub t_g_hex: String,
+    /// T_h commitment (truncated hex)
+    pub t_h_hex: String,
+    /// Response z (truncated hex)
+    pub z_hex: String,
+}
+
+/// Summary of blinding contribution for display
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlindingContributionSummary {
+    /// ChaumPedersen proof summary
+    pub proof: ChaumPedersenSummary,
+    /// Whether contribution is verified
+    pub verified: bool,
+}
+
+/// Summary of unblinding share for display
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UnblindingShareSummary {
+    /// Share value (truncated hex)
+    pub share_hex: String,
+    /// Index of the share
+    pub index: usize,
+}
+
 /// Main event enum encompassing all shuffler-related game events
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ShufflerGameEvent<C: CurveGroup> {
@@ -78,6 +122,9 @@ pub struct ShuffleAndEncryptEvent<C: CurveGroup> {
     /// Zero-knowledge proof of correct shuffle (stored as bytes for serialization)
     #[serde(skip)]
     pub shuffle_proof: Option<UnifiedShuffleProof>,
+    
+    /// Summary of the shuffle proof for display
+    pub proof_summary: Option<ShuffleProofSummary>,
 
     /// Hash of the input deck for verification
     pub input_deck_hash: [u8; 32],
@@ -104,6 +151,9 @@ pub struct PlayerBlindingContributionEvent<C: CurveGroup> {
     /// The blinding contribution with proof
     #[serde(skip, default = "default_blinding_contribution")]
     pub blinding_contribution: PlayerTargetedBlindingContribution<C>,
+    
+    /// Summary of the blinding contribution for display
+    pub contribution_summary: Option<BlindingContributionSummary>,
 
     /// Aggregated public key used
     #[serde(skip)]
@@ -155,6 +205,9 @@ pub struct UnblindingShareEvent<C: CurveGroup> {
     /// The partial unblinding share
     #[serde(skip, default = "default_unblinding_share")]
     pub unblinding_share: PartialUnblindingShare<C>,
+    
+    /// Summary of the unblinding share for display
+    pub share_summary: Option<UnblindingShareSummary>,
 
     /// Optional Chaum-Pedersen proof for the unblinding share
     /// (can be added for additional verification)

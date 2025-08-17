@@ -216,7 +216,7 @@ impl GameManager {
 
         let game = self.games.get_mut(&game_id).ok_or("Game not found")?;
         game.phase = GamePhase::Shuffling;
-        
+
         // Get aggregated public key for encryption
         let aggregated_public_key = game.aggregated_public_key;
 
@@ -228,12 +228,11 @@ impl GameManager {
             tracing::info!(target: "game_manager", "Shuffler {} starting shuffle", idx);
 
             // Use shuffle_and_encrypt_with_key to ensure aggregated key is used
-            let (shuffled_deck, proof) = shuffler
-                .shuffle_and_encrypt_with_key(
-                    &mut thread_rng(),
-                    current_deck.clone(),
-                    aggregated_public_key,
-                )?;
+            let (shuffled_deck, proof) = shuffler.shuffle_and_encrypt_with_key(
+                &mut thread_rng(),
+                current_deck.clone(),
+                aggregated_public_key,
+            )?;
 
             // Log the event
             if let Some(db_client) = &shuffler.db_client {
@@ -244,10 +243,11 @@ impl GameManager {
                     shuffler_public_key: shuffler.public_key().into(),
                     output_deck: shuffled_deck.clone(),
                     shuffle_proof: Some(proof),
+                    proof_summary: None, // Summary is populated in shuffler_service
                     input_deck_hash: hash_deck(&current_deck)?,
                     timestamp: chrono::Utc::now().timestamp() as u64,
                 };
-                
+
                 let params = AppendParams {
                     room_id: game.room_id,
                     actor_type: ActorType::Shuffler,
@@ -257,7 +257,7 @@ impl GameManager {
                     correlation_id: Some(hex::encode(game_id)),
                     idempotency_key: None,
                 };
-                
+
                 db_client.append_to_transcript(params).await?;
             }
 
@@ -543,7 +543,7 @@ fn create_initial_deck() -> Vec<ElGamalCiphertext<G1Projective>> {
         // Initial deck starts unencrypted (r = 0)
         // The shufflers will add encryption layers during shuffling
         let c1 = G1Projective::zero(); // c1 = 0 (no encryption yet)
-        let c2 = msg.into();           // c2 = g^m (just the message)
+        let c2 = msg.into(); // c2 = g^m (just the message)
 
         deck.push(ElGamalCiphertext::<G1Projective> { c1, c2 });
     }
