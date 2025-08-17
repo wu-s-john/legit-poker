@@ -1,7 +1,13 @@
 //! Shuffler service for managing card shuffling operations
 
+use crate::domain::{ActorType, AppendParams, RoomId};
+use crate::player_service::DatabaseClient;
 use crate::shuffling::{
     data_structures::ElGamalCiphertext,
+    game_events::{
+        PlayerBlindingContributionEvent, ShuffleAndEncryptEvent,
+        UnblindingShareEvent,
+    },
     player_decryption::{
         combine_blinding_contributions_for_player, generate_committee_decryption_share,
         PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
@@ -11,14 +17,21 @@ use crate::shuffling::{
 use ark_bn254::{Fr, G1Affine, G1Projective};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::UniformRand;
+use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{CryptoRng, Rng, RngCore};
+use chrono::Utc;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
 /// Shuffler service that manages shuffling operations
 pub struct ShufflerService {
+    pub id: String,
+    pub game_id: Option<[u8; 32]>,
     setup: Arc<UnifiedShufflerSetup>,
     secret_key: Fr,
     public_key: G1Affine,
+    db_client: Option<Arc<dyn DatabaseClient>>,
 }
 
 impl ShufflerService {
@@ -35,9 +48,53 @@ impl ShufflerService {
         let setup = unified_shuffler::setup_unified_shuffler(rng)?;
 
         Ok(Self {
+            id: format!("shuffler_{}", hex::encode(public_key.to_string().as_bytes())),
+            game_id: None,
             setup: Arc::new(setup),
             secret_key,
             public_key,
+            db_client: None,
+        })
+    }
+
+    /// Create with database connection and shared setup
+    pub fn new_with_db<R: Rng + RngCore + CryptoRng>(
+        rng: &mut R,
+        shuffler_id: String,
+        game_id: [u8; 32],
+        setup: Arc<UnifiedShufflerSetup>,
+        db_client: Arc<dyn DatabaseClient>,
+        secret_key: Option<Fr>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let secret_key = secret_key.unwrap_or_else(|| Fr::rand(rng));
+        let public_key = (G1Affine::generator() * secret_key).into_affine();
+
+        Ok(Self {
+            id: shuffler_id,
+            game_id: Some(game_id),
+            setup,
+            secret_key,
+            public_key,
+            db_client: Some(db_client),
+        })
+    }
+
+    /// Create with existing setup (for GameManager)
+    pub fn new_with_setup<R: Rng + RngCore + CryptoRng>(
+        rng: &mut R,
+        secret_key: Option<Fr>,
+        setup: Arc<UnifiedShufflerSetup>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let secret_key = secret_key.unwrap_or_else(|| Fr::rand(rng));
+        let public_key = (G1Affine::generator() * secret_key).into_affine();
+
+        Ok(Self {
+            id: format!("shuffler_{}", hex::encode(public_key.to_string().as_bytes())),
+            game_id: None,
+            setup,
+            secret_key,
+            public_key,
+            db_client: None,
         })
     }
 
@@ -156,6 +213,156 @@ impl ShufflerService {
     pub fn get_metrics(proof: &UnifiedShuffleProof) -> ProofGenerationMetrics {
         proof.metrics.clone()
     }
+
+    /// Shuffle and encrypt with database logging
+    pub async fn shuffle_and_encrypt_with_logging<R: Rng + RngCore + CryptoRng>(
+        &self,
+        rng: &mut R,
+        input_deck: Vec<ElGamalCiphertext<G1Projective>>,
+        shuffler_index: usize,
+        room_id: RoomId,
+    ) -> Result<
+        (Vec<ElGamalCiphertext<G1Projective>>, UnifiedShuffleProof),
+        Box<dyn std::error::Error>,
+    > {
+        // Perform the shuffle
+        let (output_deck, proof) = self.shuffle_and_encrypt(rng, input_deck.clone())?;
+
+        // Create shuffle event if we have a database client
+        if let (Some(_db_client), Some(game_id)) = (&self.db_client, self.game_id) {
+            let event = ShuffleAndEncryptEvent {
+                game_id,
+                shuffler_index,
+                shuffler_public_key: self.public_key.into(),
+                output_deck: output_deck.clone(),
+                shuffle_proof: Some(proof.clone()),
+                input_deck_hash: hash_deck(&input_deck)?,
+                timestamp: Utc::now().timestamp() as u64,
+            };
+
+            // Write to database
+            self.write_to_database(room_id, "shuffle_and_encrypt", event)
+                .await?;
+        }
+
+        Ok((output_deck, proof))
+    }
+
+    /// Generate blinding contribution with database logging
+    pub async fn generate_blinding_with_logging(
+        &self,
+        aggregated_public_key: G1Projective,
+        player_public_key: G1Projective,
+        player_id: String,
+        card_indices: Vec<usize>,
+        shuffler_index: usize,
+        room_id: RoomId,
+    ) -> Result<PlayerTargetedBlindingContribution<G1Projective>, Box<dyn std::error::Error>> {
+        // Generate contribution
+        let contribution = self.generate_player_blinding_contribution(
+            aggregated_public_key,
+            player_public_key,
+        );
+
+        // Create event if we have a database client
+        if let (Some(_db_client), Some(game_id)) = (&self.db_client, self.game_id) {
+            let player_id_bytes: [u8; 32] = player_id.as_bytes()[..32.min(player_id.len())]
+                .try_into()
+                .unwrap_or([0u8; 32]);
+
+            let event = PlayerBlindingContributionEvent {
+                game_id,
+                player_id: player_id_bytes,
+                card_indices,
+                shuffler_index,
+                blinding_contribution: contribution.clone(),
+                aggregated_public_key,
+                player_public_key,
+                timestamp: Utc::now().timestamp() as u64,
+            };
+
+            // Write to database
+            self.write_to_database(room_id, "blinding_contribution", event)
+                .await?;
+        }
+
+        Ok(contribution)
+    }
+
+    /// Generate unblinding share with database logging
+    pub async fn generate_unblinding_with_logging(
+        &self,
+        encrypted_card: &PlayerAccessibleCiphertext<G1Projective>,
+        member_index: usize,
+        player_id: String,
+        card_indices: Vec<usize>,
+        room_id: RoomId,
+    ) -> Result<PartialUnblindingShare<G1Projective>, Box<dyn std::error::Error>> {
+        // Generate share
+        let share = self.generate_unblinding_share(encrypted_card, member_index);
+
+        // Create event if we have a database client
+        if let (Some(_db_client), Some(game_id)) = (&self.db_client, self.game_id) {
+            let player_id_bytes: [u8; 32] = player_id.as_bytes()[..32.min(player_id.len())]
+                .try_into()
+                .unwrap_or([0u8; 32]);
+
+            let event = UnblindingShareEvent {
+                game_id,
+                player_id: player_id_bytes,
+                card_indices,
+                unblinding_share: share.clone(),
+                unblinding_proof: None,
+                timestamp: Utc::now().timestamp() as u64,
+            };
+
+            // Write to database
+            self.write_to_database(room_id, "unblinding_share", event)
+                .await?;
+        }
+
+        Ok(share)
+    }
+
+    // Helper to write events to database
+    async fn write_to_database<T: Serialize>(
+        &self,
+        room_id: RoomId,
+        event_type: &str,
+        payload: T,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let (Some(db_client), Some(game_id)) = (&self.db_client, self.game_id) {
+            let params = AppendParams {
+                room_id,
+                actor_type: ActorType::Shuffler,
+                actor_id: self.id.clone(),
+                kind: event_type.to_string(),
+                payload: serde_json::to_value(payload)?,
+                correlation_id: Some(hex::encode(game_id)),
+                idempotency_key: None,
+            };
+
+            db_client.append_to_transcript(params).await?;
+        }
+        Ok(())
+    }
+}
+
+/// Hash a deck of cards for verification
+fn hash_deck(
+    deck: &[ElGamalCiphertext<G1Projective>],
+) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let mut hasher = Sha256::new();
+    for card in deck {
+        let mut bytes = Vec::new();
+        card.c1.serialize_compressed(&mut bytes)?;
+        card.c2.serialize_compressed(&mut bytes)?;
+        hasher.update(&bytes);
+    }
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    Ok(hash)
 }
 
 #[cfg(test)]

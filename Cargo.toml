@@ -47,6 +47,7 @@ hex = "0.4.3"
 # Backend dependencies
 tokio = { version = "1.40", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "macros"] }
+async-trait = "0.1"
 tower = { version = "0.5", features = ["timeout"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-native-tls", "macros", "with-chrono", "with-json", "with-uuid"] }
@@ -57,6 +58,12 @@ zeroize = { version = "1.8", features = ["derive"] }
 parking_lot = "0.12"
 dashmap = "6.1"
 dotenv = "0.15"
+
+# Supabase client dependencies
+postgrest = "1.6"
+reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"
+tokio-tungstenite = "0.24"
 
 [dev-dependencies]
 ark-test-curves = { version = "0.5.0", features = ["bls12_381_curve"] }
