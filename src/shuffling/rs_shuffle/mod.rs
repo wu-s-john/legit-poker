@@ -19,7 +19,7 @@ pub mod permutation;
 pub mod witness_preparation;
 
 // Main verification function
-pub use circuit::{rs_shuffle, verify_row_constraints, verify_shuffle_level};
+pub use circuit::{rs_shuffle, rs_shuffle_indices, verify_row_constraints, verify_shuffle_level};
 
 // Data structures
 pub use data_structures::{
@@ -30,4 +30,4 @@ pub use data_structures::{
 pub use witness_preparation::{prepare_witness_data, prepare_witness_data_circuit};
 
 // Main circuit implementation
-pub use circuit::RSShuffleCircuit;
+pub use circuit::{RSShuffleCircuit, RSShuffleIndicesCircuit};

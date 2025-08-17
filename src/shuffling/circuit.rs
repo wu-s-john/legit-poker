@@ -200,6 +200,7 @@ where
 
     /// Verify that the sorted deck is actually sorted in increasing order by random values
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
+    #[allow(dead_code)]
     fn verify_sorting_order(
         &self,
         cs: ConstraintSystemRef<G::BaseField>,

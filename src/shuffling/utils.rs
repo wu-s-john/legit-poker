@@ -3,7 +3,7 @@ use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, Cryptograp
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
 
-const LOG_TARGET: &str = "shuffling::util";
+const _LOG_TARGET: &str = "shuffling::util";
 
 pub fn generate_random_values<F: Absorb + PrimeField>(seed: F, count: usize) -> Vec<F> {
     let config = poseidon_config::<F>();

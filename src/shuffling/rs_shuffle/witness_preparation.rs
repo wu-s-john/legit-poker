@@ -9,7 +9,7 @@ use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 
-const LOG_TARGET: &str = "nova::shuffling::rs_shuffle::witness_preparation";
+const _LOG_TARGET: &str = "nova::shuffling::rs_shuffle::witness_preparation";
 
 /// Main witness preparation function (prover-side)
 pub fn prepare_witness_data<F, const N: usize, const LEVELS: usize>(
@@ -53,7 +53,11 @@ where
     let next_levels: [[SortedRow; N]; LEVELS] = std::array::from_fn(|i| level_results[i].1.clone());
 
     (
-        WitnessData { bits_mat, uns_levels, next_levels },
+        WitnessData {
+            bits_mat,
+            uns_levels,
+            next_levels,
+        },
         num_samples,
     )
 }
@@ -308,7 +312,11 @@ where
         })
     });
 
-    Ok(WitnessDataVar { bits_mat, uns_levels, sorted_levels })
+    Ok(WitnessDataVar {
+        bits_mat,
+        uns_levels,
+        sorted_levels,
+    })
 }
 
 #[cfg(test)]

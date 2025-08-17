@@ -1,11 +1,12 @@
 //! RS shuffle verification functions for SNARK circuits
 
 use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessData, WitnessDataVar};
-use super::permutation::IndexPositionPair;
+use super::permutation::{IndexPositionPair, PermutationProduct};
 use super::{LEVELS, N};
 use crate::rs_shuffle::permutation::{check_grand_product, IndexedElGamalCiphertext};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
 use crate::track_constraints;
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{
     short_weierstrass::{Projective, SWCurveConfig},
     CurveGroup,
@@ -19,6 +20,106 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use std::ops::Not;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::circuit";
+
+/// Simple indexed value for permutation checks with just an index
+#[derive(Clone)]
+pub struct IndexedValue<F: PrimeField> {
+    pub idx: FpVar<F>,
+}
+
+impl<F: PrimeField> IndexedValue<F> {
+    pub fn new(idx: FpVar<F>) -> Self {
+        Self { idx }
+    }
+}
+
+impl<F: PrimeField> PermutationProduct<F, 1> for IndexedValue<F> {
+    fn product(&self, challenges: &[FpVar<F>; 1]) -> FpVar<F> {
+        // Simply multiply the index by the challenge
+        &challenges[0] * &self.idx
+    }
+}
+
+/// Verify RS shuffle constraints for indices only (without ElGamal ciphertexts)
+///
+/// This function verifies that a shuffle was performed correctly on indices by:
+/// 1. Checking row-local constraints at each level
+/// 2. Verifying permutation consistency at each level
+/// 3. Ensuring indices are preserved through the shuffle
+///
+/// # Type Parameters
+/// - `F`: The prime field type
+/// - `N`: The number of elements being shuffled
+/// - `LEVELS`: The number of levels in the shuffle
+///
+/// # Parameters
+/// - `cs`: The constraint system reference
+/// - `indices_init`: Initial indices (as SNARK variables)
+/// - `indices_after_shuffle`: Final shuffled indices (as SNARK variables)
+/// - `witness`: The witness data containing the shuffle permutation (as SNARK variable)
+/// - `alpha`: Fiat-Shamir challenge for permutation check (as SNARK variable)
+///
+/// # Returns
+/// - `Ok(())` if all shuffle constraints are satisfied
+/// - `Err(SynthesisError)` if any constraint fails
+pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
+    cs: ConstraintSystemRef<F>,
+    indices_init: &[FpVar<F>],
+    indices_after_shuffle: &[FpVar<F>],
+    witness: &WitnessDataVar<F, N, LEVELS>,
+    alpha: &FpVar<F>,
+) -> Result<(), SynthesisError>
+where
+    F: PrimeField,
+{
+    track_constraints!(&cs, "rs shuffle indices", LOG_TARGET, {
+        // 1. Create indexed values by zipping witness indices with input indices
+        // Initial: Use indices from first level unsorted array
+        let values_initial: Vec<IndexedValue<F>> = witness.uns_levels[0]
+            .iter()
+            .zip(indices_init.iter())
+            .map(|(row, idx)| {
+                // Verify that the index matches
+                row.idx.enforce_equal(idx)?;
+                Ok(IndexedValue::new(row.idx.clone()))
+            })
+            .collect::<Result<Vec<_>, SynthesisError>>()?;
+
+        // Final: Use indices from last level sorted array
+        let values_final: Vec<IndexedValue<F>> = witness.sorted_levels[LEVELS - 1]
+            .iter()
+            .zip(indices_after_shuffle.iter())
+            .map(|(row, idx)| {
+                // Verify that the index matches
+                row.idx.enforce_equal(idx)?;
+                Ok(IndexedValue::new(row.idx.clone()))
+            })
+            .collect::<Result<Vec<_>, SynthesisError>>()?;
+
+        // 2. Create beta challenge for level verification (using alpha as base)
+        let beta = alpha * alpha; // beta = alpha^2
+
+        // 3. Level-by-level verification
+        for level in 0..LEVELS {
+            let unsorted = &witness.uns_levels[level];
+            let sorted_arr = &witness.sorted_levels[level];
+
+            // Verify this shuffle level (row constraints + permutation check)
+            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, &beta)?;
+        }
+
+        // 4. Final permutation check using just indices (1 challenge)
+        // This verifies that initial and final indices form the same multiset
+        check_grand_product::<F, IndexedValue<F>, 1>(
+            cs.clone(),
+            &values_initial,
+            &values_final,
+            &[alpha.clone()],
+        )?;
+
+        Ok(())
+    })
+}
 
 /// Verify RS shuffle constraints in a SNARK circuit
 ///
@@ -222,6 +323,26 @@ where
     pub num_samples: usize,
 }
 
+/// RS Shuffle Indices Circuit - Circuit for verifying shuffle of indices only
+#[derive(Clone)]
+pub struct RSShuffleIndicesCircuit<F, const N: usize, const LEVELS: usize>
+where
+    F: PrimeField,
+{
+    /// Initial indices (public input) - typically 0..N-1
+    pub indices_init: Vec<F>,
+    /// Shuffled indices (public input)
+    pub indices_after_shuffle: Vec<F>,
+    /// Seed for deterministic witness generation (public input)
+    pub seed: F,
+    /// Fiat-Shamir challenge (public input)
+    pub alpha: F,
+    /// Witness data for the shuffle
+    pub witness: WitnessData<N, LEVELS>,
+    /// Number of samples used in bit generation
+    pub num_samples: usize,
+}
+
 impl<G> ConstraintSynthesizer<G::BaseField> for RSShuffleCircuit<G::BaseField, Projective<G>>
 where
     G: SWCurveConfig,
@@ -405,6 +526,61 @@ where
                 }
 
                 Ok(())
+            }
+        )
+    }
+}
+
+impl<F, const N: usize, const LEVELS: usize> ConstraintSynthesizer<F>
+    for RSShuffleIndicesCircuit<F, N, LEVELS>
+where
+    F: PrimeField + Absorb,
+{
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        track_constraints!(
+            &cs,
+            "rs shuffle indices with variable allocation",
+            LOG_TARGET,
+            {
+                // Allocate seed as public input
+                let seed_var =
+                    FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
+
+                // Use prepare_witness_data_circuit to create witness data from seed
+                let witness_var = super::witness_preparation::prepare_witness_data_circuit::<
+                    F,
+                    N,
+                    LEVELS,
+                >(
+                    cs.clone(), &seed_var, &self.witness, self.num_samples
+                )?;
+
+                // Allocate initial indices as public inputs
+                let indices_init_vars: Vec<FpVar<F>> = self
+                    .indices_init
+                    .iter()
+                    .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // Allocate shuffled indices as public inputs
+                let indices_after_shuffle_vars: Vec<FpVar<F>> = self
+                    .indices_after_shuffle
+                    .iter()
+                    .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                // Allocate challenge as public input
+                let alpha_var =
+                    FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
+
+                // Call the main verification function
+                rs_shuffle_indices::<F, N, LEVELS>(
+                    cs.clone(),
+                    &indices_init_vars,
+                    &indices_after_shuffle_vars,
+                    &witness_var,
+                    &alpha_var,
+                )
             }
         )
     }
