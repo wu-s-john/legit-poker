@@ -36,6 +36,7 @@ mod tests {
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
+    use ark_std::Zero;
 
     #[test]
     fn test_public_key_setup_and_encryption() {

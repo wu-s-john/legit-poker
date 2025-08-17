@@ -16,7 +16,6 @@ pub mod bit_generation;
 pub mod circuit;
 pub mod data_structures;
 pub mod permutation;
-pub mod test_grumpkin_msm;
 pub mod witness_preparation;
 
 // Main verification function

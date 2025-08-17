@@ -3,6 +3,7 @@
 use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessData, WitnessDataVar};
 use super::permutation::IndexPositionPair;
 use super::{LEVELS, N};
+use crate::rs_shuffle::permutation::{check_grand_product, IndexedElGamalCiphertext};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
 use crate::track_constraints;
 use ark_ec::{
@@ -10,11 +11,7 @@ use ark_ec::{
     CurveGroup,
 };
 use ark_ff::PrimeField;
-use ark_r1cs_std::{
-    alloc::AllocVar,
-    eq::EqGadget,
-    fields::FieldVar,
-};
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
 use ark_r1cs_std::{
     fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar, prelude::*,
 };
