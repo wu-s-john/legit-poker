@@ -1,7 +1,7 @@
 //! Demo application that runs a complete game with timing measurements
 //!
 //! This demo:
-//! - Creates a game with 7 shufflers and 5 players
+//! - Creates a game with 7 shufflers and 7 players
 //! - Times each shuffling operation
 //! - Times each decryption phase
 //! - Prints detailed performance metrics
@@ -153,7 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let create_time = game_start.elapsed();
     println!("✅ Game created in {:?}", create_time);
     println!("   Game ID: {}", hex::encode(game_id));
-    println!("   Players: 5 (1 human + 4 CPU)");
+    println!("   Players: 7 (1 human + 6 CPU)");
     println!("   Shufflers: 7");
 
     // Run the complete game with phase timing
@@ -193,13 +193,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   - Player 'cpu_player_1': [10♥, 9♠]");
             println!("   - Player 'cpu_player_2': [8♦, 7♣]");
             println!("   - Player 'cpu_player_3': [6♥, 5♠]");
+            println!("   - Player 'cpu_player_4': [4♦, 3♣]");
+            println!("   - Player 'cpu_player_5': [2♥, Ace♦]");
             println!("   Continuing with demo...");
         }
     }
 
     let deal_time = phase_start.elapsed();
     println!("   ⏱️  Phase completed in {:?}", deal_time);
-    println!("   📊 Two-phase decryption per player: {:?}", deal_time / 5);
+    println!("   📊 Two-phase decryption per player: {:?}", deal_time / 7);
 
     // Phase 4: Reveal Community Cards
     println!("\n📍 Phase 4: REVEALING COMMUNITY CARDS");
@@ -254,7 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Setup (unified proof generation): {:?}", setup_time);
     println!("   Game creation: {:?}", create_time);
     println!("   Shuffling (7 shufflers): {:?}", shuffle_time);
-    println!("   Card dealing (5 players, 2-phase): {:?}", deal_time);
+    println!("   Card dealing (7 players, 2-phase): {:?}", deal_time);
     println!("   Total game time: {:?}", total_time);
 
     println!("\n🔢 Key Metrics:");
@@ -264,7 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "   Cards dealt per second: {:.2}",
-        10.0 / deal_time.as_secs_f64()
+        14.0 / deal_time.as_secs_f64()
     );
     println!(
         "   Total events processed: ~{}",
@@ -275,11 +277,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔐 Cryptographic Operations:");
     println!("   Shuffle proofs generated: 7");
     println!(
-        "   Blinding contributions: {} (7 shufflers × 5 players)",
-        7 * 5
+        "   Blinding contributions: {} (7 shufflers × 7 players)",
+        7 * 7
     );
-    println!("   Unblinding shares: {} (7 shufflers × 10 cards)", 7 * 10);
-    println!("   Total ZK proofs: ~{}", 7 + 35 + 70);
+    println!("   Unblinding shares: {} (7 shufflers × 14 cards)", 7 * 14);
+    println!("   Total ZK proofs: ~{}", 7 + 49 + 98);
 
     println!("\n✨ Demo completed successfully!");
     println!("{}", "=".repeat(80));
