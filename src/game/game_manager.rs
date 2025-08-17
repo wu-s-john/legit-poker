@@ -1,11 +1,7 @@
 //! Game manager for coordinating the card game
 
 use crate::domain::{ActorType, AppendParams, RoomId};
-use crate::game::{
-    betting::BettingRound,
-    card_ranking::evaluate_showdown,
-    game_phases::GamePhase,
-};
+use crate::game::{betting::BettingRound, card_ranking::evaluate_showdown, game_phases::GamePhase};
 use crate::player_service::{DatabaseClient, PlayerService};
 use crate::shuffler_service::ShufflerService;
 use crate::shuffling::{
@@ -14,10 +10,12 @@ use crate::shuffling::{
     unified_shuffler::{self, UnifiedShufflerSetup},
 };
 use ark_bn254::{Fr, G1Affine, G1Projective};
-use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::{UniformRand, Zero};
+use ark_ec::AffineRepr;
+use ark_ff::Zero;
+use ark_serialize::CanonicalSerialize;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -115,7 +113,7 @@ impl GameManager {
             human_player_id,
             game_id,
             initial_bet * 10, // Starting balance
-            false,             // not CPU
+            false,            // not CPU
             self.db_client.clone(),
         )?);
 
@@ -184,7 +182,7 @@ impl GameManager {
     }
 
     /// Execute the initial betting round
-    async fn execute_initial_betting(
+    pub async fn execute_initial_betting(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -210,7 +208,7 @@ impl GameManager {
     }
 
     /// Coordinate shuffle phase using ShufflerService
-    async fn execute_shuffle_phase(
+    pub async fn execute_shuffle_phase(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -218,22 +216,50 @@ impl GameManager {
 
         let game = self.games.get_mut(&game_id).ok_or("Game not found")?;
         game.phase = GamePhase::Shuffling;
+        
+        // Get aggregated public key for encryption
+        let aggregated_public_key = game.aggregated_public_key;
 
-        // Create initial deck (52 cards)
-        let mut current_deck = create_initial_deck(&game.aggregated_public_key);
+        // Create initial deck (52 cards, unencrypted)
+        let mut current_deck = create_initial_deck();
 
-        // Each shuffler performs their shuffle
+        // Each shuffler performs their shuffle with the aggregated key
         for (idx, shuffler) in game.shufflers.iter_mut().enumerate() {
             tracing::info!(target: "game_manager", "Shuffler {} starting shuffle", idx);
 
-            let (shuffled_deck, _proof) = shuffler
-                .shuffle_and_encrypt_with_logging(
+            // Use shuffle_and_encrypt_with_key to ensure aggregated key is used
+            let (shuffled_deck, proof) = shuffler
+                .shuffle_and_encrypt_with_key(
                     &mut thread_rng(),
                     current_deck.clone(),
-                    idx,
-                    game.room_id,
-                )
-                .await?;
+                    aggregated_public_key,
+                )?;
+
+            // Log the event
+            if let Some(db_client) = &shuffler.db_client {
+                use crate::shuffling::game_events::ShuffleAndEncryptEvent;
+                let event = ShuffleAndEncryptEvent {
+                    game_id,
+                    shuffler_index: idx,
+                    shuffler_public_key: shuffler.public_key().into(),
+                    output_deck: shuffled_deck.clone(),
+                    shuffle_proof: Some(proof),
+                    input_deck_hash: hash_deck(&current_deck)?,
+                    timestamp: chrono::Utc::now().timestamp() as u64,
+                };
+                
+                let params = AppendParams {
+                    room_id: game.room_id,
+                    actor_type: ActorType::Shuffler,
+                    actor_id: shuffler.id.clone(),
+                    kind: "shuffle_and_encrypt".to_string(),
+                    payload: serde_json::to_value(event)?,
+                    correlation_id: Some(hex::encode(game_id)),
+                    idempotency_key: None,
+                };
+                
+                db_client.append_to_transcript(params).await?;
+            }
 
             current_deck = shuffled_deck;
         }
@@ -245,7 +271,7 @@ impl GameManager {
     }
 
     /// Deal hole cards using two-phase decryption
-    async fn deal_hole_cards(
+    pub async fn deal_hole_cards(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -258,7 +284,7 @@ impl GameManager {
         let num_players = game.players.len();
         for player_idx in 0..num_players {
             let game = self.games.get_mut(&game_id).ok_or("Game not found")?;
-            
+
             if game.players[player_idx].folded {
                 continue;
             }
@@ -326,7 +352,7 @@ impl GameManager {
     }
 
     /// Reveal community cards (simplified - just pick from deck)
-    async fn reveal_community_cards(
+    pub async fn reveal_community_cards(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -347,7 +373,7 @@ impl GameManager {
     }
 
     /// Execute final betting round
-    async fn execute_final_betting(
+    pub async fn execute_final_betting(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -367,7 +393,11 @@ impl GameManager {
         for player in game.players.iter_mut() {
             if !player.folded {
                 let action = player
-                    .make_betting_decision(current_pot + betting_round.pot, betting_round.min_bet, room_id)
+                    .make_betting_decision(
+                        current_pot + betting_round.pot,
+                        betting_round.min_bet,
+                        room_id,
+                    )
                     .await?;
 
                 betting_round.process_action(&player.id, action)?;
@@ -381,7 +411,7 @@ impl GameManager {
     }
 
     /// Simple showdown without ZK
-    async fn execute_showdown(
+    pub async fn execute_showdown(
         &mut self,
         game_id: [u8; 32],
     ) -> Result<String, Box<dyn std::error::Error>> {
@@ -404,25 +434,23 @@ impl GameManager {
             .await?;
 
         let winner_id = showdown_result.winner_id.clone();
-        
+
         // Update game phase
         let game = self.games.get_mut(&game_id).ok_or("Game not found")?;
         game.phase = GamePhase::Settlement;
-        
+
         Ok(winner_id)
     }
 
     /// Settle the game and distribute winnings
-    async fn settle_game(
+    pub async fn settle_game(
         &mut self,
         game_id: [u8; 32],
         winner_id: String,
     ) -> Result<GameResult, Box<dyn std::error::Error>> {
         // Extract room_id before mutable borrow
-        let room_id = self.games.get(&game_id)
-            .ok_or("Game not found")?
-            .room_id;
-            
+        let room_id = self.games.get(&game_id).ok_or("Game not found")?.room_id;
+
         let game = self.games.get_mut(&game_id).ok_or("Game not found")?;
 
         // Find winner and give them the pot
@@ -444,7 +472,7 @@ impl GameManager {
         };
 
         game.phase = GamePhase::Complete;
-        
+
         // Log game completion after releasing mutable borrow
         self.log_game_event(room_id, "game_complete", &result)
             .await?;
@@ -476,7 +504,6 @@ impl GameManager {
 
 /// Generate a unique game ID
 fn generate_game_id() -> [u8; 32] {
-    use sha2::{Digest, Sha256};
     let timestamp = Utc::now().timestamp_nanos_opt().unwrap_or(0);
     let mut hasher = Sha256::new();
     hasher.update(timestamp.to_le_bytes());
@@ -487,12 +514,25 @@ fn generate_game_id() -> [u8; 32] {
     id
 }
 
-/// Create initial encrypted deck
-fn create_initial_deck(
-    aggregated_public_key: &G1Projective,
-) -> Vec<ElGamalCiphertext<G1Projective>> {
-    use ark_std::rand::thread_rng;
-    let mut rng = thread_rng();
+/// Hash a deck of cards for verification
+fn hash_deck(
+    deck: &[ElGamalCiphertext<G1Projective>],
+) -> Result<[u8; 32], Box<dyn std::error::Error>> {
+    let mut hasher = Sha256::new();
+    for card in deck {
+        let mut bytes = Vec::new();
+        card.c1.serialize_compressed(&mut bytes)?;
+        card.c2.serialize_compressed(&mut bytes)?;
+        hasher.update(&bytes);
+    }
+    let result = hasher.finalize();
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&result);
+    Ok(hash)
+}
+
+/// Create initial unencrypted deck
+fn create_initial_deck() -> Vec<ElGamalCiphertext<G1Projective>> {
     let mut deck = Vec::new();
 
     for i in 0..52 {
@@ -500,10 +540,10 @@ fn create_initial_deck(
         let card_value = Fr::from(i as u64);
         let msg = G1Affine::generator() * card_value;
 
-        // Initial encryption with randomness 0 (will be re-encrypted by shufflers)
-        let r = Fr::rand(&mut rng);
-        let c1 = (G1Affine::generator() * r).into();
-        let c2 = (msg + (*aggregated_public_key * r).into_affine()).into();
+        // Initial deck starts unencrypted (r = 0)
+        // The shufflers will add encryption layers during shuffling
+        let c1 = G1Projective::zero(); // c1 = 0 (no encryption yet)
+        let c2 = msg.into();           // c2 = g^m (just the message)
 
         deck.push(ElGamalCiphertext::<G1Projective> { c1, c2 });
     }

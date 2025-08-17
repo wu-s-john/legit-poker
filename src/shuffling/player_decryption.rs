@@ -7,6 +7,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::{collections::HashMap, sync::Mutex};
 use once_cell::sync::Lazy;
+use tracing::{instrument, warn};
+
+const LOG_TARGET: &str = "nexus_nova::shuffling::player_decryption";
 
 /// Player-targeted blinding contribution from a single shuffler
 /// Each shuffler contributes their secret δ_j to add blinding specifically allowing the target player access
@@ -30,6 +33,7 @@ where
     /// * `secret_share` - The shuffler's secret share δ_j
     /// * `aggregated_public_key` - The aggregated public key from all shufflers (pk)
     /// * `player_public_key` - The target player's public key (y_u)
+    #[instrument(skip(secret_share), level = "trace")]
     pub fn generate(
         secret_share: C::ScalarField,
         aggregated_public_key: C,
@@ -68,17 +72,24 @@ where
     /// # Arguments
     /// * `aggregated_public_key` - The aggregated public key from all shufflers
     /// * `player_public_key` - The target player's public key
+    #[instrument(skip(self), level = "trace")]
     pub fn verify(&self, aggregated_public_key: C, player_public_key: C) -> bool {
         let generator = C::generator();
         let h = aggregated_public_key + player_public_key;
 
         // Verify the non-interactive proof
-        self.proof.verify(
+        let result = self.proof.verify(
             generator,
             h,
             self.blinding_base_contribution,
             self.blinding_combined_contribution,
-        )
+        );
+
+        if !result {
+            warn!(target: LOG_TARGET, "Blinding contribution proof verification failed!");
+        }
+
+        result
     }
 }
 
@@ -179,6 +190,7 @@ impl<C: CurveGroup> Clone for CardValueMap<C> {
 /// * `blinding_contributions` - Blinding contributions from each committee member
 /// * `aggregated_public_key` - The aggregated public key from all shufflers
 /// * `player_public_key` - The target player's public key
+#[instrument(skip(initial_ciphertext, blinding_contributions), level = "trace")]
 pub fn combine_blinding_contributions_for_player<C: CurveGroup>(
     initial_ciphertext: &ElGamalCiphertext<C>,
     blinding_contributions: &[PlayerTargetedBlindingContribution<C>],
@@ -189,8 +201,9 @@ where
     C::ScalarField: PrimeField + Absorb,
 {
     // First verify all blinding contributions
-    for (_i, contribution) in blinding_contributions.iter().enumerate() {
+    for (i, contribution) in blinding_contributions.iter().enumerate() {
         if !contribution.verify(aggregated_public_key, player_public_key) {
+            warn!(target: LOG_TARGET, "Invalid blinding contribution at index {}", i);
             return Err("Invalid blinding contribution");
         }
     }
@@ -202,7 +215,7 @@ where
     let mut proofs = Vec::new();
 
     // Combine all blinding contributions
-    for contribution in blinding_contributions {
+    for contribution in blinding_contributions.iter() {
         blinded_base = blinded_base + contribution.blinding_base_contribution; // Add g^δ_j
         blinded_message_with_player_key =
             blinded_message_with_player_key + contribution.blinding_combined_contribution; // Add (pk·y_u)^δ_j
@@ -221,6 +234,7 @@ where
 
 /// Batch verification for multiple shuffler encryption shares
 /// Note: This assumes all shares use the same aggregated_public_key
+#[instrument(skip(shares, _rng), level = "trace")]
 pub fn batch_verify_shuffler_shares<C, R>(
     shares: &[PlayerTargetedBlindingContribution<C>],
     aggregated_public_key: C,
@@ -233,13 +247,15 @@ where
     R: Rng,
 {
     if shares.is_empty() {
+        warn!(target: LOG_TARGET, "No shares to verify");
         return false;
     }
 
     // Verify each share individually since they use context-based proofs
     // In the future, this could be optimized with a custom batch verification
-    for share in shares {
+    for (i, share) in shares.iter().enumerate() {
         if !share.verify(aggregated_public_key, player_public_key) {
+            warn!(target: LOG_TARGET, "Share {} failed verification", i);
             return false;
         }
     }
@@ -256,6 +272,7 @@ where
 /// * `encrypted_card` - The player's encrypted card containing A_u
 /// * `committee_secret` - The committee member's secret share x_j
 /// * `member_index` - The index of this committee member
+#[instrument(skip(committee_secret), level = "trace")]
 pub fn generate_committee_decryption_share<C: CurveGroup>(
     encrypted_card: &PlayerAccessibleCiphertext<C>,
     committee_secret: C::ScalarField,
@@ -281,12 +298,17 @@ pub fn generate_committee_decryption_share<C: CurveGroup>(
 ///
 /// # Returns
 /// The aggregated value μ_u = ∏(μ_u,j) = A_u^x where x = Σx_j
+#[instrument(skip(shares), level = "trace")]
 pub fn combine_unblinding_shares<C: CurveGroup>(
     shares: &[PartialUnblindingShare<C>],
     expected_members: usize,
 ) -> Result<C, &'static str> {
     // Verify we have exactly n shares (n-of-n requirement)
     if shares.len() != expected_members {
+        warn!(target: LOG_TARGET,
+            "Expected {} shares but got {}",
+            expected_members, shares.len()
+        );
         return Err(
             "Missing committee member shares - this is an n-of-n scheme requiring all members",
         );
@@ -296,9 +318,17 @@ pub fn combine_unblinding_shares<C: CurveGroup>(
     let mut seen_indices = vec![false; expected_members];
     for share in shares {
         if share.member_index >= expected_members {
+            warn!(target: LOG_TARGET,
+                "Invalid member index: {} (max: {})",
+                share.member_index, expected_members - 1
+            );
             return Err("Invalid member index");
         }
         if seen_indices[share.member_index] {
+            warn!(target: LOG_TARGET,
+                "Duplicate member index: {}",
+                share.member_index
+            );
             return Err("Duplicate member index");
         }
         seen_indices[share.member_index] = true;
@@ -335,6 +365,7 @@ pub fn combine_unblinding_shares<C: CurveGroup>(
 ///
 /// # Returns
 /// The decrypted card value (0-51) or an error if decryption fails
+#[instrument(skip(player_secret, unblinding_shares), level = "trace")]
 pub fn recover_card_value<C>(
     player_ciphertext: &PlayerAccessibleCiphertext<C>,
     player_secret: C::ScalarField,
@@ -360,9 +391,16 @@ where
 
     // Step 4: Map the group element back to a card value using pre-computed table
     let card_map = get_card_value_map::<C>();
-    card_map
-        .lookup(&recovered_element)
-        .ok_or("Recovered element does not correspond to a valid card value")
+
+    match card_map.lookup(&recovered_element) {
+        Some(card_value) => Ok(card_value),
+        None => {
+            warn!(target: LOG_TARGET,
+                "Failed to find card value for recovered element"
+            );
+            Err("Recovered element does not correspond to a valid card value")
+        }
+    }
 }
 
 #[cfg(test)]
