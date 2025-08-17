@@ -106,9 +106,8 @@ impl PlayerService {
         let action = if self.is_cpu {
             self.cpu_decide_action(pot, min_bet)
         } else {
-            // For human player, this would wait for user input
-            // For now, return a default action
-            PlayerAction::Call
+            // For human player, get real user input
+            self.get_human_betting_decision(pot, min_bet)?
         };
 
         // Update internal state
@@ -131,6 +130,24 @@ impl PlayerService {
             .await?;
 
         Ok(action)
+    }
+    
+    /// Get betting decision from human player via stdin
+    fn get_human_betting_decision(
+        &self,
+        pot: u64,
+        min_bet: u64,
+    ) -> Result<PlayerAction, Box<dyn std::error::Error>> {
+        use crate::game::user_interface::prompt_for_betting_action;
+        
+        // Determine phase based on game state
+        let phase = if self.hole_cards.is_none() {
+            "INITIAL BETTING"
+        } else {
+            "FINAL BETTING"
+        };
+        
+        prompt_for_betting_action(pot, min_bet, self.escrow_balance, phase)
     }
 
     /// CPU decision logic (random, no ZK)

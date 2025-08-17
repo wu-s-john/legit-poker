@@ -13,6 +13,7 @@ use ark_std::rand::rngs::StdRng;
 use ark_std::rand::SeedableRng;
 use async_trait::async_trait;
 use chrono::Utc;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info};
@@ -22,6 +23,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use zk_poker::domain::{ActorType, AppendParams, RoomId};
 use zk_poker::game::game_manager::GameManager;
+use zk_poker::game::user_interface::{
+    display_cards, display_game_header, display_phase, display_winner, format_cards,
+    prompt_for_wager, wait_for_continue,
+};
 use zk_poker::player_service::DatabaseClient;
 use zk_poker::shuffler_service::ShufflerService;
 use zk_poker::shuffling::{
@@ -119,9 +124,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing with test configuration to avoid deadlock
     let _guard = setup_test_tracing();
 
-    println!("\n{}", "=".repeat(80));
-    println!("🎮 ZK POKER GAME DEMO - PERFORMANCE TEST");
-    println!("{}", "=".repeat(80));
+    // Display interactive game header
+    display_game_header();
 
     // Create RNG with fixed seed for reproducibility
     let mut rng = StdRng::seed_from_u64(12345);
@@ -129,9 +133,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create database client with timing
     let db_client = Arc::new(TimedDatabaseClient::new());
 
+    // Prompt for initial wager
+    let initial_balance = 1000; // Starting chips
+    let wager = prompt_for_wager(initial_balance)?;
+
     // Measure setup time
-    println!("\n📦 SETUP PHASE");
-    println!("{}", "-".repeat(40));
+    display_phase("SETUP PHASE");
     println!("⚠️  Generating cryptographic parameters (this takes 30-60 seconds)...");
     println!("   This is a ONE-TIME setup that would be pre-generated in production.");
     let setup_start = Instant::now();
@@ -142,12 +149,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✅ Unified setup completed in {:?}", setup_time);
     println!("   (This setup can be reused for thousands of games)");
 
-    // Create a new game
+    // Create a new game with the wagered amount
     let room_id = RoomId::from(1);
     let game_start = Instant::now();
 
     let game_id = game_manager
-        .create_game("human_player".to_string(), 100, room_id)
+        .create_game("human_player".to_string(), wager, room_id)
         .await?;
 
     let create_time = game_start.elapsed();
@@ -155,21 +162,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Game ID: {}", hex::encode(game_id));
     println!("   Players: 7 (1 human + 6 CPU)");
     println!("   Shufflers: 7");
+    println!("   Initial wager: {} chips", wager);
 
     // Run the complete game with phase timing
-    println!("\n🎯 GAME EXECUTION");
-    println!("{}", "-".repeat(40));
+    display_phase("GAME EXECUTION");
 
     let total_start = Instant::now();
 
     // Phase 1: Initial Betting
-    println!("\n📍 Phase 1: INITIAL BETTING");
+    display_phase("Phase 1: INITIAL BETTING");
     let phase_start = Instant::now();
     game_manager.execute_initial_betting(game_id).await?;
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
 
     // Phase 2: Shuffle Deck
-    println!("\n📍 Phase 2: SHUFFLING DECK");
+    display_phase("Phase 2: SHUFFLING DECK");
+    println!("Shuffling the deck securely with 7 shufflers...");
     let phase_start = Instant::now();
     game_manager.execute_shuffle_phase(game_id).await?;
     let shuffle_time = phase_start.elapsed();
@@ -177,47 +185,144 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   📊 Average per shuffler: {:?}", shuffle_time / 7);
 
     // Phase 3: Deal Hole Cards (Two-phase decryption)
-    println!("\n📍 Phase 3: DEALING HOLE CARDS");
+    display_phase("Phase 3: DEALING HOLE CARDS");
     let phase_start = Instant::now();
 
-    // Try to deal cards, but continue even if decryption fails
+    // Deal hole cards to all players
+    let mut simulated_cards = HashMap::new();
+    // Since cards are dealt as player_idx * 2 and player_idx * 2 + 1 from a 52-card deck (0-51)
+    // We can simulate what each player would get from an unshuffled deck
+    simulated_cards.insert("human_player".to_string(), vec![0u8, 1u8]); // Cards 0, 1
+    simulated_cards.insert("cpu_player_0".to_string(), vec![2u8, 3u8]); // Cards 2, 3
+    simulated_cards.insert("cpu_player_1".to_string(), vec![4u8, 5u8]); // Cards 4, 5
+    simulated_cards.insert("cpu_player_2".to_string(), vec![6u8, 7u8]); // Cards 6, 7
+    simulated_cards.insert("cpu_player_3".to_string(), vec![8u8, 9u8]); // Cards 8, 9
+    simulated_cards.insert("cpu_player_4".to_string(), vec![10u8, 11u8]); // Cards 10, 11
+    simulated_cards.insert("cpu_player_5".to_string(), vec![12u8, 13u8]); // Cards 12, 13
+
+    let mut human_cards = vec![0u8, 1u8]; // Default cards for human
     match game_manager.deal_hole_cards(game_id).await {
         Ok(_) => {
             println!("   ✅ Cards successfully dealt and decrypted");
+            // Try to get the actual human player's cards
+            if let Some(game) = game_manager.games.get(&game_id) {
+                if let Some(human_player) = game.players.iter().find(|p| p.id == "human_player") {
+                    if let Some(cards) = &human_player.hole_cards {
+                        human_cards = cards.clone();
+                    } else {
+                        // If decryption failed but no error, use simulated cards
+                        println!("   ⚠️  Using simulated cards (decryption incomplete)");
+                        human_cards = simulated_cards["human_player"].clone();
+                    }
+                }
+
+                // Also set simulated cards for all players if their hole_cards are None
+                for player in &game.players {
+                    if player.hole_cards.is_none() && simulated_cards.contains_key(&player.id) {
+                        // Store simulated cards for later display
+                        // We'll use these in the showdown
+                    }
+                }
+            }
         }
         Err(e) => {
             println!("   ⚠️  Card dealing encountered an error: {}", e);
-            println!("   NOTE: In a real game, cards would be dealt as follows:");
-            println!("   - Player 'human_player': [Ace♠, King♥]");
-            println!("   - Player 'cpu_player_0': [Queen♦, Jack♣]");
-            println!("   - Player 'cpu_player_1': [10♥, 9♠]");
-            println!("   - Player 'cpu_player_2': [8♦, 7♣]");
-            println!("   - Player 'cpu_player_3': [6♥, 5♠]");
-            println!("   - Player 'cpu_player_4': [4♦, 3♣]");
-            println!("   - Player 'cpu_player_5': [2♥, Ace♦]");
-            println!("   Continuing with demo...");
+            println!("   NOTE: Using simulated cards for demo purposes");
+            // Use simulated cards
+            human_cards = simulated_cards["human_player"].clone();
         }
     }
+
+    // Display the human player's hole cards
+    println!("\n🎴 YOUR HOLE CARDS:");
+    display_cards("Your cards", &human_cards);
+    wait_for_continue()?;
 
     let deal_time = phase_start.elapsed();
     println!("   ⏱️  Phase completed in {:?}", deal_time);
     println!("   📊 Two-phase decryption per player: {:?}", deal_time / 7);
 
-    // Phase 4: Reveal Community Cards
-    println!("\n📍 Phase 4: REVEALING COMMUNITY CARDS");
+    // Phase 4: Reveal Community Cards (Flop)
+    display_phase("Phase 4: REVEALING THE FLOP");
     let phase_start = Instant::now();
     game_manager.reveal_community_cards(game_id).await?;
+
+    // Get and display community cards
+    let community_cards = if let Some(game) = game_manager.games.get(&game_id) {
+        game.community_cards.clone()
+    } else {
+        vec![0u8, 1u8, 2u8, 3u8, 4u8] // Default cards if not found
+    };
+
+    // Display the first 3 community cards (the flop)
+    println!("\n🎴 THE FLOP (First 3 community cards):");
+    display_cards(
+        "Community cards",
+        &community_cards[..3.min(community_cards.len())],
+    );
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
+    wait_for_continue()?;
 
     // Phase 5: Final Betting
-    println!("\n📍 Phase 5: FINAL BETTING");
+    display_phase("Phase 5: FINAL BETTING ROUND");
+    println!("Now that you've seen the flop, it's time to make your final betting decision.");
     let phase_start = Instant::now();
     game_manager.execute_final_betting(game_id).await?;
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
+    // Display the remaining community cards (turn and river)
+    if community_cards.len() >= 5 {
+        println!("\n🎴 THE TURN AND RIVER (Final 2 community cards):");
+        display_cards("All community cards", &community_cards[..5]);
+    }
+    wait_for_continue()?;
 
     // Phase 6: Showdown
-    println!("\n📍 Phase 6: SHOWDOWN");
+    display_phase("Phase 6: SHOWDOWN");
+    println!("All remaining players reveal their cards...");
     let phase_start = Instant::now();
+
+    // Display all players' hands
+    if let Some(game) = game_manager.games.get(&game_id) {
+        println!("\n🎴 PLAYERS' HOLE CARDS:");
+        for (idx, player) in game.players.iter().enumerate() {
+            let player_display = if player.id == "human_player" {
+                format!("{} (YOU)", player.id)
+            } else {
+                player.id.clone()
+            };
+
+            if !player.folded {
+                // Try to get actual cards first
+                let cards_to_display = if let Some(cards) = &player.hole_cards {
+                    cards.clone()
+                } else {
+                    // Use simulated cards based on dealing order
+                    // Cards are dealt as [player_idx * 2, player_idx * 2 + 1]
+                    let simulated = vec![(idx * 2) as u8, (idx * 2 + 1) as u8];
+                    println!(
+                        "   {} has: [{}] (simulated)",
+                        player_display,
+                        format_cards(&simulated)
+                    );
+                    continue;
+                };
+                println!(
+                    "   {} has: [{}]",
+                    player_display,
+                    format_cards(&cards_to_display)
+                );
+            } else {
+                println!("   {} - FOLDED", player_display);
+            }
+        }
+
+        // Also show the community cards again for reference
+        if !game.community_cards.is_empty() {
+            println!("\n🎴 COMMUNITY CARDS:");
+            println!("   [{}]", format_cards(&game.community_cards));
+        }
+    }
+
     let winner = match game_manager.execute_showdown(game_id).await {
         Ok(w) => {
             println!("   ✅ Showdown completed successfully");
@@ -232,24 +337,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
 
     // Phase 7: Settlement
-    println!("\n📍 Phase 7: SETTLEMENT");
+    display_phase("Phase 7: SETTLEMENT");
     let phase_start = Instant::now();
-    let result = game_manager.settle_game(game_id, winner).await?;
+    let result = game_manager.settle_game(game_id, winner.clone()).await?;
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
 
     let total_time = total_start.elapsed();
 
-    // Print summary
-    println!("\n{}", "=".repeat(80));
-    println!("📊 PERFORMANCE SUMMARY");
-    println!("{}", "=".repeat(80));
-
-    println!("\n🏆 Game Result:");
-    println!("   Winner: {}", result.winner);
-    println!("   Pot: {} chips", result.pot);
+    // Display winner with appropriate message
+    display_winner(&result.winner, result.pot, result.winner == "human_player");
     println!("\n📈 Final Standings:");
-    for (player, balance) in result.final_standings {
-        println!("   {} : {} chips", player, balance);
+    for (player, balance) in &result.final_standings {
+        let player_display = if player == "human_player" {
+            format!("{} (YOU)", player)
+        } else {
+            player.clone()
+        };
+        println!("   {} : {} chips", player_display, balance);
     }
 
     println!("\n⏱️  Timing Summary:");
