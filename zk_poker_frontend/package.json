@@ -17,10 +17,17 @@
   },
   "dependencies": {
     "@t3-oss/env-nextjs": "^0.12.0",
+    "@tanstack/react-query": "^5.85.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "jotai": "^2.13.1",
+    "lucide-react": "^0.539.0",
     "next": "^15.2.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "zod": "^3.24.2"
+    "socket.io-client": "^4.8.1",
+    "zod": "^3.24.2",
+    "zustand": "^5.0.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.1",
@@ -33,6 +40,7 @@
     "postcss": "^8.5.3",
     "prettier": "^3.5.3",
     "prettier-plugin-tailwindcss": "^0.6.11",
+    "tailwind-merge": "^3.3.1",
     "tailwindcss": "^4.0.15",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.27.0"

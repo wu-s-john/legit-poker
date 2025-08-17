@@ -3,4 +3,99 @@
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  
+  /* Poker Theme - Deep Navy Palette (ClubWPT vibe) */
+  --color-primary-50: #f0f4ff;
+  --color-primary-100: #e0e9ff;
+  --color-primary-200: #c7d6ff;
+  --color-primary-300: #a3b8ff;
+  --color-primary-400: #7c91ff;
+  --color-primary-500: #5b6bff;
+  --color-primary-600: #4a4fff;
+  --color-primary-700: #3d3dff;
+  --color-primary-800: #2f2f8f;
+  --color-primary-900: #1a1a4f;
+  --color-primary-950: #0a0a2f;
+  
+  /* Table Colors */
+  --color-table: #0f1a2a;
+  --color-table-border: #1e3a5f;
+  --color-seat-active: #3d3dff;
+  --color-seat-inactive: #2f2f8f;
+  --color-chip-red: #dc2626;
+  --color-chip-blue: #2563eb;
+  --color-chip-green: #16a34a;
+  --color-chip-black: #1f2937;
+  --color-chip-purple: #7c3aed;
+  
+  /* Toast Colors */
+  --color-toast-success: #16a34a;
+  --color-toast-error: #dc2626;
+  --color-toast-warning: #d97706;
+  --color-toast-info: #2563eb;
+}
+
+/* Base Styles */
+@layer base {
+  body {
+    @apply bg-primary-950 text-white;
+  }
+}
+
+/* Component Styles */
+@layer components {
+  /* Toast Animations */
+  .toast-enter {
+    @apply opacity-0 translate-y-2;
+  }
+  
+  .toast-enter-active {
+    @apply opacity-100 translate-y-0 transition-all duration-300 ease-out;
+  }
+  
+  .toast-exit {
+    @apply opacity-100 translate-y-0;
+  }
+  
+  .toast-exit-active {
+    @apply opacity-0 translate-y-2 transition-all duration-200 ease-in;
+  }
+  
+  /* Active Seat Ring */
+  .seat-active {
+    @apply ring-4 ring-primary-400/75 animate-pulse;
+  }
+  
+  /* Table Styles */
+  .poker-table {
+    @apply bg-table border-4 border-table-border rounded-full;
+  }
+  
+  /* Chip Styles */
+  .chip-red {
+    @apply bg-chip-red text-white;
+  }
+  
+  .chip-blue {
+    @apply bg-chip-blue text-white;
+  }
+  
+  .chip-green {
+    @apply bg-chip-green text-white;
+  }
+  
+  .chip-black {
+    @apply bg-chip-black text-white;
+  }
+  
+  .chip-purple {
+    @apply bg-chip-purple text-white;
+  }
+}
+
+/* Utility Styles */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
 }
