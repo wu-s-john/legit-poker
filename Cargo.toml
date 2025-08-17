@@ -8,6 +8,7 @@ name = "bayer_groth_demo"
 path = "src/bin/bayer_groth_demo.rs"
 
 [dependencies]
+# Existing crypto dependencies
 ark-crypto-primitives = { version = "0.5.0", features = [
     "commitment",
     "r1cs",
@@ -28,6 +29,9 @@ ark-std = "0.5.0"
 ark-poly = "0.5.0"
 ark-poly-commit = "0.5.0"
 ark-snark = "0.5.0"
+ark-bls12-381 = "0.5.0"
+
+# Core utilities
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = { version = "0.1", default-features = false }
@@ -39,7 +43,20 @@ thiserror = "1.0"
 anyhow = "1.0"
 sha3 = { version = "0.10", default-features = false }
 hex = "0.4.3"
-ark-bls12-381 = "0.5.0"
+
+# Backend dependencies
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = { version = "0.5", features = ["timeout"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+sea-orm = { version = "1.1", features = ["sqlx-postgres", "runtime-tokio-native-tls", "macros", "with-chrono", "with-json", "with-uuid"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+zeroize = { version = "1.8", features = ["derive"] }
+parking_lot = "0.12"
+dashmap = "6.1"
+dotenv = "0.15"
 
 [dev-dependencies]
 ark-test-curves = { version = "0.5.0", features = ["bls12_381_curve"] }

@@ -1,25 +1,25 @@
 //! Bayer-Groth verifiable shuffle implementation
-//! 
+//!
 //! Pairing-free verification using Pedersen commitments for n=52 cards
 //! Product decomposition: n = m * r with m=4, r=13
 
-pub mod types;
-pub mod transcript;
 pub mod commitment;
 pub mod decomposition;
 pub mod prover;
+pub mod transcript;
+pub mod types;
 pub mod verifier;
 
 // Re-export main types and functions
-pub use types::{BgProof, BgParams, ShuffleInstance, ShuffleWitness};
-pub use prover::prove;
-pub use verifier::verify;
 pub use commitment::BgCommitment;
+pub use prover::prove;
+pub use types::{BgParams, BgProof, ShuffleInstance, ShuffleWitness};
+pub use verifier::verify;
 
 // Constants for product decomposition
-pub const M: usize = 4;   // Number of rows
-pub const R: usize = 13;  // Number of columns  
-pub const N: usize = M * R;  // Total size (52)
+pub const M: usize = 4; // Number of rows
+pub const R: usize = 13; // Number of columns
+pub const N: usize = M * R; // Total size (52)
 
 #[cfg(test)]
 mod tests {
