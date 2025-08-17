@@ -63,6 +63,14 @@ where
         num_random_values = random_values.len(),
         "Random values generated"
     );
+    
+    // Debug: log the actual field values
+    #[cfg(test)]
+    {
+        for (i, val) in random_values.iter().enumerate() {
+            tracing::debug!(target: LOG_TARGET, "Random value[{}]: {:?}", i, val);
+        }
+    }
 
     // Convert field elements to bits and collect into a single stream
     let mut bit_stream = Vec::new();
@@ -252,9 +260,18 @@ mod tests {
         let _guard = setup_test_tracing();
         let seed1 = TestField::from(111u64);
         let seed2 = TestField::from(222u64);
+        
+        tracing::debug!(target: LOG_TARGET, "Seed1: {:?}", seed1);
+        tracing::debug!(target: LOG_TARGET, "Seed2: {:?}", seed2);
 
-        let (bits_mat1, _) = derive_split_bits::<TestField, N, LEVELS>(seed1);
-        let (bits_mat2, _) = derive_split_bits::<TestField, N, LEVELS>(seed2);
+        let (bits_mat1, num_samples1) = derive_split_bits::<TestField, N, LEVELS>(seed1);
+        let (bits_mat2, _num_samples2) = derive_split_bits::<TestField, N, LEVELS>(seed2);
+        
+        tracing::debug!(target: LOG_TARGET, "Num samples used: {}", num_samples1);
+        
+        // Debug: Log first few bits from each matrix
+        tracing::debug!(target: LOG_TARGET, "First 10 bits from mat1[0]: {:?}", &bits_mat1[0][..10]);
+        tracing::debug!(target: LOG_TARGET, "First 10 bits from mat2[0]: {:?}", &bits_mat2[0][..10]);
 
         // Should be different (with high probability)
         let mut differences = 0;
@@ -266,8 +283,18 @@ mod tests {
             }
         }
 
+        // Debug output
+        let total_bits = N * LEVELS;
+        let expected_min_diff = total_bits / 4;
+        tracing::debug!(target: LOG_TARGET, "Total bits: {}, Differences found: {}, Expected minimum: {}", 
+                 total_bits, differences, expected_min_diff);
+        tracing::debug!(target: LOG_TARGET, "Difference percentage: {:.2}%", 
+                 (differences as f64 / total_bits as f64) * 100.0);
+
         // At least 25% should be different (very conservative bound)
-        assert!(differences > (N * LEVELS) / 4);
+        assert!(differences > (N * LEVELS) / 4, 
+                "Not enough differences: {} out of {} bits (expected > {})",
+                differences, total_bits, expected_min_diff);
     }
 
     #[test]

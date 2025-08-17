@@ -12,10 +12,9 @@ pub fn generate_random_values<F: Absorb + PrimeField>(seed: F, count: usize) -> 
     // Absorb the seed
     sponge.absorb(&seed);
 
-    // Generate random values
-    let values: Vec<F> = (0..count)
-        .map(|_| sponge.squeeze_field_elements(1)[0])
-        .collect();
+    // Squeeze all values at once to ensure proper state advancement
+    // This is more efficient and ensures proper randomness
+    let values = sponge.squeeze_field_elements(count);
 
     values
 }

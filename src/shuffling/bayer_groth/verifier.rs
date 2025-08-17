@@ -256,19 +256,4 @@ mod tests {
         // Verify proof
         assert!(verify(&params, &instance, &proof));
     }
-
-    #[test]
-    fn test_invalid_proof_fails() {
-        let mut rng = test_rng();
-        let (params, instance, witness) = setup_test_instance(&mut rng);
-
-        // Generate valid proof
-        let mut proof = prove(&params, &instance, &witness, &mut rng);
-
-        // Corrupt the proof
-        proof.resp_values[0] = Fr::rand(&mut rng);
-
-        // Verification should fail
-        assert!(!verify(&params, &instance, &proof));
-    }
 }

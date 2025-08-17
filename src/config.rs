@@ -1,30 +1,29 @@
-use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+use ark_crypto_primitives::sponge::poseidon::{find_poseidon_ark_and_mds, PoseidonConfig};
 use ark_ff::PrimeField;
 
-/// Returns a Poseidon configuration for the given field
+/// Returns config for poseidon sponge with 128-bit security.
 pub fn poseidon_config<F: PrimeField>() -> PoseidonConfig<F> {
-    // Standard Poseidon configuration with secure parameters
-    // Using alpha = 5 which is a common choice for security
-    let num_rounds = 8 + 31; // full_rounds + partial_rounds
-    let t = 3; // state width (rate + capacity)
+    const FULL_ROUNDS: usize = 8;
+    const PARTIAL_ROUNDS: usize = 57;
+    const ALPHA: u64 = 5;
+    const RATE: usize = 2;
+    const CAPACITY: usize = 1;
 
-    // Create Arc constants - one vector per round, each with t elements
-    let mut ark_constants = Vec::new();
-    for _ in 0..num_rounds {
-        let mut round_constants = Vec::new();
-        for _ in 0..t {
-            round_constants.push(F::zero());
-        }
-        ark_constants.push(round_constants);
+    let (ark, mds) = find_poseidon_ark_and_mds::<F>(
+        F::MODULUS_BIT_SIZE as u64,
+        RATE,
+        FULL_ROUNDS as u64,
+        PARTIAL_ROUNDS as u64,
+        0,
+    );
+
+    PoseidonConfig {
+        full_rounds: FULL_ROUNDS,
+        partial_rounds: PARTIAL_ROUNDS,
+        alpha: ALPHA,
+        ark,
+        mds,
+        rate: RATE,
+        capacity: CAPACITY,
     }
-
-    PoseidonConfig::new(
-        8,                           // full_rounds
-        31,                          // partial_rounds
-        5,                           // alpha (S-box power)
-        vec![vec![F::zero(); t]; t], // MDS matrix (t x t)
-        ark_constants,               // Arc constants (one vector per round)
-        2,                           // rate
-        1,                           // capacity
-    )
 }
