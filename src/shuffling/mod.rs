@@ -4,11 +4,12 @@ pub mod circuit;
 pub mod data_structures;
 pub mod encryption;
 pub mod error;
-pub mod player_encryption;
+pub mod player_decryption;
 pub mod prove;
 pub mod public_key_setup;
 pub mod rs_shuffle;
 pub mod setup;
+pub mod unified_shuffler;
 pub mod utils;
 
 #[cfg(test)]
@@ -19,6 +20,6 @@ pub use circuit::*;
 pub use data_structures::*;
 pub use encryption::*;
 pub use error::*;
-pub use player_encryption::*;
+pub use player_decryption::*;
 pub use prove::*;
 pub use setup::*;
