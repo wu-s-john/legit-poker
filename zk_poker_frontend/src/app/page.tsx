@@ -1,37 +1,87 @@
-import Link from "next/link";
+import Link from 'next/link';
+import { Play, Trophy, User, Shield } from 'lucide-react';
 
-export default function HomePage() {
+export default function LandingPage() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
-      <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
-        <h1 className="text-5xl font-extrabold tracking-tight text-white sm:text-[5rem]">
-          Create <span className="text-[hsl(280,100%,70%)]">T3</span> App
-        </h1>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-8">
+    <div className="min-h-screen bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800 flex items-center justify-center">
+      <div className="text-center space-y-8 max-w-4xl mx-auto px-6">
+        {/* Hero Section */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <Shield className="w-12 h-12 text-primary-400" />
+            <h1 className="text-6xl font-bold text-white">
+              Proof<span className="text-primary-400">Play</span>
+            </h1>
+          </div>
+          
+          <p className="text-xl text-primary-200 max-w-2xl mx-auto">
+            Experience the future of online poker with zero-knowledge proof technology. 
+            Play with complete privacy and mathematical guarantees.
+          </p>
+        </div>
+
+        {/* Feature Cards */}
+        <div className="grid md:grid-cols-3 gap-6 mt-12">
+          <div className="bg-primary-800/50 backdrop-blur-sm rounded-lg p-6 border border-primary-700">
+            <Shield className="w-8 h-8 text-primary-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">Zero-Knowledge Proofs</h3>
+            <p className="text-primary-300 text-sm">
+              Mathematical guarantees that your actions are valid without revealing your strategy.
+            </p>
+          </div>
+          
+          <div className="bg-primary-800/50 backdrop-blur-sm rounded-lg p-6 border border-primary-700">
+            <Play className="w-8 h-8 text-primary-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">Real-Time Gaming</h3>
+            <p className="text-primary-300 text-sm">
+              Lightning-fast gameplay with instant verification and seamless user experience.
+            </p>
+          </div>
+          
+          <div className="bg-primary-800/50 backdrop-blur-sm rounded-lg p-6 border border-primary-700">
+            <Trophy className="w-8 h-8 text-primary-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">Fair Play</h3>
+            <p className="text-primary-300 text-sm">
+              Provably fair games with transparent verification and no possibility of cheating.
+            </p>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center mt-12">
           <Link
-            className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 text-white hover:bg-white/20"
-            href="https://create.t3.gg/en/usage/first-steps"
-            target="_blank"
+            href="/lobby"
+            className="inline-flex items-center gap-2 bg-primary-600 hover:bg-primary-500 text-white px-8 py-3 rounded-lg font-semibold transition-colors"
           >
-            <h3 className="text-2xl font-bold">First Steps →</h3>
-            <div className="text-lg">
-              Just the basics - Everything you need to know to set up your
-              database and authentication.
-            </div>
+            <Play className="w-5 h-5" />
+            Play Now
           </Link>
+          
           <Link
-            className="flex max-w-xs flex-col gap-4 rounded-xl bg-white/10 p-4 text-white hover:bg-white/20"
-            href="https://create.t3.gg/en/introduction"
-            target="_blank"
+            href="/profile"
+            className="inline-flex items-center gap-2 bg-primary-800 hover:bg-primary-700 text-primary-200 px-8 py-3 rounded-lg font-semibold transition-colors"
           >
-            <h3 className="text-2xl font-bold">Documentation →</h3>
-            <div className="text-lg">
-              Learn more about Create T3 App, the libraries it uses, and how to
-              deploy it.
-            </div>
+            <User className="w-5 h-5" />
+            View Profile
           </Link>
         </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-8 mt-16 text-center">
+          <div>
+            <div className="text-3xl font-bold text-primary-400">1000+</div>
+            <div className="text-primary-300 text-sm">Active Players</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-primary-400">50+</div>
+            <div className="text-primary-300 text-sm">Tables Running</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-primary-400">99.9%</div>
+            <div className="text-primary-300 text-sm">Uptime</div>
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }
