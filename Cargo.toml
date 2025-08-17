@@ -3,7 +3,19 @@ name = "zk_poker"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "bayer_groth_demo"
+path = "src/bin/bayer_groth_demo.rs"
+
 [dependencies]
+ark-crypto-primitives = { version = "0.5.0", features = [
+    "commitment",
+    "r1cs",
+    "sponge",
+    "crh",
+    "merkle_tree",
+    "prf",
+] }
 ark-bn254 = "0.5.0"
 ark-grumpkin = "0.5.0"
 ark-ec = { version = "0.5.0", default-features = false }
@@ -11,12 +23,6 @@ ark-ff = "0.5.0"
 ark-relations = "0.5.0"
 ark-r1cs-std = "0.5.0"
 ark-groth16 = "0.5.0"
-ark-crypto-primitives = { version = "0.5.0", features = [
-    "r1cs",
-    "sponge",
-    "crh",
-    "merkle_tree",
-] }
 ark-serialize = { version = "0.5.0", features = ["derive"] }
 ark-std = "0.5.0"
 ark-poly = "0.5.0"
