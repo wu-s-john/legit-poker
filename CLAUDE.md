@@ -220,6 +220,47 @@ unsatisfied @42: root/my_gadget/hash/check_padding/enforce( lc_17 * lc_18 = lc_1
 - Careful soundness error analysis for finite field operations
 
 
+# Compiler Error Resolution and Code Context
+
+When fixing compiler errors or searching for code context, **always use the MCP language server tools** first:
+
+## MCP Language Server Tools
+The following tools provide efficient, language-aware code analysis:
+
+- **`mcp__language-server__diagnostics`**: Get compiler diagnostics for a specific file
+  - Shows all errors, warnings, and hints with line numbers
+  - More efficient than running `cargo build` repeatedly
+
+- **`mcp__language-server__definition`**: Find where a symbol is defined
+  - Use for resolving "cannot find type" errors
+  - Quickly locate struct/trait/function definitions
+
+- **`mcp__language-server__references`**: Find all usages of a symbol
+  - Understand how types are used across the codebase
+  - Identify all places that need updating when changing a type
+
+- **`mcp__language-server__hover`**: Get type information and documentation
+  - Understand what type a variable or expression has
+  - View trait implementations and constraints
+
+- **`mcp__language-server__rename_symbol`**: Rename symbols across the codebase
+  - Safely rename types, functions, or variables everywhere
+
+- **`mcp__language-server__edit_file`**: Apply precise edits with line numbers
+  - More accurate than string-based editing for compiler fixes
+
+### Example Workflow for Compiler Errors:
+1. Use `mcp__language-server__diagnostics` to get all errors in a file
+2. For "cannot find type" errors, use `mcp__language-server__definition` to locate the type
+3. For type mismatch errors, use `mcp__language-server__hover` to understand actual vs expected types
+4. Apply fixes using `mcp__language-server__edit_file` with precise line numbers
+
+### Why Use Language Server Tools:
+- **Faster**: No need to run full compilation
+- **More Accurate**: Language-aware analysis understands Rust semantics
+- **Better Context**: Shows related information like trait bounds and implementations
+- **Incremental**: Can check single files without building entire project
+
 # Rust Programming types
 - If the return type is under a `Result` or and `Option` type, use the `?` operator to propagate errors.
 

@@ -1,8 +1,7 @@
 use super::error::ShuffleError;
-use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
-use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+use ark_r1cs_std::groups::CurveVar;
 use ark_r1cs_std::{fields::fp::FpVar, prelude::*, R1CSVar};
 use ark_relations::r1cs;
 use ark_relations::r1cs::SynthesisError;
@@ -83,7 +82,10 @@ impl<C: CurveGroup> ElGamalKeys<C> {
     pub fn new(private_key: C::ScalarField) -> Self {
         let generator = C::generator();
         let public_key = generator * private_key;
-        Self { private_key, public_key }
+        Self {
+            private_key,
+            public_key,
+        }
     }
 }
 
@@ -116,13 +118,15 @@ impl<C: CurveGroup> ShuffleProof<C> {
 }
 
 /// Optimized batch allocation for ElGamal ciphertexts
-pub fn batch_allocate_ciphertexts<G: SWCurveConfig>(
-    cs: impl Into<r1cs::Namespace<G::BaseField>>,
-    ciphertexts: &[ElGamalCiphertext<Projective<G>>],
+pub fn batch_allocate_ciphertexts<C, CV>(
+    cs: impl Into<r1cs::Namespace<C::BaseField>>,
+    ciphertexts: &[ElGamalCiphertext<C>],
     mode: AllocationMode,
-) -> Result<Vec<ElGamalCiphertextVar<G>>, SynthesisError>
+) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
     let ns = cs.into();
     let cs = ns.cs();
@@ -132,57 +136,69 @@ where
     let mut result = Vec::with_capacity(ciphertexts.len());
 
     for ct in ciphertexts {
-        // Allocate projective points directly
-        let c1 =
-            ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(cs.clone(), || Ok(ct.c1), mode)?;
+        // Allocate curve points directly
+        let c1 = CV::new_variable(cs.clone(), || Ok(ct.c1), mode)?;
 
-        let c2 =
-            ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(cs.clone(), || Ok(ct.c2), mode)?;
+        let c2 = CV::new_variable(cs.clone(), || Ok(ct.c2), mode)?;
 
-        result.push(ElGamalCiphertextVar { c1, c2 });
+        result.push(ElGamalCiphertextVar::new(c1, c2));
     }
 
     Ok(result)
 }
 
 // Circuit representation of ElGamal ciphertext
-pub struct ElGamalCiphertextVar<G: SWCurveConfig>
+pub struct ElGamalCiphertextVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    pub c1: ProjectiveVar<G, FpVar<G::BaseField>>,
-    pub c2: ProjectiveVar<G, FpVar<G::BaseField>>,
+    pub c1: CV,
+    pub c2: CV,
+    _curve: std::marker::PhantomData<C>,
 }
 
-impl<G: SWCurveConfig> Clone for ElGamalCiphertextVar<G>
+impl<C, CV> Clone for ElGamalCiphertextVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField> + Clone,
 {
     fn clone(&self) -> Self {
-        Self { c1: self.c1.clone(), c2: self.c2.clone() }
+        Self {
+            c1: self.c1.clone(),
+            c2: self.c2.clone(),
+            _curve: std::marker::PhantomData,
+        }
     }
 }
 
-impl<G: SWCurveConfig> ElGamalCiphertextVar<G>
+impl<C, CV> ElGamalCiphertextVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
     /// Creates a new ElGamal ciphertext variable from two curve variables
-    pub fn new(
-        c1: ProjectiveVar<G, FpVar<G::BaseField>>,
-        c2: ProjectiveVar<G, FpVar<G::BaseField>>,
-    ) -> Self {
-        Self { c1, c2 }
+    pub fn new(c1: CV, c2: CV) -> Self {
+        Self {
+            c1,
+            c2,
+            _curve: std::marker::PhantomData,
+        }
     }
 }
 
-impl<G: SWCurveConfig> R1CSVar<G::BaseField> for ElGamalCiphertextVar<G>
+impl<C, CV> R1CSVar<C::BaseField> for ElGamalCiphertextVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    type Value = ElGamalCiphertext<Projective<G>>;
+    type Value = ElGamalCiphertext<C>;
 
-    fn cs(&self) -> r1cs::ConstraintSystemRef<G::BaseField> {
+    fn cs(&self) -> r1cs::ConstraintSystemRef<C::BaseField> {
         self.c1.cs().or(self.c2.cs())
     }
 
@@ -194,13 +210,14 @@ where
     }
 }
 
-impl<G: SWCurveConfig> AllocVar<ElGamalCiphertext<Projective<G>>, G::BaseField>
-    for ElGamalCiphertextVar<G>
+impl<C, CV> AllocVar<ElGamalCiphertext<C>, C::BaseField> for ElGamalCiphertextVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    fn new_variable<T: std::borrow::Borrow<ElGamalCiphertext<Projective<G>>>>(
-        cs: impl Into<r1cs::Namespace<G::BaseField>>,
+    fn new_variable<T: std::borrow::Borrow<ElGamalCiphertext<C>>>(
+        cs: impl Into<r1cs::Namespace<C::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
@@ -211,42 +228,42 @@ where
         let value = f()?;
         let ciphertext = value.borrow();
 
-        // Allocate as ProjectiveVar directly
-        tracing::trace!(target: "shuffle::alloc", "Allocating c1 ProjectiveVar");
-        let c1 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
-            cs.clone(),
-            || Ok(ciphertext.c1),
-            mode,
-        )?;
+        // Allocate as CurveVar directly
+        tracing::trace!(target: "shuffle::alloc", "Allocating c1 CurveVar");
+        let c1 = CV::new_variable(cs.clone(), || Ok(ciphertext.c1), mode)?;
 
-        tracing::trace!(target: "shuffle::alloc", "Allocating c2 ProjectiveVar");
-        let c2 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
-            cs.clone(),
-            || Ok(ciphertext.c2),
-            mode,
-        )?;
+        tracing::trace!(target: "shuffle::alloc", "Allocating c2 CurveVar");
+        let c2 = CV::new_variable(cs.clone(), || Ok(ciphertext.c2), mode)?;
 
-        Ok(Self { c1, c2 })
+        Ok(Self {
+            c1,
+            c2,
+            _curve: std::marker::PhantomData,
+        })
     }
 }
 
 // Circuit representation of shuffled deck proof
-pub struct ShuffleProofVar<G: SWCurveConfig>
+pub struct ShuffleProofVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    pub input_deck: Vec<ElGamalCiphertextVar<G>>,
+    pub input_deck: Vec<ElGamalCiphertextVar<C, CV>>,
     /// Sorted list of (encrypted card, random value) pairs, sorted by random value in ascending order
-    pub sorted_deck: Vec<(ElGamalCiphertextVar<G>, FpVar<G::BaseField>)>,
-    pub encryption_randomization_values: Vec<FpVar<G::BaseField>>,
+    pub sorted_deck: Vec<(ElGamalCiphertextVar<C, CV>, FpVar<C::BaseField>)>,
+    pub encryption_randomization_values: Vec<FpVar<C::BaseField>>,
 }
 
-impl<G: SWCurveConfig> AllocVar<ShuffleProof<Projective<G>>, G::BaseField> for ShuffleProofVar<G>
+impl<C, CV> AllocVar<ShuffleProof<C>, C::BaseField> for ShuffleProofVar<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    fn new_variable<T: std::borrow::Borrow<ShuffleProof<Projective<G>>>>(
-        cs: impl Into<r1cs::Namespace<G::BaseField>>,
+    fn new_variable<T: std::borrow::Borrow<ShuffleProof<C>>>(
+        cs: impl Into<r1cs::Namespace<C::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
@@ -259,29 +276,21 @@ where
         tracing::debug!(target: "shuffle::alloc", "Starting optimized allocation");
 
         // Batch allocate input deck
-        let input_deck = batch_allocate_ciphertexts(cs.clone(), &proof.input_deck, mode)?;
+        let input_deck = batch_allocate_ciphertexts::<C, CV>(cs.clone(), &proof.input_deck, mode)?;
 
         tracing::debug!(target: "shuffle::alloc", "sorted deck allocation");
         // Allocate sorted deck with minimal overhead
         // DO NOT convert to affine - extremely expensive!
         let mut sorted_deck = Vec::with_capacity(proof.sorted_deck.len());
         for (ct, random_val) in &proof.sorted_deck {
-            let c1 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
-                cs.clone(),
-                || Ok(ct.c1),
-                mode,
-            )?;
+            let c1 = CV::new_variable(cs.clone(), || Ok(ct.c1), mode)?;
 
-            let c2 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
-                cs.clone(),
-                || Ok(ct.c2),
-                mode,
-            )?;
+            let c2 = CV::new_variable(cs.clone(), || Ok(ct.c2), mode)?;
 
             let random_var =
-                FpVar::<G::BaseField>::new_variable(cs.clone(), || Ok(*random_val), mode)?;
+                FpVar::<C::BaseField>::new_variable(cs.clone(), || Ok(*random_val), mode)?;
 
-            sorted_deck.push((ElGamalCiphertextVar { c1, c2 }, random_var));
+            sorted_deck.push((ElGamalCiphertextVar::new(c1, c2), random_var));
         }
 
         tracing::debug!(target: "shuffle::alloc", "randomization values allocation");
@@ -291,8 +300,8 @@ where
             .rerandomization_values
             .iter()
             .map(|val| {
-                let base_field_val = scalar_to_base_field::<G::ScalarField, G::BaseField>(val);
-                FpVar::<G::BaseField>::new_variable(cs.clone(), || Ok(base_field_val), mode)
+                let base_field_val = scalar_to_base_field::<C::ScalarField, C::BaseField>(val);
+                FpVar::<C::BaseField>::new_variable(cs.clone(), || Ok(base_field_val), mode)
             })
             .collect();
 

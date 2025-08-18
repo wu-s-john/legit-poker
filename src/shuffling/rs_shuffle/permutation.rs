@@ -1,11 +1,12 @@
 //! Grand-product permutation checks for RS shuffle
 
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
-use ark_ec::short_weierstrass::SWCurveConfig;
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
     eq::EqGadget,
     fields::{fp::FpVar, FieldVar},
+    groups::CurveVar,
     R1CSVar,
 };
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
@@ -85,36 +86,47 @@ where
 
 /// Represents an index with ElGamal ciphertext for permutation check
 /// This is used for the RS shuffle where we track (idx, ciphertext) pairs
-pub struct IndexedElGamalCiphertext<G: SWCurveConfig>
+pub struct IndexedElGamalCiphertext<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    pub idx: FpVar<G::BaseField>,
-    pub ciphertext: ElGamalCiphertextVar<G>,
+    pub idx: FpVar<C::BaseField>,
+    pub ciphertext: ElGamalCiphertextVar<C, CV>,
 }
 
-impl<G: SWCurveConfig> IndexedElGamalCiphertext<G>
+impl<C, CV> IndexedElGamalCiphertext<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
-    pub fn new(idx: FpVar<G::BaseField>, ciphertext: ElGamalCiphertextVar<G>) -> Self {
+    pub fn new(idx: FpVar<C::BaseField>, ciphertext: ElGamalCiphertextVar<C, CV>) -> Self {
         Self { idx, ciphertext }
     }
 }
 
-impl<G: SWCurveConfig> PermutationProduct<G::BaseField, 7> for IndexedElGamalCiphertext<G>
+impl<C, CV> PermutationProduct<C::BaseField, 7> for IndexedElGamalCiphertext<C, CV>
 where
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    CV: CurveVar<C, C::BaseField>,
+    C::BaseField: PrimeField,
 {
-    fn product(&self, challenges: &[FpVar<G::BaseField>; 7]) -> FpVar<G::BaseField> {
-        // Compress: α₀*idx + α₁*c1.x + α₂*c1.y + α₃*c1.z + α₄*c2.x + α₅*c2.y + α₆*c2.z
+    fn product(&self, challenges: &[FpVar<C::BaseField>; 7]) -> FpVar<C::BaseField> {
+        // Convert curve points to constraint field elements
+        let c1_fields = self.ciphertext.c1.to_constraint_field().unwrap();
+        let c2_fields = self.ciphertext.c2.to_constraint_field().unwrap();
+        
+        // Compress: α₀*idx + α₁*c1[0] + α₂*c1[1] + α₃*c1[2] + α₄*c2[0] + α₅*c2[1] + α₆*c2[2]
+        // We expect at least 3 field elements per point (x, y, and z/infinity)
         &challenges[0] * &self.idx
-            + &challenges[1] * &self.ciphertext.c1.x
-            + &challenges[2] * &self.ciphertext.c1.y
-            + &challenges[3] * &self.ciphertext.c1.z
-            + &challenges[4] * &self.ciphertext.c2.x
-            + &challenges[5] * &self.ciphertext.c2.y
-            + &challenges[6] * &self.ciphertext.c2.z
+            + &challenges[1] * &c1_fields[0]
+            + &challenges[2] * &c1_fields[1]
+            + &challenges[3] * &c1_fields[2]
+            + &challenges[4] * &c2_fields[0]
+            + &challenges[5] * &c2_fields[1]
+            + &challenges[6] * &c2_fields[2]
     }
 }
 

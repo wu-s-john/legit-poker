@@ -1,16 +1,7 @@
 use super::data_structures::*;
-use ark_ec::{
-    short_weierstrass::{Projective, SWCurveConfig},
-    CurveConfig, PrimeGroup,
-};
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_r1cs_std::{
-    convert::ToBitsGadget,
-    eq::EqGadget,
-    fields::fp::FpVar,
-    groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
-    prelude::*,
-};
+use ark_r1cs_std::{convert::ToBitsGadget, fields::fp::FpVar, groups::CurveVar};
 use ark_relations::{
     ns,
     r1cs::{ConstraintSystemRef, SynthesisError},
@@ -20,50 +11,43 @@ use std::marker::PhantomData;
 const LOG_TARGET: &str = "shuffle::encryption";
 
 /// ElGamal encryption operations
-pub struct ElGamalEncryption<G: CurveConfig> {
-    _phantom: PhantomData<G>,
+pub struct ElGamalEncryption<C: CurveGroup> {
+    _phantom: PhantomData<C>,
 }
 
-impl<G: CurveConfig> ElGamalEncryption<G>
+impl<C: CurveGroup> ElGamalEncryption<C>
 where
-    G: SWCurveConfig,
-    G::BaseField: PrimeField,
+    C::BaseField: PrimeField,
 {
     /// ElGamal encryption circuit for a single card
     /// Implements: c1 = m0 + R, c2 = m1 + P where R = r*g, P = r*pk
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    pub fn encrypt_card(
-        cs: ConstraintSystemRef<G::BaseField>,
-        m0: &ProjectiveVar<G, FpVar<G::BaseField>>,
-        m1: &ProjectiveVar<G, FpVar<G::BaseField>>,
-        pk: &ProjectiveVar<G, FpVar<G::BaseField>>,
-        r: &FpVar<G::BaseField>,
-    ) -> Result<
-        (
-            ProjectiveVar<G, FpVar<G::BaseField>>,
-            ProjectiveVar<G, FpVar<G::BaseField>>,
-        ),
-        SynthesisError,
-    > {
-        let cs = ns!(cs, "encrypt_card");
+    pub fn encrypt_card<CV>(
+        cs: ConstraintSystemRef<C::BaseField>,
+        m0: &CV,
+        m1: &CV,
+        pk: &CV,
+        r: &FpVar<C::BaseField>,
+    ) -> Result<(CV, CV), SynthesisError>
+    where
+        CV: CurveVar<C, C::BaseField>,
+    {
+        ns!(cs, "encrypt_card");
 
         // Fixed-base multiplication: R = r * g
-        let generator = ProjectiveVar::<G, FpVar<G::BaseField>>::new_constant(
-            cs.clone(),
-            Projective::<G>::generator(),
-        )?;
+        let generator = CV::constant(C::generator());
 
         let r_bits = r.to_bits_le()?;
         let r_point = generator.scalar_mul_le(r_bits.iter())?;
 
         // c1 = m0 + R
-        let c1 = m0 + &r_point;
+        let c1 = m0.clone() + r_point;
 
         // Variable-base multiplication: P = r * pk
         let p_point = pk.scalar_mul_le(r_bits.iter())?;
 
         // c2 = m1 + P
-        let c2 = m1 + &p_point;
+        let c2 = m1.clone() + p_point;
 
         Ok((c1, c2))
     }
@@ -71,18 +55,21 @@ where
     /// Single-share partial decryption circuit
     /// Implements: c2' = c2 - s_i * c1
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    pub fn partial_decrypt(
-        _cs: ConstraintSystemRef<G::BaseField>,
-        c1: &ProjectiveVar<G, FpVar<G::BaseField>>,
-        c2: &ProjectiveVar<G, FpVar<G::BaseField>>,
-        secret_share: &FpVar<G::BaseField>,
-    ) -> Result<ProjectiveVar<G, FpVar<G::BaseField>>, SynthesisError> {
+    pub fn partial_decrypt<CV>(
+        _cs: ConstraintSystemRef<C::BaseField>,
+        c1: &CV,
+        c2: &CV,
+        secret_share: &FpVar<C::BaseField>,
+    ) -> Result<CV, SynthesisError>
+    where
+        CV: CurveVar<C, C::BaseField>,
+    {
         // Variable-base multiplication: S = s_i * c1
         let s_bits = secret_share.to_bits_le()?;
         let s_point = c1.scalar_mul_le(s_bits.iter())?;
 
         // c2' = c2 - S
-        let c2_prime = c2 - &s_point;
+        let c2_prime = c2.clone() - s_point;
 
         Ok(c2_prime)
     }
@@ -90,21 +77,21 @@ where
     /// Re-randomization circuit for shuffling
     /// Implements: c1' = c1 + r' * g, c2' = c2 + r' * pk_shuffler
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    pub fn rerandomize_ciphertext(
-        cs: ConstraintSystemRef<G::BaseField>,
-        ciphertext: &ElGamalCiphertextVar<G>,
-        rerandomization: &FpVar<G::BaseField>,
-        shuffler_pk: &ProjectiveVar<G, FpVar<G::BaseField>>,
-    ) -> Result<ElGamalCiphertextVar<G>, SynthesisError> {
+    pub fn rerandomize_ciphertext<CV>(
+        cs: ConstraintSystemRef<C::BaseField>,
+        ciphertext: &ElGamalCiphertextVar<C, CV>,
+        rerandomization: &FpVar<C::BaseField>,
+        shuffler_pk: &CV,
+    ) -> Result<ElGamalCiphertextVar<C, CV>, SynthesisError>
+    where
+        CV: CurveVar<C, C::BaseField>,
+    {
         let n = ns!(cs, "rerandomize");
         let cs = n.cs();
 
         crate::track_constraints!(&cs, "rerandomize_ciphertext", LOG_TARGET, {
             // Fixed-base multiplication: r' * g
-            let generator = ProjectiveVar::<G, FpVar<G::BaseField>>::new_constant(
-                cs.clone(),
-                Projective::<G>::generator(),
-            )?;
+            let generator = CV::constant(C::generator());
             let r_bits = rerandomization.to_bits_le()?;
             let r_g = generator.scalar_mul_le(r_bits.iter())?;
 
@@ -112,10 +99,10 @@ where
             let r_pk = shuffler_pk.scalar_mul_le(r_bits.iter())?;
 
             // c1' = c1 + r' * g
-            let c1_prime = &ciphertext.c1 + &r_g;
+            let c1_prime = ciphertext.c1.clone() + r_g;
 
             // c2' = c2 + r' * pk_shuffler
-            let c2_prime = &ciphertext.c2 + &r_pk;
+            let c2_prime = ciphertext.c2.clone() + r_pk;
 
             Ok(ElGamalCiphertextVar::new(c1_prime, c2_prime))
         })
@@ -124,14 +111,14 @@ where
     /// Re-encrypt a deck of cards with new randomization values
     /// This function applies re-randomization to each card in the input deck
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    pub fn reencrypt_cards_with_new_randomization(
-        cs: ConstraintSystemRef<G::BaseField>,
-        input_deck: &Vec<ElGamalCiphertextVar<G>>,
-        encryption_randomizations: &Vec<FpVar<G::BaseField>>,
-        shuffler_pk: &ProjectiveVar<G, FpVar<G::BaseField>>,
-    ) -> Result<Vec<ElGamalCiphertextVar<G>>, SynthesisError>
+    pub fn reencrypt_cards_with_new_randomization<CV>(
+        cs: ConstraintSystemRef<C::BaseField>,
+        input_deck: &Vec<ElGamalCiphertextVar<C, CV>>,
+        encryption_randomizations: &Vec<FpVar<C::BaseField>>,
+        shuffler_pk: &CV,
+    ) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
     where
-        G::BaseField: PrimeField,
+        CV: CurveVar<C, C::BaseField>,
     {
         crate::track_constraints!(&cs, "reencrypt_cards_with_new_randomization", LOG_TARGET, {
             if input_deck.len() != encryption_randomizations.len() {
@@ -169,14 +156,17 @@ where
 
     /// Verify that a deck has been correctly re-randomized
     #[tracing::instrument(target = LOG_TARGET, name = "verify_rerandomization", skip_all)]
-    pub fn verify_rerandomization(
-        cs: ConstraintSystemRef<G::BaseField>,
-        input_deck: Vec<ElGamalCiphertextVar<G>>,
-        output_deck: Vec<ElGamalCiphertextVar<G>>,
-        rerandomizations: Vec<FpVar<G::BaseField>>,
-        shuffler_pk: &ProjectiveVar<G, FpVar<G::BaseField>>,
+    pub fn verify_rerandomization<CV>(
+        cs: ConstraintSystemRef<C::BaseField>,
+        input_deck: Vec<ElGamalCiphertextVar<C, CV>>,
+        output_deck: Vec<ElGamalCiphertextVar<C, CV>>,
+        rerandomizations: Vec<FpVar<C::BaseField>>,
+        shuffler_pk: &CV,
         permutation: Vec<usize>,
-    ) -> Result<(), SynthesisError> {
+    ) -> Result<(), SynthesisError>
+    where
+        CV: CurveVar<C, C::BaseField>,
+    {
         if input_deck.len() != output_deck.len() || input_deck.len() != rerandomizations.len() {
             tracing::error!("Input and output decks have different lengths");
             return Err(SynthesisError::Unsatisfiable);

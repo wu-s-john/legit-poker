@@ -6,7 +6,7 @@ use ark_ec::{
     short_weierstrass::{Projective, SWCurveConfig},
     CurveGroup,
 };
-use ark_ff::PrimeField;
+use ark_ff::{Field, PrimeField};
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
 use ark_relations::r1cs::{ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem};
 use ark_serialize::CanonicalSerialize;
@@ -23,28 +23,29 @@ pub enum ProofSystem {
     Both,
 }
 
-pub struct ShuffleSetup<E: ark_ec::pairing::Pairing, G2: SWCurveConfig> {
+pub struct ShuffleSetup<E: ark_ec::pairing::Pairing, C: CurveGroup> {
     pub groth16_pk: Option<ProvingKey<E>>,
     pub groth16_vk: Option<VerifyingKey<E>>,
     pub spartan_gens: Option<Vec<u8>>, // Serialized SNARKGens
     pub spartan_comm: Option<Vec<u8>>, // Serialized commitment
     pub constraint_count: usize,
     pub public_input_count: usize,
-    _phantom: PhantomData<G2>,
+    _phantom: PhantomData<C>,
 }
 
 /// Main proof function with setup
-pub fn prove_with_setup<E, G2>(
-    seed: G2::BaseField,
-    input_deck: Vec<ElGamalCiphertext<Projective<G2>>>,
-    shuffler_keys: &ElGamalKeys<Projective<G2>>,
-    setup: &ShuffleSetup<E, G2>,
+pub fn prove_with_setup<E, P>(
+    seed: <P::BaseField as Field>::BasePrimeField,
+    input_deck: Vec<ElGamalCiphertext<Projective<P>>>,
+    shuffler_keys: &ElGamalKeys<Projective<P>>,
+    setup: &ShuffleSetup<E, Projective<P>>,
     proof_system: ProofSystem,
 ) -> Result<(Vec<u8>, ProofMetrics), ShuffleError>
 where
-    G2: SWCurveConfig,
-    E: ark_ec::pairing::Pairing<ScalarField = G2::BaseField>,
-    G2::BaseField: PrimeField + Absorb,
+    P: SWCurveConfig,
+    E: ark_ec::pairing::Pairing<ScalarField = <P::BaseField as Field>::BasePrimeField>,
+    <P::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    P::BaseField: PrimeField,
 {
     let mut metrics = ProofMetrics::default();
     let _total_span = tracing::info_span!(target: LOG_TARGET, "prove_total").entered();
@@ -53,7 +54,7 @@ where
     let shuffle_proof = {
         let _span = tracing::info_span!(target: LOG_TARGET, "witness_synthesis").entered();
         let start = std::time::Instant::now();
-        let result = prove_as_subprotocol::<Projective<G2>>(seed, input_deck, shuffler_keys)?;
+        let result = prove_as_subprotocol::<Projective<P>>(seed, input_deck, shuffler_keys)?;
         metrics.witness_synthesis_time = start.elapsed();
         result
     };
@@ -63,11 +64,14 @@ where
         let _span = tracing::info_span!(target: LOG_TARGET, "constraint_generation").entered();
         let start = std::time::Instant::now();
 
-        let cs = ConstraintSystem::<G2::BaseField>::new_ref();
+        let cs = ConstraintSystem::<<P::BaseField as Field>::BasePrimeField>::new_ref();
 
         // Create and run the circuit
-        let circuit =
-            ShuffleCircuit::<G2>::new(shuffler_keys.public_key, shuffle_proof.clone(), seed);
+        let circuit = ShuffleCircuit::<Projective<P>>::new(
+            shuffler_keys.public_key,
+            shuffle_proof.clone(),
+            seed,
+        );
         circuit
             .generate_constraints(cs.clone())
             .map_err(|e| ShuffleError::Synthesis(e))?;
@@ -109,8 +113,11 @@ where
                     .ok_or(ShuffleError::SetupNotFound)?;
 
                 // Create the proving circuit
-                let circuit =
-                    ShuffleCircuit::<G2>::new(shuffler_keys.public_key, shuffle_proof, seed);
+                let circuit = ShuffleCircuit::<Projective<P>>::new(
+                    shuffler_keys.public_key,
+                    shuffle_proof,
+                    seed,
+                );
 
                 let proof = Groth16::<E>::prove(
                     pk,
@@ -156,11 +163,14 @@ where
 }
 
 /// Setup function - generates proving/verifying keys
-pub fn setup<E, G2>(proof_system: ProofSystem) -> Result<ShuffleSetup<E, G2>, ShuffleError>
+pub fn setup<E, P>(
+    proof_system: ProofSystem,
+) -> Result<ShuffleSetup<E, Projective<P>>, ShuffleError>
 where
-    G2: SWCurveConfig,
-    E: ark_ec::pairing::Pairing<ScalarField = G2::BaseField>,
-    G2::BaseField: PrimeField + Absorb,
+    P: SWCurveConfig,
+    E: ark_ec::pairing::Pairing<ScalarField = <P::BaseField as Field>::BasePrimeField>,
+    <P::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    P::BaseField: PrimeField,
 {
     let _setup_span = tracing::info_span!(target: LOG_TARGET, "setup_total").entered();
     tracing::info!(target: LOG_TARGET, "Starting setup phase");
@@ -169,18 +179,21 @@ where
     let (constraint_count, public_input_count, sample_proof, sample_keys, sample_seed) = {
         let _span = tracing::info_span!(target: LOG_TARGET, "circuit_analysis").entered();
 
-        let cs = ConstraintSystem::<G2::BaseField>::new_ref();
+        let cs = ConstraintSystem::<<P::BaseField as Field>::BasePrimeField>::new_ref();
 
         // Create a sample proof to determine circuit structure
-        let sample_deck = generate_sample_deck::<Projective<G2>>();
-        let sample_keys = ElGamalKeys::new(G2::ScalarField::from(1u64));
-        let sample_seed = G2::BaseField::from(42u64);
+        let sample_deck = generate_sample_deck::<Projective<P>>();
+        let sample_keys = ElGamalKeys::new(P::ScalarField::from(1u64));
+        let sample_seed = <P::BaseField as Field>::BasePrimeField::from(42u64);
         let sample_proof =
-            prove_as_subprotocol::<Projective<G2>>(sample_seed, sample_deck, &sample_keys)?;
+            prove_as_subprotocol::<Projective<P>>(sample_seed, sample_deck, &sample_keys)?;
 
         // Generate the circuit to count constraints
-        let circuit =
-            ShuffleCircuit::<G2>::new(sample_keys.public_key, sample_proof.clone(), sample_seed);
+        let circuit = ShuffleCircuit::<Projective<P>>::new(
+            sample_keys.public_key,
+            sample_proof.clone(),
+            sample_seed,
+        );
         circuit
             .generate_constraints(cs.clone())
             .map_err(|e| ShuffleError::Synthesis(e))?;
@@ -211,8 +224,11 @@ where
             tracing::info!(target: LOG_TARGET, "Generating Groth16 setup");
 
             // Use the sample circuit for setup
-            let circuit =
-                ShuffleCircuit::<G2>::new(sample_keys.public_key, sample_proof, sample_seed);
+            let circuit = ShuffleCircuit::<Projective<P>>::new(
+                sample_keys.public_key,
+                sample_proof,
+                sample_seed,
+            );
 
             let (pk, vk) = Groth16::<E>::circuit_specific_setup(
                 circuit,
@@ -273,19 +289,20 @@ where
 }
 
 /// Convenience function without setup (for testing/single use)
-pub fn prove<E, G2>(
-    seed: G2::BaseField,
-    input_deck: Vec<ElGamalCiphertext<Projective<G2>>>,
-    shuffler_keys: &ElGamalKeys<Projective<G2>>,
+pub fn prove<E, P>(
+    seed: <P::BaseField as Field>::BasePrimeField,
+    input_deck: Vec<ElGamalCiphertext<Projective<P>>>,
+    shuffler_keys: &ElGamalKeys<Projective<P>>,
     proof_system: ProofSystem,
 ) -> Result<(Vec<u8>, ProofMetrics), ShuffleError>
 where
-    G2: SWCurveConfig,
-    E: ark_ec::pairing::Pairing<ScalarField = G2::BaseField>,
-    G2::BaseField: PrimeField + Absorb,
+    P: SWCurveConfig,
+    E: ark_ec::pairing::Pairing<ScalarField = <P::BaseField as Field>::BasePrimeField>,
+    <P::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    P::BaseField: PrimeField,
 {
-    let setup = setup::<E, G2>(proof_system.clone())?;
-    prove_with_setup::<E, G2>(seed, input_deck, shuffler_keys, &setup, proof_system)
+    let setup = setup::<E, P>(proof_system.clone())?;
+    prove_with_setup::<E, P>(seed, input_deck, shuffler_keys, &setup, proof_system)
 }
 
 fn generate_sample_deck<C: CurveGroup>() -> Vec<ElGamalCiphertext<C>>
@@ -386,14 +403,17 @@ mod tests {
         // For ElGamal keys, we need the scalar field (Fr)
         let private_key = <g1::Config as CurveConfig>::ScalarField::rand(&mut rand::thread_rng());
         let public_key: G1Projective = G1Projective::generator() * private_key;
-        let shuffler_keys = ElGamalKeys { private_key, public_key };
+        let shuffler_keys = ElGamalKeys {
+            private_key,
+            public_key,
+        };
 
         // Making a proof
         let proof = prove_as_subprotocol::<G1Projective>(seed, input_deck, &shuffler_keys)?;
 
         tracing::info!(target: TEST_TARGET, "Finish making proof to feed for circuit");
         // Create the circuit - g1::Config implements SWCurveConfig
-        let circuit: ShuffleCircuit<g1::Config> =
+        let circuit: ShuffleCircuit<G1Projective> =
             ShuffleCircuit::new(shuffler_keys.public_key, proof, seed);
 
         let _rng = rand::thread_rng();
@@ -777,10 +797,14 @@ mod tests {
         let private_key =
             <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rand::thread_rng());
         let public_key = GrumpkinProjective::generator() * private_key;
-        let shuffler_keys = ElGamalKeys { private_key, public_key };
+        let shuffler_keys = ElGamalKeys {
+            private_key,
+            public_key,
+        };
 
         let proof = prove_as_subprotocol::<GrumpkinProjective>(seed, input_deck, &shuffler_keys)?;
-        let circuit = ShuffleCircuit::<GrumpkinConfig>::new(shuffler_keys.public_key, proof, seed);
+        let circuit =
+            ShuffleCircuit::<GrumpkinProjective>::new(shuffler_keys.public_key, proof, seed);
 
         // ---- run a Groth16 trusted setup + proof -----------------------------
         let mut rng = rand::thread_rng();

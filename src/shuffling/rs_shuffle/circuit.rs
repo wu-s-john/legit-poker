@@ -7,15 +7,10 @@ use crate::rs_shuffle::permutation::{check_grand_product, IndexedElGamalCipherte
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
 use crate::track_constraints;
 use ark_crypto_primitives::sponge::Absorb;
-use ark_ec::{
-    short_weierstrass::{Projective, SWCurveConfig},
-    CurveGroup,
-};
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
-use ark_r1cs_std::{
-    fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar, prelude::*,
-};
+use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use std::ops::Not;
 
@@ -144,29 +139,31 @@ where
 /// # Returns
 /// - `Ok(())` if all shuffle constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
-pub fn rs_shuffle<G, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<G::BaseField>,
-    ct_init_pub: &[ElGamalCiphertextVar<G>],
-    ct_after_shuffle: &[ElGamalCiphertextVar<G>],
-    witness: &WitnessDataVar<G::BaseField, N, LEVELS>,
-    alpha: &FpVar<G::BaseField>,
-    beta: &FpVar<G::BaseField>,
+pub fn rs_shuffle<C, CV, const N: usize, const LEVELS: usize>(
+    cs: ConstraintSystemRef<C::BaseField>,
+    ct_init_pub: &[ElGamalCiphertextVar<C, CV>],
+    ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>],
+    witness: &WitnessDataVar<C::BaseField, N, LEVELS>,
+    alpha: &FpVar<C::BaseField>,
+    beta: &FpVar<C::BaseField>,
 ) -> Result<(), SynthesisError>
 where
-    G: SWCurveConfig,
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
     track_constraints!(&cs, "rs shuffle", LOG_TARGET, {
         // 1. Create indexed ciphertexts by zipping witness indices with ciphertexts
         // Initial: Use indices from first level unsorted array
-        let ciphertexts_initial: Vec<IndexedElGamalCiphertext<G>> = witness.uns_levels[0]
+        let ciphertexts_initial: Vec<IndexedElGamalCiphertext<C, CV>> = witness.uns_levels[0]
             .iter()
             .zip(ct_init_pub.iter())
             .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
             .collect();
 
         // Final: Use indices from last level sorted array
-        let ciphertexts_final: Vec<IndexedElGamalCiphertext<G>> = witness.sorted_levels[LEVELS - 1]
+        let ciphertexts_final: Vec<IndexedElGamalCiphertext<C, CV>> = witness.sorted_levels
+            [LEVELS - 1]
             .iter()
             .zip(ct_after_shuffle.iter())
             .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
@@ -191,7 +188,7 @@ where
         // 4. Final permutation check using ElGamal ciphertexts (7 challenges)
         // This verifies that initial and final ciphertexts form the same multiset
         // The 7 challenges are: 1 for index + 6 for ElGamal components (c1.x, c1.y, c1.z, c2.x, c2.y, c2.z)
-        check_grand_product::<G::BaseField, IndexedElGamalCiphertext<G>, 7>(
+        check_grand_product::<C::BaseField, IndexedElGamalCiphertext<C, CV>, 7>(
             cs.clone(),
             &ciphertexts_initial,
             &ciphertexts_final,
@@ -235,24 +232,25 @@ where
 /// # Returns
 /// - `Ok(Vec<ElGamalCiphertextVar<G>>)` containing the re-encrypted ciphertexts if successful
 /// - `Err(SynthesisError)` if any constraint fails
-pub fn rs_shuffle_with_reencryption<G, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<G::BaseField>,
-    ct_init_pub: &[ElGamalCiphertextVar<G>; N],
-    ct_after_shuffle: &[ElGamalCiphertextVar<G>; N],
-    witness_table: &WitnessDataVar<G::BaseField, N, LEVELS>,
-    encryption_randomizations: &[FpVar<G::BaseField>; N],
-    shuffler_pk: &ProjectiveVar<G, FpVar<G::BaseField>>,
-    alpha: &FpVar<G::BaseField>,
-    beta: &FpVar<G::BaseField>,
-) -> Result<Vec<ElGamalCiphertextVar<G>>, SynthesisError>
+pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
+    cs: ConstraintSystemRef<C::BaseField>,
+    ct_init_pub: &[ElGamalCiphertextVar<C, CV>; N],
+    ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>; N],
+    witness_table: &WitnessDataVar<C::BaseField, N, LEVELS>,
+    encryption_randomizations: &[FpVar<C::BaseField>; N],
+    shuffler_pk: &CV,
+    alpha: &FpVar<C::BaseField>,
+    beta: &FpVar<C::BaseField>,
+) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
 where
-    G: SWCurveConfig,
-    G::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    CV: CurveVar<C, C::BaseField>,
 {
     track_constraints!(&cs, "rs shuffle with reencryption", LOG_TARGET, {
         // Step 1: Verify the shuffle from initial to intermediate ciphertexts
         tracing::debug!(target: LOG_TARGET, "Verifying RS shuffle");
-        rs_shuffle::<G, N, LEVELS>(
+        rs_shuffle::<C, _, N, LEVELS>(
             cs.clone(),
             ct_init_pub,
             ct_after_shuffle,
@@ -268,7 +266,7 @@ where
         let ct_after_shuffle_vec = ct_after_shuffle.to_vec();
         let encryption_randomizations_vec = encryption_randomizations.to_vec();
 
-        let reencrypted_deck = crate::shuffling::encryption::ElGamalEncryption::<G>::reencrypt_cards_with_new_randomization(
+        let reencrypted_deck = crate::shuffling::encryption::ElGamalEncryption::<C>::reencrypt_cards_with_new_randomization(
             cs.clone(),
             &ct_after_shuffle_vec,
             &encryption_randomizations_vec,
@@ -343,80 +341,45 @@ where
     pub num_samples: usize,
 }
 
-impl<G> ConstraintSynthesizer<G::BaseField> for RSShuffleCircuit<G::BaseField, Projective<G>>
+// Removed incorrect implementation that was trying to use ElGamal fields on RSShuffleIndicesCircuit
+// The RSShuffleIndicesCircuit works with indices (field elements), not ElGamal ciphertexts
+
+use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
+use ark_ec::CurveConfig;
+use ark_ff::Field;
+use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+
+impl<P, const N: usize, const LEVELS: usize>
+    ConstraintSynthesizer<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>
+    for RSShuffleWithReencryptionCircuit<
+        <<P as CurveConfig>::BaseField as Field>::BasePrimeField,
+        Projective<P>,
+        N,
+        LEVELS,
+    >
 where
-    G: SWCurveConfig,
-    G::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    P: SWCurveConfig,
+    <<P as CurveConfig>::BaseField as Field>::BasePrimeField:
+        PrimeField + ark_crypto_primitives::sponge::Absorb,
+    P::BaseField: PrimeField,
 {
     fn generate_constraints(
         self,
-        cs: ConstraintSystemRef<G::BaseField>,
+        cs: ConstraintSystemRef<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>,
     ) -> Result<(), SynthesisError> {
-        track_constraints!(&cs, "rs shuffle with variable allocation", LOG_TARGET, {
-            // Allocate seed as public input
-            let seed_var =
-                FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
-
-            // Use prepare_witness_data_circuit to create witness data from seed
-            let witness_var = super::witness_preparation::prepare_witness_data_circuit::<
-                G::BaseField,
-                N,
-                LEVELS,
-            >(cs.clone(), &seed_var, &self.witness, self.num_samples)?;
-
-            // Allocate ElGamal ciphertexts as public inputs
-            let ct_init_vars: Vec<ElGamalCiphertextVar<G>> = self
-                .ct_init_pub
-                .iter()
-                .map(|ct| {
-                    ElGamalCiphertextVar::<G>::new_variable(
-                        cs.clone(),
-                        || Ok(ct),
-                        AllocationMode::Input,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            let ct_final_vars: Vec<ElGamalCiphertextVar<G>> = self
-                .ct_after_shuffle
-                .iter()
-                .map(|ct| {
-                    ElGamalCiphertextVar::<G>::new_variable(
-                        cs.clone(),
-                        || Ok(ct),
-                        AllocationMode::Input,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-
-            // Allocate challenges as public inputs
-            let alpha_var =
-                FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
-            let beta_var =
-                FpVar::new_variable(cs.clone(), || Ok(self.beta), AllocationMode::Input)?;
-
-            // Call the main verification function
-            rs_shuffle::<G, N, LEVELS>(
-                cs.clone(),
-                &ct_init_vars,
-                &ct_final_vars,
-                &witness_var,
-                &alpha_var,
-                &beta_var,
-            )
-        })
+        self.generate_constraints_with_curve_var::<ProjectiveVar<P, FpVar<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>>>(cs)
     }
 }
 
-impl<G, const N: usize, const LEVELS: usize> ConstraintSynthesizer<G::BaseField>
-    for RSShuffleWithReencryptionCircuit<G::BaseField, Projective<G>, N, LEVELS>
+impl<C, const N: usize, const LEVELS: usize>
+    RSShuffleWithReencryptionCircuit<C::BaseField, C, N, LEVELS>
 where
-    G: SWCurveConfig,
-    G::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C: CurveGroup,
+    C::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
 {
-    fn generate_constraints(
+    fn generate_constraints_with_curve_var<CV: CurveVar<C, C::BaseField>>(
         self,
-        cs: ConstraintSystemRef<G::BaseField>,
+        cs: ConstraintSystemRef<C::BaseField>,
     ) -> Result<(), SynthesisError> {
         track_constraints!(
             &cs,
@@ -430,17 +393,17 @@ where
                 // Use prepare_witness_data_circuit to create witness data from seed
                 let witness_var =
                     super::witness_preparation::prepare_witness_data_circuit::<
-                        G::BaseField,
+                        C::BaseField,
                         N,
                         LEVELS,
                     >(cs.clone(), &seed_var, &self.witness, self.num_samples)?;
 
                 // Allocate initial ElGamal ciphertexts as public inputs
-                let ct_init_vars: [ElGamalCiphertextVar<G>; N] = self
+                let ct_init_vars: [ElGamalCiphertextVar<C, CV>; N] = self
                     .ct_init_pub
                     .iter()
                     .map(|ct| {
-                        ElGamalCiphertextVar::<G>::new_variable(
+                        ElGamalCiphertextVar::<C, CV>::new_variable(
                             cs.clone(),
                             || Ok(ct),
                             AllocationMode::Input,
@@ -451,11 +414,11 @@ where
                     .map_err(|_| SynthesisError::Unsatisfiable)?;
 
                 // Allocate intermediate shuffled ciphertexts as witness
-                let ct_after_shuffle_vars: [ElGamalCiphertextVar<G>; N] = self
+                let ct_after_shuffle_vars: [ElGamalCiphertextVar<C, CV>; N] = self
                     .ct_after_shuffle
                     .iter()
                     .map(|ct| {
-                        ElGamalCiphertextVar::<G>::new_variable(
+                        ElGamalCiphertextVar::<C, CV>::new_variable(
                             cs.clone(),
                             || Ok(ct),
                             AllocationMode::Witness,
@@ -466,11 +429,11 @@ where
                     .map_err(|_| SynthesisError::Unsatisfiable)?;
 
                 // Allocate final re-encrypted ciphertexts as public inputs
-                let ct_final_reencrypted_vars: Vec<ElGamalCiphertextVar<G>> = self
+                let ct_final_reencrypted_vars: Vec<ElGamalCiphertextVar<C, CV>> = self
                     .ct_final_reencrypted
                     .iter()
                     .map(|ct| {
-                        ElGamalCiphertextVar::<G>::new_variable(
+                        ElGamalCiphertextVar::<C, CV>::new_variable(
                             cs.clone(),
                             || Ok(ct),
                             AllocationMode::Input,
@@ -479,14 +442,14 @@ where
                     .collect::<Result<Vec<_>, _>>()?;
 
                 // Allocate shuffler public key as public input
-                let shuffler_pk_var = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
+                let shuffler_pk_var: CV = AllocVar::new_variable(
                     cs.clone(),
                     || Ok(self.shuffler_pk),
                     AllocationMode::Input,
                 )?;
 
                 // Allocate re-encryption randomizations as witness
-                let encryption_randomizations_vars: [FpVar<G::BaseField>; N] = self
+                let encryption_randomizations_vars: [FpVar<C::BaseField>; N] = self
                     .encryption_randomizations
                     .iter()
                     .map(|r| FpVar::new_variable(cs.clone(), || Ok(*r), AllocationMode::Witness))
@@ -501,7 +464,7 @@ where
                     FpVar::new_variable(cs.clone(), || Ok(self.beta), AllocationMode::Input)?;
 
                 // Call the main verification function directly with arrays
-                let reencrypted_result = rs_shuffle_with_reencryption::<G, N, LEVELS>(
+                let reencrypted_result = rs_shuffle_with_reencryption::<C, _, N, LEVELS>(
                     cs.clone(),
                     &ct_init_vars,
                     &ct_after_shuffle_vars,
@@ -810,6 +773,8 @@ mod tests {
     use crate::shuffling::rs_shuffle::prepare_witness_data_circuit;
     use crate::shuffling::rs_shuffle::witness_preparation::build_level;
     use ark_bls12_381::Fr as TestField;
+    use ark_ec::CurveConfig;
+    use ark_grumpkin::GrumpkinConfig;
     use ark_r1cs_std::alloc::AllocVar;
     use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
     use tracing_subscriber::{
@@ -1260,7 +1225,7 @@ mod tests {
         use crate::shuffling::rs_shuffle::witness_preparation::prepare_witness_data;
         use ark_bn254::Fr as BaseField;
         use ark_ec::PrimeGroup;
-        use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
+        use ark_grumpkin::Projective as GrumpkinProjective;
         use ark_std::UniformRand;
 
         tracing::debug!(target: TEST_TARGET, "Starting test_rs_shuffle_ordinary_case");
@@ -1270,16 +1235,14 @@ mod tests {
         let generator = GrumpkinProjective::generator();
 
         // Generate a public key for encryption
-        let private_key = <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(&mut rng);
+        let private_key = <GrumpkinProjective as PrimeGroup>::ScalarField::rand(&mut rng);
         let public_key = generator * private_key;
 
         // Create 52 ciphertexts with distinct messages
         let ct_init: Vec<ElGamalCiphertext<GrumpkinProjective>> = (0..N)
             .map(|i| {
-                let message =
-                    <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::from((i + 1) as u64);
-                let randomness =
-                    <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(&mut rng);
+                let message = <GrumpkinConfig as CurveConfig>::ScalarField::from((i + 1) as u64);
+                let randomness = <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng);
                 ElGamalCiphertext::encrypt_scalar(message, randomness, public_key)
             })
             .collect();
@@ -1310,30 +1273,27 @@ mod tests {
         let cs = ConstraintSystem::<BaseField>::new_ref();
 
         // Allocate initial ciphertexts as witness
-        let ct_init_vars: Vec<ElGamalCiphertextVar<GrumpkinConfig>> = ct_init
+        let ct_init_vars: Vec<ElGamalCiphertextVar<Projective<GrumpkinConfig>, _>> = ct_init
             .iter()
             .map(|ct| {
-                ElGamalCiphertextVar::<GrumpkinConfig>::new_variable(
-                    cs.clone(),
-                    || Ok(ct),
-                    AllocationMode::Witness,
-                )
+                ElGamalCiphertextVar::new_variable(cs.clone(), || Ok(ct), AllocationMode::Witness)
             })
             .collect::<Result<Vec<_>, _>>()
             .expect("Failed to allocate initial ciphertexts");
 
         // Allocate shuffled ciphertexts as witness
-        let ct_final_vars: Vec<ElGamalCiphertextVar<GrumpkinConfig>> = ct_after_shuffle
-            .iter()
-            .map(|ct| {
-                ElGamalCiphertextVar::<GrumpkinConfig>::new_variable(
-                    cs.clone(),
-                    || Ok(ct),
-                    AllocationMode::Witness,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Failed to allocate shuffled ciphertexts");
+        let ct_final_vars: Vec<ElGamalCiphertextVar<Projective<GrumpkinConfig>, _>> =
+            ct_after_shuffle
+                .iter()
+                .map(|ct| {
+                    ElGamalCiphertextVar::new_variable(
+                        cs.clone(),
+                        || Ok(ct),
+                        AllocationMode::Witness,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .expect("Failed to allocate shuffled ciphertexts");
 
         track_constraints!(
             &cs,
@@ -1360,7 +1320,12 @@ mod tests {
                     .expect("Failed to create beta");
 
                 // 6. Run the rs_shuffle verification function
-                rs_shuffle::<GrumpkinConfig, N, LEVELS>(
+                rs_shuffle::<
+                    GrumpkinProjective,
+                    ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>,
+                    N,
+                    LEVELS,
+                >(
                     cs.clone(),
                     &ct_init_vars,
                     &ct_final_vars,
@@ -1445,8 +1410,7 @@ mod tests {
         use ark_bn254::Fr as BaseField;
         use ark_ec::PrimeGroup;
         use ark_ff::BigInteger;
-        use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
-        use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+        use ark_grumpkin::Projective as GrumpkinProjective;
         use ark_std::UniformRand;
 
         tracing::debug!(target: TEST_TARGET, "Starting test_rs_shuffle_with_reencryption");
@@ -1456,15 +1420,13 @@ mod tests {
         let generator = GrumpkinProjective::generator();
 
         // Generate shuffler keys
-        let shuffler_private_key =
-            <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(&mut rng);
+        let shuffler_private_key = <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng);
         let shuffler_public_key = generator * shuffler_private_key;
 
         // Create N ciphertexts with distinct messages
         let ct_init: [ElGamalCiphertext<GrumpkinProjective>; N] = std::array::from_fn(|i| {
-            let message =
-                <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::from((i + 1) as u64);
-            let randomness = <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(&mut rng);
+            let message = <GrumpkinConfig as CurveConfig>::ScalarField::from((i + 1) as u64);
+            let randomness = <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng);
             ElGamalCiphertext::encrypt_scalar(message, randomness, shuffler_public_key)
         });
 
@@ -1482,10 +1444,8 @@ mod tests {
         );
 
         // Generate re-encryption randomizations
-        let rerandomizations: [<GrumpkinConfig as ark_ec::CurveConfig>::ScalarField; N] =
-            std::array::from_fn(|_| {
-                <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(&mut rng)
-            });
+        let rerandomizations: [<GrumpkinConfig as CurveConfig>::ScalarField; N] =
+            std::array::from_fn(|_| <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng));
 
         // Apply re-encryption natively
         let ct_final_native: [ElGamalCiphertext<GrumpkinProjective>; N] =
@@ -1498,8 +1458,11 @@ mod tests {
         let cs = ConstraintSystem::<BaseField>::new_ref();
 
         // Allocate initial ciphertexts
-        let ct_init_vars: [ElGamalCiphertextVar<GrumpkinConfig>; N] = std::array::from_fn(|i| {
-            ElGamalCiphertextVar::<GrumpkinConfig>::new_variable(
+        let ct_init_vars: [ElGamalCiphertextVar<
+            GrumpkinProjective,
+            ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>,
+        >; N] = std::array::from_fn(|i| {
+            ElGamalCiphertextVar::new_variable(
                 cs.clone(),
                 || Ok(&ct_init[i]),
                 AllocationMode::Witness,
@@ -1508,15 +1471,14 @@ mod tests {
         });
 
         // Allocate shuffled ciphertexts (intermediate state)
-        let ct_after_shuffle_vars: [ElGamalCiphertextVar<GrumpkinConfig>; N] =
-            std::array::from_fn(|i| {
-                ElGamalCiphertextVar::<GrumpkinConfig>::new_variable(
-                    cs.clone(),
-                    || Ok(&ct_after_shuffle_native[i]),
-                    AllocationMode::Witness,
-                )
-                .expect("Failed to allocate shuffled ciphertext")
-            });
+        let ct_after_shuffle_vars = std::array::from_fn(|i| {
+            ElGamalCiphertextVar::new_variable(
+                cs.clone(),
+                || Ok(&ct_after_shuffle_native[i]),
+                AllocationMode::Witness,
+            )
+            .expect("Failed to allocate shuffled ciphertext")
+        });
 
         // Allocate witness data
         let seed_var = FpVar::new_constant(cs.clone(), seed).expect("Failed to allocate seed");
@@ -1538,11 +1500,9 @@ mod tests {
         });
 
         // Allocate shuffler public key
-        let shuffler_pk_var =
-            ProjectiveVar::<GrumpkinConfig, FpVar<BaseField>>::new_witness(cs.clone(), || {
-                Ok(shuffler_public_key)
-            })
-            .expect("Failed to allocate shuffler public key");
+        let shuffler_pk_var: ProjectiveVar<GrumpkinConfig, FpVar<BaseField>> =
+            AllocVar::new_witness(cs.clone(), || Ok(shuffler_public_key))
+                .expect("Failed to allocate shuffler public key");
 
         // Allocate Fiat-Shamir challenges
         let alpha = FpVar::new_constant(cs.clone(), BaseField::from(17u64))
@@ -1551,7 +1511,12 @@ mod tests {
             FpVar::new_constant(cs.clone(), BaseField::from(23u64)).expect("Failed to create beta");
 
         // 4. Run the SNARK function
-        let ct_final_snark = rs_shuffle_with_reencryption::<GrumpkinConfig, N, LEVELS>(
+        let ct_final_snark = rs_shuffle_with_reencryption::<
+            GrumpkinProjective,
+            ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>,
+            N,
+            LEVELS,
+        >(
             cs.clone(),
             &ct_init_vars,
             &ct_after_shuffle_vars,
