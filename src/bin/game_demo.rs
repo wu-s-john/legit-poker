@@ -419,7 +419,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut human_cards = vec![0u8, 1u8]; // Default cards for human
     match game_manager.deal_hole_cards(game_id).await {
         Ok(_) => {
+            let dealing_time = phase_start.elapsed();
             println!("   ✅ Cards successfully dealt and decrypted");
+            println!("   ⏱️  Dealing took {:.2} seconds", dealing_time.as_secs_f64());
+            println!("   ⏱️  Total shuffle + deal time: {:.2} seconds", (shuffle_time + dealing_time).as_secs_f64());
             // Try to get the actual human player's cards
             if let Some(game) = game_manager.games.get(&game_id) {
                 if let Some(human_player) = game.players.iter().find(|p| p.id == "human_player") {
