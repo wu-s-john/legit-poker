@@ -117,16 +117,16 @@ where
         // Convert curve points to constraint field elements
         let c1_fields = self.ciphertext.c1.to_constraint_field().unwrap();
         let c2_fields = self.ciphertext.c2.to_constraint_field().unwrap();
-        
+
         // Compress: α₀*idx + α₁*c1[0] + α₂*c1[1] + α₃*c1[2] + α₄*c2[0] + α₅*c2[1] + α₆*c2[2]
         // We expect at least 3 field elements per point (x, y, and z/infinity)
         &challenges[0] * &self.idx
             + &challenges[1] * &c1_fields[0]
             + &challenges[2] * &c1_fields[1]
-            + &challenges[3] * &c1_fields[2]
+            // + &challenges[3] * &c1_fields[2]
             + &challenges[4] * &c2_fields[0]
             + &challenges[5] * &c2_fields[1]
-            + &challenges[6] * &c2_fields[2]
+        // + &challenges[6] * &c2_fields[2]
     }
 }
 

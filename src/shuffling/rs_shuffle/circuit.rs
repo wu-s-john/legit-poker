@@ -12,6 +12,7 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
 use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use std::marker::PhantomData;
 use std::ops::Not;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::circuit";
@@ -294,10 +295,11 @@ where
 }
 
 /// RS Shuffle with Re-encryption Circuit - Complete circuit for shuffle + re-encryption
-pub struct RSShuffleWithReencryptionCircuit<F, C, const N: usize, const LEVELS: usize>
+pub struct RSShuffleWithReencryptionCircuit<F, C, CV, const N: usize, const LEVELS: usize>
 where
     F: PrimeField,
     C: CurveGroup<BaseField = F>,
+    CV: CurveVar<C, F>,
 {
     /// Initial ciphertexts before shuffle (public input)
     pub ct_init_pub: [ElGamalCiphertext<C>; N],
@@ -319,6 +321,43 @@ where
     pub witness: WitnessData<N, LEVELS>,
     /// Number of samples used in bit generation
     pub num_samples: usize,
+    _phantom: PhantomData<CV>,
+}
+
+impl<F, C, CV, const N: usize, const LEVELS: usize>
+    RSShuffleWithReencryptionCircuit<F, C, CV, N, LEVELS>
+where
+    F: PrimeField,
+    C: CurveGroup<BaseField = F>,
+    CV: CurveVar<C, F>,
+{
+    /// Create a new RSShuffleWithReencryptionCircuit instance
+    pub fn new(
+        ct_init_pub: [ElGamalCiphertext<C>; N],
+        ct_after_shuffle: [ElGamalCiphertext<C>; N],
+        ct_final_reencrypted: [ElGamalCiphertext<C>; N],
+        seed: F,
+        shuffler_pk: C,
+        encryption_randomizations: [F; N],
+        alpha: F,
+        beta: F,
+        witness: WitnessData<N, LEVELS>,
+        num_samples: usize,
+    ) -> Self {
+        Self {
+            ct_init_pub,
+            ct_after_shuffle,
+            ct_final_reencrypted,
+            seed,
+            shuffler_pk,
+            encryption_randomizations,
+            alpha,
+            beta,
+            witness,
+            num_samples,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 /// RS Shuffle Indices Circuit - Circuit for verifying shuffle of indices only
@@ -341,43 +380,14 @@ where
     pub num_samples: usize,
 }
 
-// Removed incorrect implementation that was trying to use ElGamal fields on RSShuffleIndicesCircuit
-// The RSShuffleIndicesCircuit works with indices (field elements), not ElGamal ciphertexts
-
-use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
-use ark_ec::CurveConfig;
-use ark_ff::Field;
-use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
-
-impl<P, const N: usize, const LEVELS: usize>
-    ConstraintSynthesizer<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>
-    for RSShuffleWithReencryptionCircuit<
-        <<P as CurveConfig>::BaseField as Field>::BasePrimeField,
-        Projective<P>,
-        N,
-        LEVELS,
-    >
-where
-    P: SWCurveConfig,
-    <<P as CurveConfig>::BaseField as Field>::BasePrimeField:
-        PrimeField + ark_crypto_primitives::sponge::Absorb,
-    P::BaseField: PrimeField,
-{
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>,
-    ) -> Result<(), SynthesisError> {
-        self.generate_constraints_with_curve_var::<ProjectiveVar<P, FpVar<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>>>(cs)
-    }
-}
-
-impl<C, const N: usize, const LEVELS: usize>
-    RSShuffleWithReencryptionCircuit<C::BaseField, C, N, LEVELS>
+impl<C, CV, const N: usize, const LEVELS: usize> ConstraintSynthesizer<C::BaseField>
+    for RSShuffleWithReencryptionCircuit<C::BaseField, C, CV, N, LEVELS>
 where
     C: CurveGroup,
-    C::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C::BaseField: PrimeField + Absorb,
+    CV: CurveVar<C, C::BaseField>,
 {
-    fn generate_constraints_with_curve_var<CV: CurveVar<C, C::BaseField>>(
+    fn generate_constraints(
         self,
         cs: ConstraintSystemRef<C::BaseField>,
     ) -> Result<(), SynthesisError> {
@@ -773,9 +783,11 @@ mod tests {
     use crate::shuffling::rs_shuffle::prepare_witness_data_circuit;
     use crate::shuffling::rs_shuffle::witness_preparation::build_level;
     use ark_bls12_381::Fr as TestField;
+    use ark_ec::short_weierstrass::Projective;
     use ark_ec::CurveConfig;
     use ark_grumpkin::GrumpkinConfig;
     use ark_r1cs_std::alloc::AllocVar;
+    use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
     use tracing_subscriber::{
         filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,

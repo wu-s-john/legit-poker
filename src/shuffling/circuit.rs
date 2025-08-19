@@ -3,12 +3,8 @@ use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar, Absorb,
 };
-use ark_ec::short_weierstrass::{Projective, SWCurveConfig};
-use ark_ec::CurveConfig;
 use ark_ec::CurveGroup;
-use ark_ff::Field;
 use ark_ff::PrimeField;
-use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::{
     ns,
@@ -20,7 +16,7 @@ const LOG_TARGET: &str = "shuffle::circuit";
 
 /// Circuit for verifying card shuffling
 #[derive(Clone)]
-pub struct ShuffleCircuit<C: CurveGroup>
+pub struct ShuffleCircuit<C: CurveGroup, CV: CurveVar<C, C::BaseField>>
 where
     C::BaseField: PrimeField,
 {
@@ -30,9 +26,10 @@ where
     pub proof: ShuffleProof<C>,
     /// Random seed for the shuffle
     pub seed: C::BaseField,
+    _phantom: std::marker::PhantomData<CV>,
 }
 
-impl<C: CurveGroup> ShuffleCircuit<C>
+impl<C: CurveGroup, CV: CurveVar<C, C::BaseField>> ShuffleCircuit<C, CV>
 where
     C::BaseField: PrimeField,
 {
@@ -42,6 +39,7 @@ where
             shuffler_public_key,
             proof,
             seed,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -100,7 +98,7 @@ where
     }
 
     /// Compute the grand product for a deck of cards
-    fn compute_deck_product<'a, CV, I>(
+    fn compute_deck_product<'a, I>(
         &self,
         _cs: ConstraintSystemRef<C::BaseField>,
         deck: I,
@@ -108,8 +106,6 @@ where
         beta: &FpVar<C::BaseField>,
     ) -> Result<FpVar<C::BaseField>, SynthesisError>
     where
-        C::BaseField: PrimeField,
-        CV: CurveVar<C, C::BaseField>,
         I: Iterator<Item = (&'a ElGamalCiphertextVar<C, CV>, &'a FpVar<C::BaseField>)>,
     {
         // Precompute powers of alpha outside the loop
@@ -149,7 +145,7 @@ where
     }
 
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    fn verify_equivalance_through_grand_product<CV>(
+    fn verify_equivalance_through_grand_product(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,
         deck: &Vec<(&ElGamalCiphertextVar<C, CV>, FpVar<C::BaseField>)>,
@@ -213,16 +209,11 @@ where
 
     /// Verify that the sorted deck is actually sorted in increasing order by random values
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    #[allow(dead_code)]
-    fn verify_sorting_order<CV>(
+    fn verify_sorting_order(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,
         proof: &ShuffleProofVar<C, CV>,
-    ) -> Result<(), SynthesisError>
-    where
-        C::BaseField: PrimeField,
-        CV: CurveVar<C, C::BaseField>,
-    {
+    ) -> Result<(), SynthesisError> {
         ns!(cs, "verify_sorting_order");
 
         tracing::info!(
@@ -283,26 +274,13 @@ where
     }
 }
 
-impl<P> ConstraintSynthesizer<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>
-    for ShuffleCircuit<Projective<P>>
+impl<C, CV> ConstraintSynthesizer<C::BaseField> for ShuffleCircuit<C, CV>
 where
-    P: SWCurveConfig,
-    <<P as CurveConfig>::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
-    P::BaseField: PrimeField,
+    C: CurveGroup,
+    C::BaseField: PrimeField + Absorb,
+    CV: CurveVar<C, C::BaseField>,
 {
     fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>,
-    ) -> Result<(), SynthesisError> {
-        self.generate_constraints_with_curve_var::<ProjectiveVar<P, FpVar<<<P as CurveConfig>::BaseField as Field>::BasePrimeField>>>(cs)
-    }
-}
-
-impl<C: CurveGroup> ShuffleCircuit<C>
-where
-    C::BaseField: PrimeField + Absorb,
-{
-    fn generate_constraints_with_curve_var<CV: CurveVar<C, C::BaseField>>(
         self,
         cs: ConstraintSystemRef<C::BaseField>,
     ) -> Result<(), SynthesisError> {
@@ -430,8 +408,8 @@ where
         )?;
 
         // // Verify that the sorted deck is actually sorted
-        // tracing::info!(target = LOG_TARGET, "Verifying sorting order...");
-        // self.verify_sorting_order(cs.clone(), &proof_var)?;
+        tracing::info!(target = LOG_TARGET, "Verifying sorting order...");
+        self.verify_sorting_order(cs.clone(), &proof_var)?;
 
         Ok(())
     }

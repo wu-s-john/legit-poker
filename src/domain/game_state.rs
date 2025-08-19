@@ -303,7 +303,9 @@ impl GameState {
             (Category::Event, "event.action.verified") => {
                 #[derive(Deserialize)]
                 struct Payload {
+                    #[allow(dead_code)]
                     action_id: String,
+                    #[allow(dead_code)]
                     verified: bool,
                     prover_ms: u32,
                     actor: Option<UserId>,

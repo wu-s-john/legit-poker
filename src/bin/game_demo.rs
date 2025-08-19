@@ -33,6 +33,7 @@ use zk_poker::shuffling::{
 };
 
 /// Helper function to format a list field, showing only first 2 elements
+#[allow(dead_code)]
 fn format_list_field(array: &serde_json::Value, max_items: usize) -> String {
     if let Some(arr) = array.as_array() {
         if arr.is_empty() {

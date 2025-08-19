@@ -1,25 +1,93 @@
-//! Benchmark for RSShuffleWithReencryptionCircuit using Groth16 with BN254/Grumpkin
+//! Benchmark for RSShuffleWithReencryptionCircuit using Groth16 with configurable pairing curves
 
-use ark_bn254::{Bn254, Fr as ScalarField};
-use ark_ec::{AffineRepr, CurveGroup, PrimeGroup};
+use ark_ec::{
+    pairing::Pairing, short_weierstrass::Projective, AffineRepr, CurveConfig, CurveGroup,
+};
 use ark_ff::{BigInteger, PrimeField, UniformRand};
 use ark_groth16::{prepare_verifying_key, Groth16};
-use ark_grumpkin::{Projective as GrumpkinProjective, GrumpkinConfig};
+use ark_r1cs_std::{
+    fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar, groups::CurveVar,
+};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
+use clap::{Parser, ValueEnum};
 use std::time::{Duration, Instant};
+use tracing_subscriber::{
+    filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
+};
 use zk_poker::shuffling::{
     data_structures::{scalar_to_base_field, ElGamalCiphertext},
     rs_shuffle::{
         circuit::RSShuffleWithReencryptionCircuit,
-        witness_preparation::apply_rs_shuffle_permutation,
-        LEVELS, N,
+        witness_preparation::apply_rs_shuffle_permutation, LEVELS, N,
     },
 };
 
-/// Configuration for benchmark runs
+// Import specific curve implementations
+use ark_bls12_381::Bls12_381;
+use ark_bn254::Bn254;
+use ark_crypto_primitives::sponge::Absorb;
+use ark_ed_on_bls12_381;
+use ark_ed_on_bn254;
+
+/// Supported inner curve configurations (curves used for encryption)
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+enum InnerCurveSelection {
+    /// Grumpkin curve (short Weierstrass, uses BN254 pairing)
+    #[value(name = "grumpkin")]
+    Grumpkin,
+    /// BabyJubJub curve (twisted Edwards, uses BN254 pairing)
+    #[value(name = "babyjubjub")]
+    BabyJubJub,
+    /// Bandersnatch curve (twisted Edwards, uses BLS12-381 pairing)
+    #[value(name = "bandersnatch")]
+    Bandersnatch,
+    /// Jubjub curve (twisted Edwards, uses BLS12-381 pairing)
+    #[value(name = "jubjub")]
+    Jubjub,
+}
+
+impl std::fmt::Display for InnerCurveSelection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InnerCurveSelection::Grumpkin => write!(f, "Grumpkin (BN254)"),
+            InnerCurveSelection::BabyJubJub => write!(f, "BabyJubJub (BN254)"),
+            InnerCurveSelection::Bandersnatch => write!(f, "Bandersnatch (BLS12-381)"),
+            InnerCurveSelection::Jubjub => write!(f, "Jubjub (BLS12-381)"),
+        }
+    }
+}
+
+/// RS Shuffle with Re-encryption Circuit Benchmark
+#[derive(Parser, Debug)]
+#[command(name = "rs_shuffle_reencrypt_bench")]
+#[command(version, about, long_about = None)]
+#[command(after_help = "INNER CURVE CONFIGURATIONS:
+  grumpkin:     Short Weierstrass curve, uses BN254 pairing
+  babyjubjub:   Twisted Edwards curve, uses BN254 pairing  
+  bandersnatch: Twisted Edwards curve, uses BLS12-381 pairing
+  jubjub:       Twisted Edwards curve, uses BLS12-381 pairing")]
+struct Cli {
+    /// Select inner curve for encryption
+    #[arg(long, value_enum, default_value_t = InnerCurveSelection::Grumpkin)]
+    curve: InnerCurveSelection,
+
+    /// Number of iterations to run
+    #[arg(short, long, default_value_t = 1)]
+    iterations: usize,
+
+    /// Output results in CSV format
+    #[arg(long)]
+    csv: bool,
+
+    /// Suppress verbose output
+    #[arg(short, long)]
+    quiet: bool,
+}
+
+/// Configuration for benchmark runs (derived from CLI args)
 struct BenchmarkConfig {
     /// Number of iterations to run
     iterations: usize,
@@ -27,16 +95,8 @@ struct BenchmarkConfig {
     csv_output: bool,
     /// Whether to run in verbose mode
     verbose: bool,
-}
-
-impl Default for BenchmarkConfig {
-    fn default() -> Self {
-        Self {
-            iterations: 1,
-            csv_output: false,
-            verbose: true,
-        }
-    }
+    /// Which inner curve to use
+    curve: InnerCurveSelection,
 }
 
 /// Statistics collected during benchmark
@@ -70,16 +130,27 @@ impl BenchmarkStats {
         println!("║ Circuit Statistics                                        ║");
         println!("╟───────────────────────────────────────────────────────────╢");
         println!("║ Constraints:              {:>32} ║", self.num_constraints);
-        println!("║ Witness Variables:        {:>32} ║", self.num_witness_variables);
-        println!("║ Public Input Variables:   {:>32} ║", self.num_public_input_variables);
-        println!("║ Total Variables:          {:>32} ║", 
-            self.num_witness_variables + self.num_public_input_variables);
+        println!(
+            "║ Witness Variables:        {:>32} ║",
+            self.num_witness_variables
+        );
+        println!(
+            "║ Public Input Variables:   {:>32} ║",
+            self.num_public_input_variables
+        );
+        println!(
+            "║ Total Variables:          {:>32} ║",
+            self.num_witness_variables + self.num_public_input_variables
+        );
         println!("╟───────────────────────────────────────────────────────────╢");
         println!("║ Performance Metrics                                       ║");
         println!("╟───────────────────────────────────────────────────────────╢");
         println!("║ Setup Time:               {:>30?} ║", self.setup_time);
         println!("║ Proving Time:             {:>30?} ║", self.proving_time);
-        println!("║ Verification Time:        {:>30?} ║", self.verification_time);
+        println!(
+            "║ Verification Time:        {:>30?} ║",
+            self.verification_time
+        );
         println!("╟───────────────────────────────────────────────────────────╢");
         println!("║ Size Metrics                                              ║");
         println!("╟───────────────────────────────────────────────────────────╢");
@@ -110,59 +181,68 @@ impl BenchmarkStats {
     }
 }
 
-/// Generate test data for the circuit
-fn generate_test_data(
+/// Generate test data for the circuit (generic over curves)
+fn generate_test_data<E, C, const N: usize, const LEVELS: usize>(
     rng: &mut StdRng,
 ) -> (
-    [ElGamalCiphertext<GrumpkinProjective>; N],
-    [ElGamalCiphertext<GrumpkinProjective>; N],
-    [ElGamalCiphertext<GrumpkinProjective>; N],
-    ScalarField,
-    GrumpkinProjective,
-    [ScalarField; N],
-    ScalarField,
-    ScalarField,
+    [ElGamalCiphertext<C>; N],
+    [ElGamalCiphertext<C>; N],
+    [ElGamalCiphertext<C>; N],
+    E::ScalarField,
+    C,
+    [E::ScalarField; N],
+    E::ScalarField,
+    E::ScalarField,
     zk_poker::shuffling::rs_shuffle::data_structures::WitnessData<N, LEVELS>,
     usize,
-) {
+)
+where
+    E: Pairing,
+    C: CurveGroup<BaseField = E::ScalarField>,
+    C::Config: CurveConfig<BaseField = E::ScalarField>,
+    <C::Config as CurveConfig>::ScalarField: UniformRand,
+    E::ScalarField: PrimeField + Absorb,
+{
     // Generate shuffler's key pair
-    let shuffler_sk = <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(rng);
-    let shuffler_pk = GrumpkinProjective::generator() * shuffler_sk;
+    let shuffler_sk = <C::Config as CurveConfig>::ScalarField::rand(rng);
+    let shuffler_pk = C::generator() * shuffler_sk;
 
     // Create initial encrypted deck
     println!("  Generating {} encrypted cards...", N);
-    let ct_init: [ElGamalCiphertext<GrumpkinProjective>; N] = std::array::from_fn(|i| {
-        let message = <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::from((i + 1) as u64);
-        let randomness = <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(rng);
+    let ct_init: [ElGamalCiphertext<C>; N] = std::array::from_fn(|i| {
+        let message = <C::Config as CurveConfig>::ScalarField::from((i + 1) as u64);
+        let randomness = <C::Config as CurveConfig>::ScalarField::rand(rng);
         ElGamalCiphertext::encrypt_scalar(message, randomness, shuffler_pk)
     });
 
     // Generate seed for RS shuffle
-    let seed = ScalarField::rand(rng);
+    let seed = E::ScalarField::rand(rng);
 
     // Apply RS shuffle permutation
     println!("  Applying RS shuffle permutation...");
     let (witness_data, num_samples, ct_after_shuffle) =
-        apply_rs_shuffle_permutation::<ScalarField, _, N, LEVELS>(seed, &ct_init);
+        apply_rs_shuffle_permutation::<E::ScalarField, _, N, LEVELS>(seed, &ct_init);
 
-    // Generate re-encryption randomizations (as ScalarField)
-    let rerandomizations_scalar: [<GrumpkinConfig as ark_ec::CurveConfig>::ScalarField; N] =
-        std::array::from_fn(|_| <GrumpkinConfig as ark_ec::CurveConfig>::ScalarField::rand(rng));
-    
-    // Convert ScalarField values to BN254's ScalarField for the circuit
-    let rerandomizations: [ScalarField; N] = std::array::from_fn(|i| {
-        scalar_to_base_field::<<GrumpkinConfig as ark_ec::CurveConfig>::ScalarField, ScalarField>(&rerandomizations_scalar[i])
+    // Generate re-encryption randomizations (as curve's scalar field)
+    let rerandomizations_scalar: [<C::Config as CurveConfig>::ScalarField; N] =
+        std::array::from_fn(|_| <C::Config as CurveConfig>::ScalarField::rand(rng));
+
+    // Convert curve scalar field values to pairing's scalar field for the circuit
+    let rerandomizations: [E::ScalarField; N] = std::array::from_fn(|i| {
+        scalar_to_base_field::<<C::Config as CurveConfig>::ScalarField, E::ScalarField>(
+            &rerandomizations_scalar[i],
+        )
     });
 
     // Apply re-encryption
     println!("  Applying re-encryption...");
-    let ct_final: [ElGamalCiphertext<GrumpkinProjective>; N] = std::array::from_fn(|i| {
+    let ct_final: [ElGamalCiphertext<C>; N] = std::array::from_fn(|i| {
         ct_after_shuffle[i].add_encryption_layer(rerandomizations_scalar[i], shuffler_pk)
     });
 
     // Generate Fiat-Shamir challenges
-    let alpha = ScalarField::rand(rng);
-    let beta = ScalarField::rand(rng);
+    let alpha = E::ScalarField::rand(rng);
+    let beta = E::ScalarField::rand(rng);
 
     (
         ct_init,
@@ -178,8 +258,19 @@ fn generate_test_data(
     )
 }
 
-/// Run a single benchmark iteration
-fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
+/// Run a single benchmark iteration (generic over curves)
+fn run_benchmark_iteration<E, C1, C2, CV, const N: usize, const LEVELS: usize>(
+    config: &BenchmarkConfig,
+) -> BenchmarkStats
+where
+    E: Pairing,
+    E::ScalarField: PrimeField + Absorb,
+    C1: CurveGroup<BaseField = E::BaseField>, // C1's Config must be G1
+    C2: CurveGroup<BaseField = E::ScalarField>,
+    CV: CurveVar<C2, E::ScalarField>,
+    C1::BaseField: PrimeField,
+    C2::BaseField: PrimeField,
+{
     let mut rng = StdRng::seed_from_u64(12345);
 
     println!("\n🔧 Generating test data...");
@@ -194,40 +285,41 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
         beta,
         witness,
         num_samples,
-    ) = generate_test_data(&mut rng);
+    ) = generate_test_data::<E, C2, N, LEVELS>(&mut rng);
 
     // Create the circuit
     println!("\n📋 Creating circuit instance...");
-    let circuit = RSShuffleWithReencryptionCircuit::<ScalarField, GrumpkinProjective, N, LEVELS> {
-        ct_init_pub: ct_init.clone(),
-        ct_after_shuffle: ct_after_shuffle.clone(),
-        ct_final_reencrypted: ct_final_reencrypted.clone(),
+    let circuit = RSShuffleWithReencryptionCircuit::<E::ScalarField, C2, CV, N, LEVELS>::new(
+        ct_init.clone(),
+        ct_after_shuffle.clone(),
+        ct_final_reencrypted.clone(),
         seed,
         shuffler_pk,
         encryption_randomizations,
         alpha,
         beta,
-        witness,
+        witness.clone(),
         num_samples,
-    };
+    );
 
     // Measure constraint system size
     if config.verbose {
         println!("\n📊 Analyzing constraint system...");
     }
-    let cs = ConstraintSystem::<ScalarField>::new_ref();
-    let circuit_for_analysis = RSShuffleWithReencryptionCircuit::<ScalarField, GrumpkinProjective, N, LEVELS> {
-        ct_init_pub: ct_init.clone(),
-        ct_after_shuffle: ct_after_shuffle.clone(),
-        ct_final_reencrypted: ct_final_reencrypted.clone(),
-        seed,
-        shuffler_pk,
-        encryption_randomizations,
-        alpha,
-        beta,
-        witness: witness.clone(),
-        num_samples,
-    };
+    let cs = ConstraintSystem::<E::ScalarField>::new_ref();
+    let circuit_for_analysis =
+        RSShuffleWithReencryptionCircuit::<E::ScalarField, C2, CV, N, LEVELS>::new(
+            ct_init.clone(),
+            ct_after_shuffle.clone(),
+            ct_final_reencrypted.clone(),
+            seed,
+            shuffler_pk,
+            encryption_randomizations,
+            alpha,
+            beta,
+            witness.clone(),
+            num_samples,
+        );
     circuit_for_analysis
         .generate_constraints(cs.clone())
         .expect("Failed to generate constraints");
@@ -245,19 +337,20 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
     // Generate trusted setup
     println!("\n🔐 Generating trusted setup...");
     let setup_start = Instant::now();
-    let circuit_for_setup = RSShuffleWithReencryptionCircuit::<ScalarField, GrumpkinProjective, N, LEVELS> {
-        ct_init_pub: ct_init.clone(),
-        ct_after_shuffle: ct_after_shuffle.clone(),
-        ct_final_reencrypted: ct_final_reencrypted.clone(),
-        seed,
-        shuffler_pk,
-        encryption_randomizations,
-        alpha,
-        beta,
-        witness: witness.clone(),
-        num_samples,
-    };
-    let (pk, vk) = Groth16::<Bn254>::circuit_specific_setup(circuit_for_setup, &mut rng)
+    let circuit_for_setup =
+        RSShuffleWithReencryptionCircuit::<E::ScalarField, C2, CV, N, LEVELS>::new(
+            ct_init.clone(),
+            ct_after_shuffle.clone(),
+            ct_final_reencrypted.clone(),
+            seed,
+            shuffler_pk,
+            encryption_randomizations,
+            alpha,
+            beta,
+            witness.clone(),
+            num_samples,
+        );
+    let (pk, vk) = Groth16::<E>::circuit_specific_setup(circuit_for_setup, &mut rng)
         .expect("Failed to generate proving and verifying keys");
     let setup_time = setup_start.elapsed();
     if config.verbose {
@@ -278,8 +371,7 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
     // Generate proof
     println!("\n🎯 Generating proof...");
     let proving_start = Instant::now();
-    let proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)
-        .expect("Failed to generate proof");
+    let proof = Groth16::<E>::prove(&pk, circuit, &mut rng).expect("Failed to generate proof");
     let proving_time = proving_start.elapsed();
     if config.verbose {
         println!("  ✓ Proof generated in {:?}", proving_time);
@@ -290,10 +382,10 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
 
     // Prepare public inputs for verification
     let mut public_inputs = Vec::new();
-    
+
     // Add seed
     public_inputs.push(seed);
-    
+
     // Add initial ciphertexts (flattened)
     for ct in &ct_init {
         // Convert curve points to field elements for public inputs
@@ -302,25 +394,25 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
         let c2_affine = ct.c2.into_affine();
         let c1_bytes = c1_affine.x().unwrap().into_bigint().to_bytes_le();
         let c2_bytes = c2_affine.x().unwrap().into_bigint().to_bytes_le();
-        public_inputs.push(ScalarField::from_le_bytes_mod_order(&c1_bytes));
-        public_inputs.push(ScalarField::from_le_bytes_mod_order(&c2_bytes));
+        public_inputs.push(E::ScalarField::from_le_bytes_mod_order(&c1_bytes));
+        public_inputs.push(E::ScalarField::from_le_bytes_mod_order(&c2_bytes));
     }
-    
+
     // Add final re-encrypted ciphertexts (flattened)
     for ct in &ct_final_reencrypted {
         let c1_affine = ct.c1.into_affine();
         let c2_affine = ct.c2.into_affine();
         let c1_bytes = c1_affine.x().unwrap().into_bigint().to_bytes_le();
         let c2_bytes = c2_affine.x().unwrap().into_bigint().to_bytes_le();
-        public_inputs.push(ScalarField::from_le_bytes_mod_order(&c1_bytes));
-        public_inputs.push(ScalarField::from_le_bytes_mod_order(&c2_bytes));
+        public_inputs.push(E::ScalarField::from_le_bytes_mod_order(&c1_bytes));
+        public_inputs.push(E::ScalarField::from_le_bytes_mod_order(&c2_bytes));
     }
-    
+
     // Add shuffler public key
     let pk_affine = shuffler_pk.into_affine();
     let pk_bytes = pk_affine.x().unwrap().into_bigint().to_bytes_le();
-    public_inputs.push(ScalarField::from_le_bytes_mod_order(&pk_bytes));
-    
+    public_inputs.push(E::ScalarField::from_le_bytes_mod_order(&pk_bytes));
+
     // Add Fiat-Shamir challenges
     public_inputs.push(alpha);
     public_inputs.push(beta);
@@ -328,7 +420,7 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
     // Verify proof
     println!("\n✅ Verifying proof...");
     let verification_start = Instant::now();
-    let valid = Groth16::<Bn254>::verify_with_processed_vk(&pvk, &public_inputs, &proof)
+    let valid = Groth16::<E>::verify_with_processed_vk(&pvk, &public_inputs, &proof)
         .expect("Failed to verify proof");
     let verification_time = verification_start.elapsed();
 
@@ -356,7 +448,7 @@ fn run_benchmark_iteration(config: &BenchmarkConfig) -> BenchmarkStats {
 /// Aggregate statistics from multiple runs
 fn aggregate_stats(stats: &[BenchmarkStats]) -> BenchmarkStats {
     let n = stats.len() as u32;
-    
+
     BenchmarkStats {
         num_constraints: stats[0].num_constraints,
         num_witness_variables: stats[0].num_witness_variables,
@@ -370,55 +462,99 @@ fn aggregate_stats(stats: &[BenchmarkStats]) -> BenchmarkStats {
     }
 }
 
+/// Run benchmark with BN254/Grumpkin curves
+fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
+    use ark_bn254::Fr as BaseField;
+    use ark_grumpkin::GrumpkinConfig;
+
+    type C1 = ark_bn254::G1Projective;
+    type C2 = Projective<GrumpkinConfig>;
+    type CV = ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>;
+
+    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS>(config)
+}
+
+/// Run benchmark with BN254/BabyJubJub curves
+fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
+    use ark_bn254::Fr as BaseField;
+    use ark_ed_on_bn254::{EdwardsConfig, EdwardsProjective};
+    use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
+
+    type C1 = ark_bn254::G1Projective;
+    type C2 = EdwardsProjective;
+    type CV = AffineVar<EdwardsConfig, FpVar<BaseField>>;
+
+    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS>(config)
+}
+
+/// Run benchmark with BLS12-381/Bandersnatch curves
+fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
+    use ark_bls12_381::Fr as BaseField;
+    use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
+    use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
+
+    type C1 = ark_bls12_381::G1Projective;
+    type C2 = ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
+    type CV = AffineVar<BandersnatchConfig, FpVar<BaseField>>;
+
+    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS>(config)
+}
+
+/// Run benchmark with BLS12-381/Jubjub curves
+fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
+    use ark_bls12_381::Fr as BaseField;
+    use ark_ed_on_bls12_381::{JubjubConfig, EdwardsProjective};
+    use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
+
+    type C1 = ark_bls12_381::G1Projective;
+    type C2 = EdwardsProjective;
+    type CV = AffineVar<JubjubConfig, FpVar<BaseField>>;
+
+    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS>(config)
+}
+
 fn main() {
     // Initialize tracing for better debugging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .init();
+    let _gaurd = setup_test_tracing();
 
+    // Parse command line arguments using Clap
+    let cli = Cli::parse();
+
+    // Convert CLI args to BenchmarkConfig
+    let config = BenchmarkConfig {
+        iterations: cli.iterations,
+        csv_output: cli.csv,
+        verbose: !cli.quiet,
+        curve: cli.curve,
+    };
+
+    // Display configuration based on selected curve
     println!("╔═══════════════════════════════════════════════════════════╗");
     println!("║     RS Shuffle with Re-encryption Circuit Benchmark      ║");
-    println!("║                  Using Groth16 on BN254                   ║");
     println!("╚═══════════════════════════════════════════════════════════╝");
     println!();
     println!("Configuration:");
-    println!("  • Pairing Curve: BN254");
-    println!("  • Inner Curve: Grumpkin");
+    match config.curve {
+        InnerCurveSelection::Grumpkin => {
+            println!("  • Inner Curve: Grumpkin (Short Weierstrass)");
+            println!("  • Pairing: BN254");
+        }
+        InnerCurveSelection::BabyJubJub => {
+            println!("  • Inner Curve: BabyJubJub (Twisted Edwards)");
+            println!("  • Pairing: BN254");
+        }
+        InnerCurveSelection::Bandersnatch => {
+            println!("  • Inner Curve: Bandersnatch (Twisted Edwards)");
+            println!("  • Pairing: BLS12-381");
+        }
+        InnerCurveSelection::Jubjub => {
+            println!("  • Inner Curve: Jubjub (Twisted Edwards)");
+            println!("  • Pairing: BLS12-381");
+        }
+    }
     println!("  • Deck Size: {} cards", N);
     println!("  • Shuffle Levels: {}", LEVELS);
     println!("  • Total Split Bits: {}", N * LEVELS);
-
-    // Parse command line arguments
-    let args: Vec<String> = std::env::args().collect();
-    let mut config = BenchmarkConfig::default();
-
-    for arg in args.iter().skip(1) {
-        match arg.as_str() {
-            "--csv" => config.csv_output = true,
-            "--quiet" => config.verbose = false,
-            s if s.starts_with("--iterations=") => {
-                config.iterations = s
-                    .strip_prefix("--iterations=")
-                    .and_then(|n| n.parse().ok())
-                    .unwrap_or(1);
-            }
-            "--help" => {
-                println!("\nUsage: {} [OPTIONS]", args[0]);
-                println!("\nOptions:");
-                println!("  --iterations=N    Run N iterations (default: 1)");
-                println!("  --csv             Output results in CSV format");
-                println!("  --quiet           Suppress verbose output");
-                println!("  --help            Show this help message");
-                std::process::exit(0);
-            }
-            _ => {
-                eprintln!("Unknown argument: {}", arg);
-                eprintln!("Use --help for usage information");
-                std::process::exit(1);
-            }
-        }
-    }
 
     if config.csv_output {
         BenchmarkStats::print_csv_header();
@@ -429,16 +565,26 @@ fn main() {
     for i in 0..config.iterations {
         if config.verbose && config.iterations > 1 {
             println!("\n═══════════════════════════════════════════════════════════");
-            println!("                    Iteration {}/{}", i + 1, config.iterations);
+            println!(
+                "                    Iteration {}/{}",
+                i + 1,
+                config.iterations
+            );
             println!("═══════════════════════════════════════════════════════════");
         }
-        
-        let stats = run_benchmark_iteration(&config);
-        
+
+        // Run benchmark with selected curve
+        let stats = match config.curve {
+            InnerCurveSelection::Grumpkin => run_grumpkin_benchmark(&config),
+            InnerCurveSelection::BabyJubJub => run_babyjubjub_benchmark(&config),
+            InnerCurveSelection::Bandersnatch => run_bandersnatch_benchmark(&config),
+            InnerCurveSelection::Jubjub => run_jubjub_benchmark(&config),
+        };
+
         if config.csv_output {
             stats.print_csv();
         }
-        
+
         all_stats.push(stats);
     }
 
@@ -456,4 +602,22 @@ fn main() {
     }
 
     println!("\n✨ Benchmark completed successfully!");
+}
+
+fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
+    let filter = filter::Targets::new()
+        .with_default(tracing::Level::WARN)
+        .with_target("game_demo", tracing::Level::DEBUG)
+        .with_target("zk_poker", tracing::Level::DEBUG)
+        .with_target("shuffling", tracing::Level::DEBUG)
+        .with_target("nexus_nova", tracing::Level::DEBUG);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
+                .with_test_writer(), // This ensures output goes to test stdout
+        )
+        .with(filter)
+        .set_default()
 }
