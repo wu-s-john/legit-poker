@@ -9,7 +9,7 @@ mod tests {
         groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
         prelude::*,
     };
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
     use ark_std::{One, Zero};
 

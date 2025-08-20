@@ -3,8 +3,8 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{convert::ToBitsGadget, fields::fp::FpVar, groups::CurveVar};
 use ark_relations::{
+    gr1cs::{ConstraintSystemRef, SynthesisError},
     ns,
-    r1cs::{ConstraintSystemRef, SynthesisError},
 };
 use std::marker::PhantomData;
 

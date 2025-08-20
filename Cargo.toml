@@ -16,31 +16,82 @@ name = "rs_shuffle_reencrypt_bench"
 path = "src/bin/rs_shuffle_reencrypt_bench.rs"
 
 [dependencies]
-# Existing crypto dependencies
-ark-crypto-primitives = { version = "0.5.0", features = [
+# Core algebra crates with optimizations
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "parallel",
+    "asm",
+] }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "derive",
+] }
+ark-std = { version = "0.5.0", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+
+# SNARK libraries with parallel features
+ark-snark = { git = "https://github.com/arkworks-rs/snark.git", default-features = false, features = [
+] }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git", default-features = false, features = [
+    "std",
+] }
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+ark-poly-commit = { git = "https://github.com/arkworks-rs/poly-commit.git", default-features = false, features = [
+    "std",
+    "parallel",
+] }
+
+# Crypto primitives with optimizations
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git", default-features = false, features = [
+    "std",
     "commitment",
-    "r1cs",
+    "constraints",
     "sponge",
     "crh",
     "merkle_tree",
     "prf",
+    "parallel",
+    "snark",
 ] }
-ark-bn254 = "0.5.0"
-ark-grumpkin = "0.5.0"
-ark-ec = { version = "0.5.0", default-features = false }
-ark-ff = "0.5.0"
-ark-relations = "0.5.0"
-ark-r1cs-std = "0.5.0"
-ark-groth16 = "0.5.0"
-ark-serialize = { version = "0.5.0", features = ["derive"] }
-ark-std = "0.5.0"
-ark-poly = "0.5.0"
-ark-poly-commit = "0.5.0"
-ark-snark = "0.5.0"
-ark-bls12-381 = "0.5.0"
-ark-ed-on-bls12-381-bandersnatch = "0.5.0"
-ark-ed-on-bn254 = "0.5.0"
-ark-ed-on-bls12-381 = "0.5.0"
+
+# Curve implementations
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "curve",
+] }
+ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+] }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+    "curve",
+] }
+ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+] }
+ark-ed-on-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+] }
+ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
+    "std",
+] }
 
 # Core utilities
 clap = { version = "4.5", features = ["derive"] }
@@ -85,12 +136,36 @@ futures = "0.3"
 tokio-tungstenite = "0.24"
 
 [dev-dependencies]
-ark-test-curves = { version = "0.5.0", features = ["bls12_381_curve"] }
+ark-test-curves = { git = "https://github.com/arkworks-rs/algebra.git", features = [
+    "bls12_381_curve",
+] }
 
 [profile.release]
+opt-level = 3
+lto = "fat"
 codegen-units = 1
-lto = true
 
 [profile.bench]
 inherits = "release"
 debug = true
+
+[patch.crates-io]
+ark-relations = { git = "https://github.com/arkworks-rs/snark.git" }
+ark-snark = { git = "https://github.com/arkworks-rs/snark.git" }
+ark-ff = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-poly = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-grumpkin = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ed-on-bn254 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-bw6-761 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-mnt4-298 = { git = "https://github.com/arkworks-rs/algebra.git" }
+ark-r1cs-std = { git = "https://github.com/arkworks-rs/r1cs-std.git" }
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives.git" }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16.git" }
+ark-poly-commit = { git = "https://github.com/arkworks-rs/poly-commit.git" }

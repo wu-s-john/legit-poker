@@ -7,3 +7,6 @@
 [submodule "r1cs-std"]
 	path = r1cs-std
 	url = https://github.com/arkworks-rs/r1cs-std.git
+[submodule "groth16"]
+	path = groth16
+	url = https://github.com/arkworks-rs/groth16.git

@@ -12,7 +12,7 @@ use ark_crypto_primitives::sponge::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*};
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::bit_generation";
 
@@ -63,7 +63,7 @@ where
         num_random_values = random_values.len(),
         "Random values generated"
     );
-    
+
     // Debug: log the actual field values
     #[cfg(test)]
     {
@@ -194,8 +194,7 @@ mod tests {
     use super::*;
     use crate::shuffling::rs_shuffle::{LEVELS, N}; // Import the constants for tests
     use ark_bn254::Fr as TestField; // BN254's scalar field = Grumpkin's base field (for SNARK circuits)
-    use ark_r1cs_std::R1CSVar;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
     use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
@@ -260,15 +259,15 @@ mod tests {
         let _guard = setup_test_tracing();
         let seed1 = TestField::from(111u64);
         let seed2 = TestField::from(222u64);
-        
+
         tracing::debug!(target: LOG_TARGET, "Seed1: {:?}", seed1);
         tracing::debug!(target: LOG_TARGET, "Seed2: {:?}", seed2);
 
         let (bits_mat1, num_samples1) = derive_split_bits::<TestField, N, LEVELS>(seed1);
         let (bits_mat2, _num_samples2) = derive_split_bits::<TestField, N, LEVELS>(seed2);
-        
+
         tracing::debug!(target: LOG_TARGET, "Num samples used: {}", num_samples1);
-        
+
         // Debug: Log first few bits from each matrix
         tracing::debug!(target: LOG_TARGET, "First 10 bits from mat1[0]: {:?}", &bits_mat1[0][..10]);
         tracing::debug!(target: LOG_TARGET, "First 10 bits from mat2[0]: {:?}", &bits_mat2[0][..10]);
@@ -286,15 +285,19 @@ mod tests {
         // Debug output
         let total_bits = N * LEVELS;
         let expected_min_diff = total_bits / 4;
-        tracing::debug!(target: LOG_TARGET, "Total bits: {}, Differences found: {}, Expected minimum: {}", 
+        tracing::debug!(target: LOG_TARGET, "Total bits: {}, Differences found: {}, Expected minimum: {}",
                  total_bits, differences, expected_min_diff);
-        tracing::debug!(target: LOG_TARGET, "Difference percentage: {:.2}%", 
+        tracing::debug!(target: LOG_TARGET, "Difference percentage: {:.2}%",
                  (differences as f64 / total_bits as f64) * 100.0);
 
         // At least 25% should be different (very conservative bound)
-        assert!(differences > (N * LEVELS) / 4, 
-                "Not enough differences: {} out of {} bits (expected > {})",
-                differences, total_bits, expected_min_diff);
+        assert!(
+            differences > (N * LEVELS) / 4,
+            "Not enough differences: {} out of {} bits (expected > {})",
+            differences,
+            total_bits,
+            expected_min_diff
+        );
     }
 
     #[test]

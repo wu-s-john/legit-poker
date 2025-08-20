@@ -11,7 +11,7 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
 use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use std::marker::PhantomData;
 use std::ops::Not;
 
@@ -788,7 +788,7 @@ mod tests {
     use ark_grumpkin::GrumpkinConfig;
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
-    use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef};
+    use ark_relations::gr1cs::{ConstraintSystem, ConstraintSystemRef};
     use tracing_subscriber::{
         filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
     };

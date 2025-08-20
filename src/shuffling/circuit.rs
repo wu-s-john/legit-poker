@@ -7,8 +7,8 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::{
+    gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
     ns,
-    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
 };
 use std::ops::Not;
 
@@ -425,8 +425,7 @@ mod tests {
     use ark_ec::PrimeGroup;
     use ark_ff::UniformRand;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
-    use ark_r1cs_std::R1CSVar;
-    use ark_relations::r1cs::ConstraintSystem;
+    use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
     use ark_std::Zero;
 

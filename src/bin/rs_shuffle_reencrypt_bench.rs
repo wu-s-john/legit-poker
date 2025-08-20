@@ -8,7 +8,7 @@ use ark_groth16::{prepare_verifying_key, Groth16};
 use ark_r1cs_std::{
     fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar, groups::CurveVar,
 };
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::gr1cs::ConstraintSystem;
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -26,7 +26,7 @@ use zk_poker::shuffling::{
 };
 
 // Import specific curve implementations
-use ark_bls12_381::Bls12_381;
+use ark_bls12_381::{Bls12_381, G1Projective as Bls12_381G1};
 use ark_bn254::Bn254;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ed_on_bls12_381;
@@ -66,7 +66,7 @@ impl std::fmt::Display for InnerCurveSelection {
 #[command(version, about, long_about = None)]
 #[command(after_help = "INNER CURVE CONFIGURATIONS:
   grumpkin:     Short Weierstrass curve, uses BN254 pairing
-  babyjubjub:   Twisted Edwards curve, uses BN254 pairing  
+  babyjubjub:   Twisted Edwards curve, uses BN254 pairing
   bandersnatch: Twisted Edwards curve, uses BLS12-381 pairing
   jubjub:       Twisted Edwards curve, uses BLS12-381 pairing")]
 struct Cli {
@@ -271,6 +271,7 @@ where
     C1::BaseField: PrimeField,
     C2::BaseField: PrimeField,
 {
+    use ark_relations::gr1cs::ConstraintSynthesizer;
     let mut rng = StdRng::seed_from_u64(12345);
 
     println!("\n🔧 Generating test data...");
@@ -493,7 +494,7 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     use ark_ed_on_bls12_381_bandersnatch::BandersnatchConfig;
     use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
 
-    type C1 = ark_bls12_381::G1Projective;
+    type C1 = Bls12_381G1;
     type C2 = ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
     type CV = AffineVar<BandersnatchConfig, FpVar<BaseField>>;
 
@@ -503,10 +504,10 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
 /// Run benchmark with BLS12-381/Jubjub curves
 fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     use ark_bls12_381::Fr as BaseField;
-    use ark_ed_on_bls12_381::{JubjubConfig, EdwardsProjective};
+    use ark_ed_on_bls12_381::{EdwardsProjective, JubjubConfig};
     use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
 
-    type C1 = ark_bls12_381::G1Projective;
+    type C1 = Bls12_381G1;
     type C2 = EdwardsProjective;
     type CV = AffineVar<JubjubConfig, FpVar<BaseField>>;
 
@@ -514,6 +515,14 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
 }
 
 fn main() {
+    // Sanity check for ASM and parallel features
+    #[cfg(all(feature = "asm"))]
+    eprintln!(
+        "asm enabled; bmi2={}, adx={}",
+        std::is_x86_feature_detected!("bmi2"),
+        std::is_x86_feature_detected!("adx")
+    );
+
     // Initialize tracing for better debugging
     let _gaurd = setup_test_tracing();
 

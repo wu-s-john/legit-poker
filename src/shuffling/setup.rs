@@ -8,9 +8,9 @@ use ark_ec::{
 };
 use ark_ff::{Field, PrimeField};
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-use ark_relations::r1cs::{ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem, SynthesisError};
 use ark_serialize::CanonicalSerialize;
-use ark_std::rand::SeedableRng;
+use rand::SeedableRng;
 use std::marker::PhantomData;
 
 // Tracing target constants
@@ -67,11 +67,13 @@ where
         let cs = ConstraintSystem::<<P::BaseField as Field>::BasePrimeField>::new_ref();
 
         // Create and run the circuit
-        let circuit = ShuffleCircuit::<Projective<P>, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<P, ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>>>::new(
-            shuffler_keys.public_key,
-            shuffle_proof.clone(),
-            seed,
-        );
+        let circuit = ShuffleCircuit::<
+            Projective<P>,
+            ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                P,
+                ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>,
+            >,
+        >::new(shuffler_keys.public_key, shuffle_proof.clone(), seed);
         circuit
             .generate_constraints(cs.clone())
             .map_err(|e| ShuffleError::Synthesis(e))?;
@@ -113,20 +115,20 @@ where
                     .ok_or(ShuffleError::SetupNotFound)?;
 
                 // Create the proving circuit
-                let circuit = ShuffleCircuit::<Projective<P>, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<P, ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>>>::new(
-                    shuffler_keys.public_key,
-                    shuffle_proof,
-                    seed,
-                );
+                let circuit = ShuffleCircuit::<
+                    Projective<P>,
+                    ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                        P,
+                        ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>,
+                    >,
+                >::new(shuffler_keys.public_key, shuffle_proof, seed);
 
                 let proof = Groth16::<E>::prove(
                     pk,
                     circuit,
                     &mut ark_std::rand::rngs::StdRng::seed_from_u64(1234),
                 )
-                .map_err(|e| {
-                    ShuffleError::Synthesis(ark_relations::r1cs::SynthesisError::from(e))
-                })?;
+                .map_err(|e| ShuffleError::Synthesis(SynthesisError::from(e)))?;
 
                 let mut proof_bytes = Vec::new();
                 proof
@@ -189,11 +191,13 @@ where
             prove_as_subprotocol::<Projective<P>>(sample_seed, sample_deck, &sample_keys)?;
 
         // Generate the circuit to count constraints
-        let circuit = ShuffleCircuit::<Projective<P>, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<P, ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>>>::new(
-            sample_keys.public_key,
-            sample_proof.clone(),
-            sample_seed,
-        );
+        let circuit = ShuffleCircuit::<
+            Projective<P>,
+            ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                P,
+                ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>,
+            >,
+        >::new(sample_keys.public_key, sample_proof.clone(), sample_seed);
         circuit
             .generate_constraints(cs.clone())
             .map_err(|e| ShuffleError::Synthesis(e))?;
@@ -224,17 +228,19 @@ where
             tracing::info!(target: LOG_TARGET, "Generating Groth16 setup");
 
             // Use the sample circuit for setup
-            let circuit = ShuffleCircuit::<Projective<P>, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<P, ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>>>::new(
-                sample_keys.public_key,
-                sample_proof,
-                sample_seed,
-            );
+            let circuit = ShuffleCircuit::<
+                Projective<P>,
+                ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                    P,
+                    ark_r1cs_std::fields::fp::FpVar<<P::BaseField as Field>::BasePrimeField>,
+                >,
+            >::new(sample_keys.public_key, sample_proof, sample_seed);
 
             let (pk, vk) = Groth16::<E>::circuit_specific_setup(
                 circuit,
-                &mut ark_std::rand::rngs::StdRng::seed_from_u64(1234),
+                &mut rand::rngs::StdRng::seed_from_u64(1234),
             )
-            .map_err(|e| ShuffleError::Synthesis(ark_relations::r1cs::SynthesisError::from(e)))?;
+            .map_err(|e| ShuffleError::Synthesis(SynthesisError::from(e)))?;
             (Some(pk), Some(vk), None, None)
         }
         ProofSystem::Spartan => {
@@ -274,9 +280,9 @@ where
 }
 
 /// Convert arkworks R1CS format to Spartan format
+/// Note: This is a placeholder function for future Spartan integration
 #[allow(dead_code)]
 fn convert_to_spartan_format<F>(
-    _matrices: &ConstraintMatrices<F>,
     _witness: &[F],
     _inputs: &[F],
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), ShuffleError>
@@ -285,6 +291,7 @@ where
 {
     // For now, return placeholder data
     // The actual Spartan conversion would require the Spartan library to use the same arkworks version
+    // ConstraintMatrices type was removed in newer arkworks versions
     Ok((Vec::new(), Vec::new(), Vec::new()))
 }
 
@@ -328,7 +335,7 @@ mod tests {
     use super::*;
     use ark_ec::{CurveConfig, PrimeGroup};
     use ark_ff::UniformRand;
-    use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef};
+    use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef};
     use ark_std::rand;
     use std::io::BufWriter;
     use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
@@ -413,13 +420,18 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Finish making proof to feed for circuit");
         // Create the circuit - g1::Config implements SWCurveConfig
-        let circuit: ShuffleCircuit<G1Projective, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<ark_bn254::g1::Config, ark_r1cs_std::fields::fp::FpVar<ark_bn254::Fq>>> =
-            ShuffleCircuit::new(shuffler_keys.public_key, proof, seed);
+        let circuit: ShuffleCircuit<
+            G1Projective,
+            ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                ark_bn254::g1::Config,
+                ark_r1cs_std::fields::fp::FpVar<ark_bn254::Fq>,
+            >,
+        > = ShuffleCircuit::new(shuffler_keys.public_key, proof, seed);
 
         let _rng = rand::thread_rng();
 
         // Guard for measuring constraint system generation time
-        let cs = ConstraintSystemRef::new(ark_relations::r1cs::ConstraintSystem::new());
+        let cs = ConstraintSystemRef::new(ConstraintSystem::new());
         {
             let _constraint_span =
                 tracing::info_span!(target: TEST_TARGET, "constraint_system_generation").entered();
@@ -574,7 +586,7 @@ mod tests {
         tracing::info!(target: TEST_TARGET, "\n=== Constraint Generation Version ===");
 
         // Create constraint system
-        let cs = ConstraintSystemRef::new(ark_relations::r1cs::ConstraintSystem::new());
+        let cs = ConstraintSystemRef::new(ConstraintSystem::new());
 
         // Create seed as public input
         let seed_var = FpVar::<F>::new_input(cs.clone(), || Ok(seed_value))?;
@@ -803,8 +815,13 @@ mod tests {
         };
 
         let proof = prove_as_subprotocol::<GrumpkinProjective>(seed, input_deck, &shuffler_keys)?;
-        let circuit =
-            ShuffleCircuit::<GrumpkinProjective, ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<GrumpkinConfig, ark_r1cs_std::fields::fp::FpVar<<GrumpkinConfig as ark_ec::CurveConfig>::BaseField>>>::new(shuffler_keys.public_key, proof, seed);
+        let circuit = ShuffleCircuit::<
+            GrumpkinProjective,
+            ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar<
+                GrumpkinConfig,
+                ark_r1cs_std::fields::fp::FpVar<<GrumpkinConfig as ark_ec::CurveConfig>::BaseField>,
+            >,
+        >::new(shuffler_keys.public_key, proof, seed);
         let mut rng = rand::thread_rng();
         let (pk, _vk) = Groth16::<Bn254>::circuit_specific_setup(circuit.clone(), &mut rng)?;
         let _snark_proof = Groth16::<Bn254>::prove(&pk, circuit, &mut rng)?;

@@ -7,7 +7,7 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 const _LOG_TARGET: &str = "nova::shuffling::rs_shuffle::witness_preparation";
 

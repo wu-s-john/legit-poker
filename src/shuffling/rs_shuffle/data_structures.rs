@@ -1,6 +1,6 @@
 use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*};
-use ark_relations::{r1cs, r1cs::SynthesisError};
+use ark_relations::{gr1cs, gr1cs::SynthesisError};
 use std::borrow::Borrow;
 
 /// Row in the unsorted (witness) table for one level
@@ -72,11 +72,19 @@ impl UnsortedRow {
 
 impl SortedRow {
     pub fn new(idx: u16, length: u16) -> Self {
-        Self { idx, length, bucket: 0 }
+        Self {
+            idx,
+            length,
+            bucket: 0,
+        }
     }
 
     pub fn new_with_bucket(idx: u16, length: u16, bucket: u16) -> Self {
-        Self { idx, length, bucket }
+        Self {
+            idx,
+            length,
+            bucket,
+        }
     }
 }
 
@@ -107,7 +115,7 @@ pub struct UnsortedRowVar<F: PrimeField> {
 
 impl<F: PrimeField> AllocVar<UnsortedRow, F> for UnsortedRowVar<F> {
     fn new_variable<T: Borrow<UnsortedRow>>(
-        cs: impl Into<r1cs::Namespace<F>>,
+        cs: impl Into<gr1cs::Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
@@ -152,7 +160,7 @@ where
 
 impl<F: PrimeField> AllocVar<SortedRow, F> for SortedRowVar<F> {
     fn new_variable<T: Borrow<SortedRow>>(
-        cs: impl Into<r1cs::Namespace<F>>,
+        cs: impl Into<gr1cs::Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
@@ -183,7 +191,7 @@ impl<F: PrimeField, const N: usize, const LEVELS: usize> AllocVar<WitnessData<N,
     for WitnessDataVar<F, N, LEVELS>
 {
     fn new_variable<T: Borrow<WitnessData<N, LEVELS>>>(
-        cs: impl Into<r1cs::Namespace<F>>,
+        cs: impl Into<gr1cs::Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {

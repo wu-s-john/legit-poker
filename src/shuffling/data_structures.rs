@@ -2,9 +2,9 @@ use super::error::ShuffleError;
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::groups::CurveVar;
-use ark_r1cs_std::{fields::fp::FpVar, prelude::*, R1CSVar};
-use ark_relations::r1cs;
-use ark_relations::r1cs::SynthesisError;
+use ark_r1cs_std::{fields::fp::FpVar, prelude::*};
+use ark_relations::gr1cs::Namespace;
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -119,7 +119,7 @@ impl<C: CurveGroup> ShuffleProof<C> {
 
 /// Optimized batch allocation for ElGamal ciphertexts
 pub fn batch_allocate_ciphertexts<C, CV>(
-    cs: impl Into<r1cs::Namespace<C::BaseField>>,
+    cs: impl Into<Namespace<C::BaseField>>,
     ciphertexts: &[ElGamalCiphertext<C>],
     mode: AllocationMode,
 ) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
@@ -190,7 +190,7 @@ where
     }
 }
 
-impl<C, CV> R1CSVar<C::BaseField> for ElGamalCiphertextVar<C, CV>
+impl<C, CV> GR1CSVar<C::BaseField> for ElGamalCiphertextVar<C, CV>
 where
     C: CurveGroup,
     C::BaseField: PrimeField,
@@ -198,11 +198,11 @@ where
 {
     type Value = ElGamalCiphertext<C>;
 
-    fn cs(&self) -> r1cs::ConstraintSystemRef<C::BaseField> {
+    fn cs(&self) -> ConstraintSystemRef<C::BaseField> {
         self.c1.cs().or(self.c2.cs())
     }
 
-    fn value(&self) -> Result<Self::Value, r1cs::SynthesisError> {
+    fn value(&self) -> Result<Self::Value, SynthesisError> {
         Ok(ElGamalCiphertext {
             c1: self.c1.value()?,
             c2: self.c2.value()?,
@@ -217,7 +217,7 @@ where
     CV: CurveVar<C, C::BaseField>,
 {
     fn new_variable<T: std::borrow::Borrow<ElGamalCiphertext<C>>>(
-        cs: impl Into<r1cs::Namespace<C::BaseField>>,
+        cs: impl Into<Namespace<C::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
@@ -263,7 +263,7 @@ where
     CV: CurveVar<C, C::BaseField>,
 {
     fn new_variable<T: std::borrow::Borrow<ShuffleProof<C>>>(
-        cs: impl Into<r1cs::Namespace<C::BaseField>>,
+        cs: impl Into<Namespace<C::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {

@@ -9,7 +9,6 @@ use ark_ec::AffineRepr;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
-use ark_std::vec::Vec;
 use ark_std::Zero;
 
 /// Window type for Pedersen commitment
@@ -18,7 +17,7 @@ pub struct BgWindow;
 
 impl Window for BgWindow {
     const WINDOW_SIZE: usize = 4;
-    const NUM_WINDOWS: usize = 64;  // 4×64 = 256 bits for Fr elements
+    const NUM_WINDOWS: usize = 64; // 4×64 = 256 bits for Fr elements
 }
 
 /// Type alias for our Pedersen commitment scheme
@@ -47,12 +46,7 @@ impl BgCommitment {
         // Compute commitment
         let commitment = Pedersen::commit(params, &input, &randomness).unwrap();
 
-        (
-            BgCommitment {
-                commitment,
-            },
-            randomness,
-        )
+        (BgCommitment { commitment }, randomness)
     }
 
     /// Verify a commitment opening
