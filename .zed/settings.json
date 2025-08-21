@@ -1,0 +1,16 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "features": ["gpu"],          // pass -F gpu to cargo
+          "noDefaultFeatures": true     // optional: mirrors `--no-default-features`
+        },
+        // optional: keep check-on-save in sync (RA now defaults this to cargo.features)
+        "check": {
+          "features": ["gpu"]
+        }
+      }
+    }
+  }
+}

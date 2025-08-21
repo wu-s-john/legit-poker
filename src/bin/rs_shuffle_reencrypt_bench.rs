@@ -4,11 +4,11 @@ use ark_ec::{
     pairing::Pairing, short_weierstrass::Projective, AffineRepr, CurveConfig, CurveGroup,
 };
 use ark_ff::{BigInteger, PrimeField, UniformRand};
-use ark_groth16::{prepare_verifying_key, Groth16};
+use ark_groth16::{prepare_verifying_key, Groth16, Proof, ProvingKey};
 use ark_r1cs_std::{
     fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar, groups::CurveVar,
 };
-use ark_relations::gr1cs::ConstraintSystem;
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystem};
 use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
@@ -85,6 +85,10 @@ struct Cli {
     /// Suppress verbose output
     #[arg(short, long)]
     quiet: bool,
+
+    /// Enable GPU acceleration (requires ICICLE backend)
+    #[arg(long)]
+    gpu: bool,
 }
 
 /// Configuration for benchmark runs (derived from CLI args)
@@ -97,6 +101,8 @@ struct BenchmarkConfig {
     verbose: bool,
     /// Which inner curve to use
     curve: InnerCurveSelection,
+    /// Whether to use GPU acceleration
+    use_gpu: bool,
 }
 
 /// Statistics collected during benchmark
@@ -259,8 +265,9 @@ where
 }
 
 /// Run a single benchmark iteration (generic over curves)
-fn run_benchmark_iteration<E, C1, C2, CV, const N: usize, const LEVELS: usize>(
+fn run_benchmark_iteration<E, C1, C2, CV, const N: usize, const LEVELS: usize, F>(
     config: &BenchmarkConfig,
+    prover: F,
 ) -> BenchmarkStats
 where
     E: Pairing,
@@ -270,8 +277,12 @@ where
     CV: CurveVar<C2, E::ScalarField>,
     C1::BaseField: PrimeField,
     C2::BaseField: PrimeField,
+    F: Fn(
+        &ProvingKey<E>,
+        RSShuffleWithReencryptionCircuit<E::ScalarField, C2, CV, N, LEVELS>,
+        &mut StdRng,
+    ) -> Result<Proof<E>, anyhow::Error>,
 {
-    use ark_relations::gr1cs::ConstraintSynthesizer;
     let mut rng = StdRng::seed_from_u64(12345);
 
     println!("\n🔧 Generating test data...");
@@ -372,7 +383,10 @@ where
     // Generate proof
     println!("\n🎯 Generating proof...");
     let proving_start = Instant::now();
-    let proof = Groth16::<E>::prove(&pk, circuit, &mut rng).expect("Failed to generate proof");
+
+    // Use the provided prover function
+    let proof = prover(&pk, circuit, &mut rng).expect("Failed to generate proof");
+
     let proving_time = proving_start.elapsed();
     if config.verbose {
         println!("  ✓ Proof generated in {:?}", proving_time);
@@ -472,7 +486,28 @@ fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type C2 = Projective<GrumpkinConfig>;
     type CV = ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>;
 
-    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS>(config)
+    // Select prover based on configuration
+    let prover = if config.use_gpu {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
+                zk_poker::gpu::groth16_gpu::BN254GPUProver,
+                _,
+                _,
+            >(&pk, circuit, rng)
+        }
+    } else {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
+        }
+    };
+
+    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS, _>(config, prover)
 }
 
 /// Run benchmark with BN254/BabyJubJub curves
@@ -485,7 +520,28 @@ fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type C2 = EdwardsProjective;
     type CV = AffineVar<EdwardsConfig, FpVar<BaseField>>;
 
-    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS>(config)
+    // Select prover based on configuration
+    let prover = if config.use_gpu {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
+                zk_poker::gpu::groth16_gpu::BN254GPUProver,
+                _,
+                _,
+            >(&pk, circuit, rng)
+        }
+    } else {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
+        }
+    };
+
+    run_benchmark_iteration::<Bn254, C1, C2, CV, N, LEVELS, _>(config, prover)
 }
 
 /// Run benchmark with BLS12-381/Bandersnatch curves
@@ -498,7 +554,28 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type C2 = ark_ed_on_bls12_381_bandersnatch::EdwardsProjective;
     type CV = AffineVar<BandersnatchConfig, FpVar<BaseField>>;
 
-    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS>(config)
+    // Select prover based on configuration
+    let prover = if config.use_gpu {
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
+                zk_poker::gpu::groth16_gpu::BLS12_381GPUProver,
+                _,
+                _,
+            >(&pk, circuit, rng)
+        }
+    } else {
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
+        }
+    };
+
+    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS, _>(config, prover)
 }
 
 /// Run benchmark with BLS12-381/Jubjub curves
@@ -511,7 +588,28 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type C2 = EdwardsProjective;
     type CV = AffineVar<JubjubConfig, FpVar<BaseField>>;
 
-    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS>(config)
+    // Select prover based on configuration
+    let prover = if config.use_gpu {
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
+                zk_poker::gpu::groth16_gpu::BLS12_381GPUProver,
+                _,
+                _,
+            >(&pk, circuit, rng)
+        }
+    } else {
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
+        }
+    };
+
+    run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS, _>(config, prover)
 }
 
 fn main() {
@@ -529,12 +627,25 @@ fn main() {
     // Parse command line arguments using Clap
     let cli = Cli::parse();
 
+    // Initialize GPU if requested
+    if cli.gpu {
+        match zk_poker::gpu::init_gpu_device() {
+            Ok(_) => eprintln!("✅ GPU device initialized successfully"),
+            Err(e) => {
+                eprintln!("❌ Failed to initialize GPU: {}", e);
+                eprintln!("   Cannot continue with GPU acceleration");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Convert CLI args to BenchmarkConfig
     let config = BenchmarkConfig {
         iterations: cli.iterations,
         csv_output: cli.csv,
         verbose: !cli.quiet,
         curve: cli.curve,
+        use_gpu: cli.gpu,
     };
 
     // Display configuration based on selected curve
@@ -564,6 +675,12 @@ fn main() {
     println!("  • Deck Size: {} cards", N);
     println!("  • Shuffle Levels: {}", LEVELS);
     println!("  • Total Split Bits: {}", N * LEVELS);
+
+    if config.use_gpu {
+        println!("  • GPU Acceleration: ENABLED");
+    } else {
+        println!("  • GPU Acceleration: DISABLED");
+    }
 
     if config.csv_output {
         BenchmarkStats::print_csv_header();

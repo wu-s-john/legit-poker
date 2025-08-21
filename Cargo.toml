@@ -135,10 +135,20 @@ reqwest = { version = "0.12", features = ["json"] }
 futures = "0.3"
 tokio-tungstenite = "0.24"
 
+# GPU acceleration dependencies (optional)
+icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle.git", optional = true }
+icicle-core = { git = "https://github.com/ingonyama-zk/icicle.git", optional = true }
+icicle-bn254 = { git = "https://github.com/ingonyama-zk/icicle.git", optional = true }
+icicle-bls12-381 = { git = "https://github.com/ingonyama-zk/icicle.git", optional = true }
+
 [dev-dependencies]
 ark-test-curves = { git = "https://github.com/arkworks-rs/algebra.git", features = [
     "bls12_381_curve",
 ] }
+
+[features]
+default = []
+gpu = ["icicle-runtime", "icicle-core", "icicle-bn254", "icicle-bls12-381"]
 
 [profile.release]
 opt-level = 3

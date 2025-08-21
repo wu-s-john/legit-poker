@@ -10,3 +10,6 @@
 [submodule "groth16"]
 	path = groth16
 	url = https://github.com/arkworks-rs/groth16.git
+[submodule "icicle"]
+	path = icicle
+	url = https://github.com/ingonyama-zk/icicle

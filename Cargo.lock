@@ -799,6 +799,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1607,6 +1616,64 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "icicle-bls12-381"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git#625532a624e5aaa6e9d31a1c92587f1fcc30dc76"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-hash",
+ "icicle-runtime",
+ "serde",
+]
+
+[[package]]
+name = "icicle-bn254"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git#625532a624e5aaa6e9d31a1c92587f1fcc30dc76"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-hash",
+ "icicle-runtime",
+ "serde",
+]
+
+[[package]]
+name = "icicle-core"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git#625532a624e5aaa6e9d31a1c92587f1fcc30dc76"
+dependencies = [
+ "cmake",
+ "hex",
+ "icicle-runtime",
+ "once_cell",
+ "rand",
+ "rayon",
+ "serde",
+]
+
+[[package]]
+name = "icicle-hash"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git#625532a624e5aaa6e9d31a1c92587f1fcc30dc76"
+dependencies = [
+ "cmake",
+ "icicle-core",
+ "icicle-runtime",
+ "rand",
+]
+
+[[package]]
+name = "icicle-runtime"
+version = "4.0.0"
+source = "git+https://github.com/ingonyama-zk/icicle.git#625532a624e5aaa6e9d31a1c92587f1fcc30dc76"
+dependencies = [
+ "cmake",
+ "once_cell",
 ]
 
 [[package]]
@@ -4578,6 +4645,10 @@ dependencies = [
  "dotenv",
  "futures",
  "hex",
+ "icicle-bls12-381",
+ "icicle-bn254",
+ "icicle-core",
+ "icicle-runtime",
  "once_cell",
  "parking_lot",
  "postgrest",
