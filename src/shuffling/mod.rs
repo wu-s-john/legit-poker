@@ -1,4 +1,5 @@
 pub mod bayer_groth;
+pub mod bayer_groth_permutation;
 pub mod chaum_pedersen;
 pub mod circuit;
 pub mod data_structures;

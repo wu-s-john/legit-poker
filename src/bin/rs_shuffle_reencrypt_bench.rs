@@ -487,6 +487,7 @@ fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type CV = ProjectiveVar<GrumpkinConfig, FpVar<BaseField>>;
 
     // Select prover based on configuration
+    #[cfg(feature = "gpu")]
     let prover = if config.use_gpu {
         |pk: &ProvingKey<Bn254>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
@@ -499,6 +500,20 @@ fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             >(&pk, circuit, rng)
         }
     } else {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
+        }
+    };
+    
+    #[cfg(not(feature = "gpu"))]
+    let prover = {
+        if config.use_gpu {
+            eprintln!("GPU acceleration requested but not compiled in. Use --features gpu");
+            std::process::exit(1);
+        }
         |pk: &ProvingKey<Bn254>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
@@ -521,6 +536,7 @@ fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type CV = AffineVar<EdwardsConfig, FpVar<BaseField>>;
 
     // Select prover based on configuration
+    #[cfg(feature = "gpu")]
     let prover = if config.use_gpu {
         |pk: &ProvingKey<Bn254>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
@@ -533,6 +549,20 @@ fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             >(&pk, circuit, rng)
         }
     } else {
+        |pk: &ProvingKey<Bn254>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bn254>, anyhow::Error> {
+            Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
+        }
+    };
+    
+    #[cfg(not(feature = "gpu"))]
+    let prover = {
+        if config.use_gpu {
+            eprintln!("GPU acceleration requested but not compiled in. Use --features gpu");
+            std::process::exit(1);
+        }
         |pk: &ProvingKey<Bn254>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
@@ -555,6 +585,7 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type CV = AffineVar<BandersnatchConfig, FpVar<BaseField>>;
 
     // Select prover based on configuration
+    #[cfg(feature = "gpu")]
     let prover = if config.use_gpu {
         |pk: &ProvingKey<Bls12_381>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
@@ -567,6 +598,20 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             >(&pk, circuit, rng)
         }
     } else {
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
+        }
+    };
+    
+    #[cfg(not(feature = "gpu"))]
+    let prover = {
+        if config.use_gpu {
+            eprintln!("GPU acceleration requested but not compiled in. Use --features gpu");
+            std::process::exit(1);
+        }
         |pk: &ProvingKey<Bls12_381>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
@@ -589,6 +634,7 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
     type CV = AffineVar<JubjubConfig, FpVar<BaseField>>;
 
     // Select prover based on configuration
+    #[cfg(feature = "gpu")]
     let prover = if config.use_gpu {
         |pk: &ProvingKey<Bls12_381>,
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
@@ -608,13 +654,27 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
         }
     };
+    
+    #[cfg(not(feature = "gpu"))]
+    let prover = {
+        if config.use_gpu {
+            eprintln!("GPU acceleration requested but not compiled in. Use --features gpu");
+            std::process::exit(1);
+        }
+        |pk: &ProvingKey<Bls12_381>,
+         circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
+         rng: &mut StdRng|
+         -> Result<Proof<Bls12_381>, anyhow::Error> {
+            Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
+        }
+    };
 
     run_benchmark_iteration::<Bls12_381, C1, C2, CV, N, LEVELS, _>(config, prover)
 }
 
 fn main() {
     // Sanity check for ASM and parallel features
-    #[cfg(all(feature = "asm"))]
+    #[cfg(target_feature = "sse2")]
     eprintln!(
         "asm enabled; bmi2={}, adx={}",
         std::is_x86_feature_detected!("bmi2"),
@@ -628,6 +688,7 @@ fn main() {
     let cli = Cli::parse();
 
     // Initialize GPU if requested
+    #[cfg(feature = "gpu")]
     if cli.gpu {
         match zk_poker::gpu::init_gpu_device() {
             Ok(_) => eprintln!("✅ GPU device initialized successfully"),
@@ -637,6 +698,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+    
+    #[cfg(not(feature = "gpu"))]
+    if cli.gpu {
+        eprintln!("❌ GPU acceleration requested but not compiled in.");
+        eprintln!("   Please rebuild with: cargo build --features gpu");
+        std::process::exit(1);
     }
 
     // Convert CLI args to BenchmarkConfig

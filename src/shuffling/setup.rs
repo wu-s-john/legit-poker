@@ -337,7 +337,6 @@ mod tests {
     use ark_ff::UniformRand;
     use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef};
     use ark_std::rand;
-    use std::io::BufWriter;
     use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
 
     const TEST_TARGET: &str = "shuffle";
@@ -360,35 +359,6 @@ mod tests {
             )
             .with(filter)
             .set_default()
-    }
-
-    fn init_tracing_with_flame() -> tracing_flame::FlushGuard<BufWriter<std::fs::File>> {
-        use tracing_flame::FlameLayer;
-        use tracing_subscriber::{filter::EnvFilter, fmt, prelude::*, Registry};
-
-        // Initialize flame graph tracing
-        let (flame_layer, guard) = FlameLayer::with_file("./tracing.folded").unwrap();
-
-        let filter = EnvFilter::new("")
-            .add_directive("shuffle=debug".parse().unwrap())
-            .add_directive("gr1cs=info".parse().unwrap()) // Arkworks uses gr1cs target
-            .add_directive("r1cs=info".parse().unwrap()) // Keep both just in case
-            .add_directive(tracing::Level::WARN.into()); // Default level for everything else
-
-        Registry::default()
-            .with(flame_layer)
-            .with(
-                fmt::layer()
-                    .with_target(true)
-                    .with_level(true)
-                    .with_line_number(true)
-                    .with_file(true)
-                    .with_timer(fmt::time::uptime()),
-            )
-            .with(filter)
-            .init();
-
-        guard
     }
 
     #[test]
