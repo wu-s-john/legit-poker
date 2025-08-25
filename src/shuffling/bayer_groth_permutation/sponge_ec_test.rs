@@ -9,14 +9,13 @@ mod tests {
     use ark_crypto_primitives::sponge::{
         constraints::CryptographicSpongeVar,
         poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge},
-        Absorb, CryptographicSponge,
+        CryptographicSponge,
     };
-    use ark_ec::AffineRepr;
     use ark_ff::UniformRand;
     use ark_r1cs_std::{
         alloc::{AllocVar, AllocationMode},
         fields::fp::FpVar,
-        groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
+        groups::curves::short_weierstrass::ProjectiveVar,
         prelude::*,
     };
     use ark_relations::gr1cs::ConstraintSystem;

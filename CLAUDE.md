@@ -131,6 +131,24 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
 ### Rust Coding Guidelines
 - **Error Handling**: Use `?` operator for Result and Option types instead of explicit pattern matching. For custom errors, specify the error type and provide tracing for error propagation
 - **Functional Iteration**: Always prefer functional constructs (`.map()`, `.filter()`, `.fold()`, etc.) over traditional for loops when iterating collections like vectors or hashmaps
+- **Array/Vector Construction**: Strongly prefer functional array construction over mutation. Use `std::array::from_fn()` for arrays or iterator chains with `.collect()` for vectors. Avoid mutable initialization followed by for loops.
+  ```rust
+  // ❌ AVOID - Mutable array with for loop
+  let mut result = [F::zero(); N];
+  for i in 0..N {
+      result[i] = compute(i);
+  }
+  
+  // ✅ PREFERRED - Functional array construction
+  let result: [F; N] = std::array::from_fn(|i| compute(i));
+  
+  // ✅ ALSO GOOD - Iterator chain for arrays (when more complex)
+  let result: [F; N] = (0..N)
+      .map(|i| compute(i))
+      .collect::<Vec<_>>()
+      .try_into()
+      .unwrap();
+  ```
 - **Logging**: Use structured logging with tracing modules instead of `println!` for output. Always specify the target when using tracing macros (e.g., `tracing::info!(target = "module_name", "message")` or `tracing::debug!(target = "module_name", "debug info")`). Only use `println!` when implementing a custom Debug trait for a struct.
 
 ### Testing Approach
@@ -150,7 +168,7 @@ When working with arkworks R1CS constraints, follow these best practices:
 #### 1. Use Namespaces for Debugging
 Always wrap constraint logic in descriptive namespaces using `ns!` macro:
 ```rust
-use ark_relations::{ns, r1cs::ConstraintSystemRef};
+use ark_relations::{ns, gr1cs::ConstraintSystemRef};
 
 fn my_gadget<F: Field>(cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
     let cs = ns!(cs, "my_gadget");
@@ -283,7 +301,7 @@ where
     G::BaseField: PrimeField,
 {
     fn new_variable<T: std::borrow::Borrow<ElGamalCiphertext<Projective<G>>>>(
-        cs: impl Into<r1cs::Namespace<G::BaseField>>,
+        cs: impl Into<gr1cs::Namespace<G::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {

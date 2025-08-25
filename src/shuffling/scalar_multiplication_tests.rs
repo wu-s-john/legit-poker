@@ -12,12 +12,11 @@ mod tests {
         alloc::{AllocVar, AllocationMode},
         eq::EqGadget,
         fields::{emulated_fp::EmulatedFpVar, fp::FpVar},
-        groups::{curves::short_weierstrass::ProjectiveVar, CurveVar},
-        prelude::ToBitsGadget,
+        groups::curves::short_weierstrass::ProjectiveVar,
         GR1CSVar,
     };
     use ark_relations::gr1cs::ConstraintSystem;
-    use ark_std::{test_rng, One, Zero};
+    use ark_std::test_rng;
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
 

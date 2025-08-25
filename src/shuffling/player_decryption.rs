@@ -1,6 +1,8 @@
 use super::chaum_pedersen::ChaumPedersenProof;
+use super::curve_absorb::CurveAbsorb;
 use super::data_structures::ElGamalCiphertext;
-use ark_crypto_primitives::sponge::Absorb;
+use crate::poseidon_config;
+use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -23,9 +25,12 @@ pub struct PlayerTargetedBlindingContribution<C: CurveGroup> {
     pub proof: ChaumPedersenProof<C>,
 }
 
-impl<C: CurveGroup> PlayerTargetedBlindingContribution<C>
+impl<C> PlayerTargetedBlindingContribution<C>
 where
-    C::ScalarField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C: CurveAbsorb<C::BaseField>,
 {
     /// Generate a player-targeted blinding contribution with a Chaum-Pedersen proof
     ///
@@ -33,11 +38,12 @@ where
     /// * `secret_share` - The shuffler's secret share δ_j
     /// * `aggregated_public_key` - The aggregated public key from all shufflers (pk)
     /// * `player_public_key` - The target player's public key (y_u)
-    #[instrument(skip(secret_share), level = "trace")]
-    pub fn generate(
+    #[instrument(skip(secret_share, rng), level = "trace")]
+    pub fn generate<R: Rng>(
         secret_share: C::ScalarField,
         aggregated_public_key: C,
         player_public_key: C,
+        rng: &mut R,
     ) -> Self {
         let generator = C::generator();
 
@@ -52,12 +58,16 @@ where
         let blinding_combined_contribution = h * secret_share;
 
         // Generate the non-interactive Chaum-Pedersen proof (deterministic)
-        let proof = ChaumPedersenProof::generate(
+        let config = poseidon_config::<C::BaseField>();
+        let mut sponge = PoseidonSponge::new(&config);
+        let proof = ChaumPedersenProof::prove(
+            &mut sponge,
             secret_share,
             generator,
             h,
             blinding_base_contribution,
             blinding_combined_contribution,
+            rng,
         );
 
         Self {
@@ -78,7 +88,10 @@ where
         let h = aggregated_public_key + player_public_key;
 
         // Verify the non-interactive proof
+        let config = poseidon_config::<C::BaseField>();
+        let mut sponge = PoseidonSponge::new(&config);
         let result = self.proof.verify(
+            &mut sponge,
             generator,
             h,
             self.blinding_base_contribution,
@@ -198,7 +211,10 @@ pub fn combine_blinding_contributions_for_player<C: CurveGroup>(
     player_public_key: C,
 ) -> Result<PlayerAccessibleCiphertext<C>, &'static str>
 where
+    C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+    C: CurveAbsorb<C::BaseField>,
 {
     // First verify all blinding contributions
     for (i, contribution) in blinding_contributions.iter().enumerate() {
@@ -243,7 +259,10 @@ pub fn batch_verify_shuffler_shares<C, R>(
 ) -> bool
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+    C: CurveAbsorb<C::BaseField>,
     R: Rng,
 {
     if shares.is_empty() {
@@ -429,6 +448,7 @@ mod tests {
             secret_share,
             aggregated_public_key,
             player_public_key,
+            &mut rng,
         );
 
         // Verify the proof is valid
@@ -514,8 +534,12 @@ mod tests {
 
         // Shuffler 1's contribution
         let delta1 = ScalarField::rand(&mut rng);
-        let contribution1 =
-            PlayerTargetedBlindingContribution::generate(delta1, aggregated_pk, player_public_key);
+        let contribution1 = PlayerTargetedBlindingContribution::generate(
+            delta1,
+            aggregated_pk,
+            player_public_key,
+            &mut rng,
+        );
         assert_eq!(
             contribution1.blinding_base_contribution,
             GrumpkinProjective::generator() * delta1
@@ -527,13 +551,21 @@ mod tests {
 
         // Shuffler 2's contribution
         let delta2 = ScalarField::rand(&mut rng);
-        let contribution2 =
-            PlayerTargetedBlindingContribution::generate(delta2, aggregated_pk, player_public_key);
+        let contribution2 = PlayerTargetedBlindingContribution::generate(
+            delta2,
+            aggregated_pk,
+            player_public_key,
+            &mut rng,
+        );
 
         // Shuffler 3's contribution
         let delta3 = ScalarField::rand(&mut rng);
-        let contribution3 =
-            PlayerTargetedBlindingContribution::generate(delta3, aggregated_pk, player_public_key);
+        let contribution3 = PlayerTargetedBlindingContribution::generate(
+            delta3,
+            aggregated_pk,
+            player_public_key,
+            &mut rng,
+        );
 
         let total_delta = delta1 + delta2 + delta3;
 
@@ -697,6 +729,7 @@ mod tests {
                 delta1,
                 aggregated_pk,
                 player_public_key,
+                &mut rng,
             );
 
             let delta2 = ScalarField::rand(&mut rng);
@@ -704,6 +737,7 @@ mod tests {
                 delta2,
                 aggregated_pk,
                 player_public_key,
+                &mut rng,
             );
 
             let contributions = vec![contribution1, contribution2];
@@ -770,6 +804,7 @@ mod tests {
                 secret_share,
                 aggregated_public_key,
                 player_public_key,
+                &mut rng,
             );
             shares.push(contribution);
         }

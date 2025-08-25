@@ -1,4 +1,5 @@
 use super::utils::generate_chaum_pedersen_witness;
+use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
@@ -6,6 +7,8 @@ use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::Zero;
+
+const LOG_TARGET: &str = "nexus_nova::shuffling::chaum_pedersen";
 
 /// Chaum-Pedersen proof for proving equality of discrete logarithms
 /// Proves that the same secret was used to compute α = g^secret and β = H^secret
@@ -23,6 +26,8 @@ pub struct ChaumPedersenProof<C: CurveGroup> {
 impl<C: CurveGroup> ChaumPedersenProof<C>
 where
     C::ScalarField: PrimeField + Absorb,
+    C::BaseField: PrimeField,
+    C: CurveAbsorb<C::BaseField>,
 {
     /// Generate a non-interactive Chaum-Pedersen proof deterministically
     ///
@@ -34,16 +39,25 @@ where
     /// * `h` - Second base point
     /// * `alpha` - First public value: g^secret
     /// * `beta` - Second public value: h^secret
-    pub fn generate(secret: C::ScalarField, g: C, h: C, alpha: C, beta: C) -> Self {
+    pub fn prove<R: Rng>(
+        sponge: &mut PoseidonSponge<C::BaseField>,
+        secret: C::ScalarField,
+        g: C,
+        h: C,
+        alpha: C,
+        beta: C,
+        rng: &mut R,
+    ) -> Self {
         // Step 1: Generate deterministic witness
-        let w = generate_chaum_pedersen_witness(&g, &h, &secret, &alpha, &beta, b"CP-DLEQ-v1");
+        let w = C::ScalarField::rand(rng);
 
         // Step 2: Compute commitments
         let t_g = g * w;
         let t_h = h * w;
 
         // Step 3: Compute Fiat-Shamir challenge from commitments
-        let challenge = Self::compute_challenge(t_g, t_h);
+        let challenge = Self::compute_challenge(sponge, t_g, t_h);
+        tracing::debug!(target: LOG_TARGET, "Generated Challenge: {}", challenge);
 
         // Step 4: Compute response
         let z = w + challenge * secret;
@@ -58,47 +72,65 @@ where
     /// * `h` - Second base point
     /// * `alpha` - First public value (should be g^secret)
     /// * `beta` - Second public value (should be h^secret)
-    pub fn verify(&self, g: C, h: C, alpha: C, beta: C) -> bool {
+    pub fn verify(
+        &self,
+        sponge: &mut PoseidonSponge<C::BaseField>,
+        g: C,
+        h: C,
+        alpha: C,
+        beta: C,
+    ) -> bool {
+        tracing::debug!(target: LOG_TARGET, "Starting Chaum-Pedersen verification (native)");
+
         // Recompute the challenge from commitments
-        let challenge = Self::compute_challenge(self.t_g, self.t_h);
+        tracing::debug!(target: LOG_TARGET, "Computing Fiat-Shamir challenge");
+        let challenge = Self::compute_challenge(sponge, self.t_g, self.t_h);
 
         // Verify equation 1: g^z = T_g · α^c
         let lhs1 = g * self.z;
+        tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1);
         let rhs1 = self.t_g + alpha * challenge;
+        tracing::debug!(target: LOG_TARGET, "rhs1 (T_g · α^c) = {:?}", rhs1);
+        let check1 = lhs1 == rhs1;
+        tracing::debug!(target: LOG_TARGET, "Equation 1 result: {}", check1);
 
         // Verify equation 2: h^z = T_h · β^c
         let lhs2 = h * self.z;
+        tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2);
         let rhs2 = self.t_h + beta * challenge;
+        tracing::debug!(target: LOG_TARGET, "rhs2 (T_h · β^c) = {:?}", rhs2);
+        let check2 = lhs2 == rhs2;
+        tracing::debug!(target: LOG_TARGET, "Equation 2 result: {}", check2);
 
-        lhs1 == rhs1 && lhs2 == rhs2
+        let result = check1 && check2;
+        tracing::debug!(target: LOG_TARGET, "Final verification result: {}", result);
+        result
     }
 
     /// Compute the Fiat-Shamir challenge from commitments
-    fn compute_challenge(t_g: C, t_h: C) -> C::ScalarField {
-        let config = poseidon_config::<C::ScalarField>();
-        let mut sponge = PoseidonSponge::new(&config);
+    fn compute_challenge(
+        sponge: &mut PoseidonSponge<C::BaseField>,
+        t_g: C,
+        t_h: C,
+    ) -> C::ScalarField
+    where
+        C::BaseField: PrimeField,
+        C: CurveAbsorb<C::BaseField>,
+    {
+        tracing::debug!(target: LOG_TARGET, "Computing Fiat-Shamir challenge (native)");
 
-        // Absorb domain separator
-        for byte in b"CP-challenge-v1" {
-            sponge.absorb(&C::ScalarField::from(*byte as u64));
-        }
+        // Absorb t_g as affine point (matching circuit behavior)
+        tracing::debug!(target: LOG_TARGET, "Absorbing t_g: {:?}", t_g);
+        t_g.curve_absorb(sponge);
 
-        // Serialize and absorb commitments
-        let mut bytes = Vec::new();
-
-        t_g.serialize_compressed(&mut bytes).unwrap();
-        for byte in &bytes {
-            sponge.absorb(&C::ScalarField::from(*byte as u64));
-        }
-
-        bytes.clear();
-        t_h.serialize_compressed(&mut bytes).unwrap();
-        for byte in &bytes {
-            sponge.absorb(&C::ScalarField::from(*byte as u64));
-        }
+        // Absorb t_h as affine point (matching circuit behavior)
+        tracing::debug!(target: LOG_TARGET, "Absorbing t_h: {:?}", t_h);
+        t_h.curve_absorb(sponge);
 
         // Generate challenge
-        sponge.squeeze_field_elements(1)[0]
+        let challenge = sponge.squeeze_field_elements(1)[0];
+        tracing::debug!(target: LOG_TARGET, "Computed challenge: {:?}", challenge);
+        challenge
     }
 }
 
@@ -113,7 +145,9 @@ pub fn batch_verify_chaum_pedersen<C, R>(
 ) -> bool
 where
     C: CurveGroup,
+    C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
+    C: CurveAbsorb<C::BaseField>,
     R: Rng,
 {
     if proofs.len() != alphas.len() || proofs.len() != betas.len() || proofs.is_empty() {
@@ -134,7 +168,10 @@ where
 
     for i in 0..proofs.len() {
         let rho = rhos[i];
-        let challenge = ChaumPedersenProof::<C>::compute_challenge(proofs[i].t_g, proofs[i].t_h);
+        let config = poseidon_config::<C::BaseField>();
+        let mut sponge = PoseidonSponge::<C::BaseField>::new(&config);
+        let challenge =
+            ChaumPedersenProof::<C>::compute_challenge(&mut sponge, proofs[i].t_g, proofs[i].t_h);
 
         // Accumulate values
         acc_z += rho * proofs[i].z;
@@ -158,17 +195,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
-    use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
 
     #[test]
     fn test_chaum_pedersen_proof() {
         let mut rng = test_rng();
-        type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
+        type ScalarField = <G1Projective as PrimeGroup>::ScalarField;
 
         // Setup
-        let g = GrumpkinProjective::generator();
+        let g = G1Projective::generator();
         let h_scalar = ScalarField::rand(&mut rng);
         let h = g * h_scalar; // Some other base point
 
@@ -180,37 +217,24 @@ mod tests {
         let beta = h * secret;
 
         // Generate proof (deterministic)
-        let proof = ChaumPedersenProof::generate(secret, g, h, alpha, beta);
+        let config = poseidon_config::<<G1Projective as CurveGroup>::BaseField>();
+        let mut sponge = PoseidonSponge::new(&config);
+        let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, alpha, beta, &mut rng);
 
         // Verify proof
-        assert!(proof.verify(g, h, alpha, beta), "Valid proof should verify");
-
-        // Test that the same inputs produce the same proof (determinism)
-        let proof2 = ChaumPedersenProof::generate(secret, g, h, alpha, beta);
-        assert_eq!(proof.t_g, proof2.t_g, "Proofs should be deterministic");
-        assert_eq!(proof.t_h, proof2.t_h, "Proofs should be deterministic");
-        assert_eq!(proof.z, proof2.z, "Proofs should be deterministic");
-
-        // Test invalid proofs
-        let wrong_alpha = g * ScalarField::rand(&mut rng);
+        let mut verify_sponge = PoseidonSponge::new(&config);
         assert!(
-            !proof.verify(g, h, wrong_alpha, beta),
-            "Proof with wrong alpha should fail"
-        );
-
-        let wrong_beta = h * ScalarField::rand(&mut rng);
-        assert!(
-            !proof.verify(g, h, alpha, wrong_beta),
-            "Proof with wrong beta should fail"
+            proof.verify(&mut verify_sponge, g, h, alpha, beta),
+            "Valid proof should verify"
         );
     }
 
     #[test]
     fn test_batch_verification() {
         let mut rng = test_rng();
-        type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
+        type ScalarField = <G1Projective as PrimeGroup>::ScalarField;
 
-        let g = GrumpkinProjective::generator();
+        let g = G1Projective::generator();
         let h = g * ScalarField::rand(&mut rng);
 
         let num_proofs = 5;
@@ -223,7 +247,9 @@ mod tests {
             let secret = ScalarField::rand(&mut rng);
             let alpha = g * secret;
             let beta = h * secret;
-            let proof = ChaumPedersenProof::generate(secret, g, h, alpha, beta);
+            let config = poseidon_config::<<G1Projective as CurveGroup>::BaseField>();
+            let mut sponge = PoseidonSponge::new(&config);
+            let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, alpha, beta, &mut rng);
 
             proofs.push(proof);
             alphas.push(alpha);

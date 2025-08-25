@@ -1,6 +1,14 @@
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
+use ark_r1cs_std::{
+    alloc::AllocVar,
+    eq::EqGadget,
+    fields::{emulated_fp::EmulatedFpVar, fp::FpVar},
+    prelude::{Boolean, ToBitsGadget},
+    GR1CSVar,
+};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_serialize::CanonicalSerialize;
 
 const _LOG_TARGET: &str = "shuffling::util";
@@ -43,7 +51,7 @@ where
 
     // Serialize and absorb each curve point
     let mut bytes = Vec::new();
-    
+
     g.serialize_compressed(&mut bytes).unwrap();
     for byte in &bytes {
         sponge.absorb(&F::from(*byte as u64));

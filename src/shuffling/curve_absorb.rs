@@ -7,7 +7,7 @@
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar,
     poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge},
-    Absorb, CryptographicSponge,
+    CryptographicSponge,
 };
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -34,6 +34,20 @@ impl CurveAbsorb<ark_bn254::Fq> for ark_bn254::G1Projective {
         // Convert to affine representation
         let affine = self.into_affine();
         // Use the Absorb trait implementation for G1Affine which works with Fq
+        sponge.absorb(&affine);
+    }
+}
+
+// ============================================================================
+// Native implementation for Grumpkin using its base field (BN254::Fr)
+// Note: Grumpkin's base field is BN254::Fr (scalar field of BN254)
+// ============================================================================
+
+impl CurveAbsorb<ark_bn254::Fr> for ark_grumpkin::Projective {
+    fn curve_absorb(&self, sponge: &mut PoseidonSponge<ark_bn254::Fr>) {
+        // Convert to affine representation
+        let affine = self.into_affine();
+        // Use the Absorb trait implementation for Grumpkin Affine
         sponge.absorb(&affine);
     }
 }

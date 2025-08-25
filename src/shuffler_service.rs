@@ -170,16 +170,18 @@ impl ShufflerService {
     ///
     /// This is the first phase of the two-phase decryption process.
     /// Each shuffler contributes their secret δ_j to add blinding specifically allowing the target player access.
-    pub fn generate_player_blinding_contribution(
+    pub fn generate_player_blinding_contribution<R: rand::Rng>(
         &self,
         aggregated_public_key: G1Projective,
         player_public_key: G1Projective,
+        rng: &mut R,
     ) -> PlayerTargetedBlindingContribution<G1Projective> {
         // Use a portion of the secret key as the blinding factor (in practice, would generate fresh randomness)
         PlayerTargetedBlindingContribution::generate(
             self.secret_key,
             aggregated_public_key,
             player_public_key,
+            rng,
         )
     }
 
@@ -283,8 +285,11 @@ impl ShufflerService {
         room_id: RoomId,
     ) -> Result<PlayerTargetedBlindingContribution<G1Projective>, Box<dyn std::error::Error>> {
         // Generate contribution
-        let contribution =
-            self.generate_player_blinding_contribution(aggregated_public_key, player_public_key);
+        let contribution = self.generate_player_blinding_contribution(
+            aggregated_public_key,
+            player_public_key,
+            &mut rand::thread_rng(),
+        );
 
         // Create event if we have a database client
         if let (Some(_db_client), Some(game_id)) = (&self.db_client, self.game_id) {
@@ -607,8 +612,11 @@ mod tests {
         let aggregated_pk = G1Affine::generator() * Fr::from(123u64);
         let player_pk = G1Affine::generator() * Fr::from(456u64);
 
-        let blinding_contribution =
-            shuffler.generate_player_blinding_contribution(aggregated_pk.into(), player_pk.into());
+        let blinding_contribution = shuffler.generate_player_blinding_contribution(
+            aggregated_pk.into(),
+            player_pk.into(),
+            &mut rand::thread_rng(),
+        );
 
         // Verify the contribution has the expected structure
         assert!(blinding_contribution.verify(aggregated_pk.into(), player_pk.into()));
@@ -704,22 +712,31 @@ mod tests {
         // ============ PHASE 4: PLAYER-TARGETED BLINDING (Two-Phase Decryption - Phase 1) ============
         // Each shuffler generates a blinding contribution for the target player
 
-        let blinding_contribution1 = shuffler1
-            .generate_player_blinding_contribution(aggregated_public_key, player_public_key);
+        let blinding_contribution1 = shuffler1.generate_player_blinding_contribution(
+            aggregated_public_key,
+            player_public_key,
+            &mut rng,
+        );
         assert!(
             blinding_contribution1.verify(aggregated_public_key, player_public_key),
             "Shuffler 1 blinding contribution invalid"
         );
 
-        let blinding_contribution2 = shuffler2
-            .generate_player_blinding_contribution(aggregated_public_key, player_public_key);
+        let blinding_contribution2 = shuffler2.generate_player_blinding_contribution(
+            aggregated_public_key,
+            player_public_key,
+            &mut rng,
+        );
         assert!(
             blinding_contribution2.verify(aggregated_public_key, player_public_key),
             "Shuffler 2 blinding contribution invalid"
         );
 
-        let blinding_contribution3 = shuffler3
-            .generate_player_blinding_contribution(aggregated_public_key, player_public_key);
+        let blinding_contribution3 = shuffler3.generate_player_blinding_contribution(
+            aggregated_public_key,
+            player_public_key,
+            &mut rng,
+        );
         assert!(
             blinding_contribution3.verify(aggregated_public_key, player_public_key),
             "Shuffler 3 blinding contribution invalid"
@@ -866,10 +883,12 @@ mod tests {
                 shuffler1.generate_player_blinding_contribution(
                     aggregated_public_key,
                     player_public_key,
+                    &mut rng,
                 ),
                 shuffler2.generate_player_blinding_contribution(
                     aggregated_public_key,
                     player_public_key,
+                    &mut rng,
                 ),
             ];
 
