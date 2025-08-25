@@ -10,7 +10,8 @@ use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
 };
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
+use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -19,8 +20,7 @@ use ark_r1cs_std::{
     prelude::*,
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{borrow::Borrow, Zero};
+use ark_std::borrow::Borrow;
 use tracing::instrument;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::chaum_pedersen_gadget";
@@ -38,7 +38,7 @@ where
     /// Second commitment: T_H = H^w
     pub t_h: CV,
     /// Response: z = w + c·secret (emulated scalar field)
-    pub z: EmulatedFpVar<C::ScalarField, C::BaseField>,
+    pub z: FpVar<C::BaseField>,
 }
 
 impl<C, CV> Clone for ChaumPedersenProofVar<C, CV>
@@ -83,10 +83,20 @@ where
         let t_h = CV::new_variable(cs.clone(), || Ok(proof.t_h), mode)?;
         tracing::trace!(target: LOG_TARGET, "Allocated t_h: {:?}", t_h.value());
 
-        // Allocate z as emulated scalar field
-        let z = EmulatedFpVar::<C::ScalarField, C::BaseField>::new_variable(
+        // Convert z from scalar field to base field
+        // proof.z is C::ScalarField, but we need it as C::BaseField for circuit operations
+        let z = FpVar::<C::BaseField>::new_variable(
             cs.clone(),
-            || Ok(proof.z),
+            || {
+                proof
+                    .z
+                    .into_bigint()
+                    .to_bytes_le()
+                    .as_slice()
+                    .try_into()
+                    .map(C::BaseField::from_le_bytes_mod_order)
+                    .map_err(|_| SynthesisError::AssignmentMissing)
+            },
             mode,
         )?;
         tracing::trace!(target: LOG_TARGET, "Allocated z: {:?}", z.value());
@@ -167,8 +177,9 @@ where
         // Verify equation 1: g^z = T_g · α^c
         tracing::debug!(target: LOG_TARGET, "Verifying equation 1: g^z = T_g · α^c");
 
-        // Compute lhs1 = g^z (direct multiplication with EmulatedFpVar)
-        let lhs1 = g.clone() * &self.z;
+        // Compute lhs1 = g^z (using scalar_mul_le with bits)
+        let z_bits = self.z.to_bits_le()?;
+        let lhs1 = g.clone().scalar_mul_le(z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1.value());
 
         // Compute rhs1 = T_g + α^c
@@ -183,8 +194,8 @@ where
         // Verify equation 2: h^z = T_h · β^c
         tracing::debug!(target: LOG_TARGET, "Verifying equation 2: h^z = T_h · β^c");
 
-        // Compute lhs2 = h^z (direct multiplication with EmulatedFpVar)
-        let lhs2 = h.clone() * &self.z;
+        // Compute lhs2 = h^z (using scalar_mul_le with bits)
+        let lhs2 = h.clone().scalar_mul_le(z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2.value());
 
         // Compute rhs2 = T_h + β^c
@@ -217,7 +228,6 @@ mod tests {
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
     use tracing_subscriber::filter;
-    use tracing_subscriber::fmt::format::FmtSpan;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
