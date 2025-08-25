@@ -148,6 +148,7 @@ where
 }
 
 // Circuit representation of ElGamal ciphertext
+#[derive(Debug)]
 pub struct ElGamalCiphertextVar<C, CV>
 where
     C: CurveGroup,

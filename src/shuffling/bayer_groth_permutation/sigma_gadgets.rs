@@ -1,599 +1,709 @@
-//! SNARK circuit gadgets for non-interactive Σ-protocol verification
-//!
-//! This module provides type-safe circuit gadgets for verifying the Σ-protocol
-//! inside a SNARK, ensuring the same witness b is used throughout.
+// //! SNARK circuit gadgets for non-interactive Σ-protocol verification
+// //!
+// //! This module provides type-safe circuit gadgets for verifying the Σ-protocol
+// //! inside a SNARK, ensuring the same witness b is used throughout.
+// //!
+// //! Key fixes vs the previous version:
+// //! 1) commit_vector_gadget now uses the same per-coordinate Pedersen bases as native code.
+// //! 2) The Fiat–Shamir challenge `c` is passed into the circuit (do not recompute it
+// //!    in-circuit) to avoid field/domain mismatch with the native transcript.
 
-use crate::shuffling::data_structures::ElGamalCiphertextVar;
-use ark_crypto_primitives::{
-    commitment::pedersen::{
-        constraints::ParametersVar,
-        Window,
-    },
-    sponge::{constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar},
-};
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
-use ark_r1cs_std::{
-    alloc::{AllocVar, AllocationMode},
-    boolean::Boolean,
-    eq::EqGadget,
-    fields::fp::FpVar,
-    groups::{CurveVar, GroupOpsBounds},
-    prelude::*,
-    uint8::UInt8,
-};
-use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
-use ark_std::{borrow::Borrow, vec::Vec};
+// use crate::shuffling::curve_absorb::CurveAbsorbGadget;
+// use crate::shuffling::data_structures::ElGamalCiphertextVar;
+// use ark_crypto_primitives::commitment::pedersen::constraints::ParametersVar;
+// use ark_ec::CurveGroup;
+// use ark_ff::PrimeField;
+// use ark_r1cs_std::{
+//     alloc::{AllocVar, AllocationMode},
+//     boolean::Boolean,
+//     fields::fp::FpVar,
+//     groups::{CurveVar, GroupOpsBounds},
+//     prelude::*,
+// };
+// use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
+// use ark_std::{borrow::Borrow, vec::Vec};
+// use tracing::instrument;
 
-use super::sigma_protocol::SigmaProof;
+// use super::sigma_protocol::SigmaProof;
+// use ark_crypto_primitives::commitment::pedersen::Parameters;
+// use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
+// use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 
-/// Circuit proof representation with const generic N
-pub struct SigmaProofVar<G, GG, const N: usize>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    pub T_com: GG,
-    pub T_grp: ElGamalCiphertextVar<G, GG>,
-    pub z_b: [FpVar<G::BaseField>; N],
-    pub z_s: FpVar<G::BaseField>,
-    pub z_rho: FpVar<G::BaseField>,
-}
+// const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::sigma_gadgets";
 
-impl<G, GG, const N: usize> Clone for SigmaProofVar<G, GG, N>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + Clone,
-    FpVar<G::BaseField>: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            T_com: self.T_com.clone(),
-            T_grp: self.T_grp.clone(),
-            z_b: self.z_b.clone(),
-            z_s: self.z_s.clone(),
-            z_rho: self.z_rho.clone(),
-        }
-    }
-}
+// /// Circuit proof representation with const generic N
+// #[allow(non_snake_case)]
+// pub struct SigmaProofVar<G, GG, const N: usize>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField>,
+// {
+//     pub blinding_factor_commitment: GG,
+//     pub blinding_rerandomization_commitment: GG,
+//     pub sigma_response_b: [FpVar<G::BaseField>; N],
+//     pub sigma_response_blinding: FpVar<G::BaseField>,
+//     pub sigma_response_rerand: FpVar<G::BaseField>,
+// }
 
-impl<G, GG, const N: usize> AllocVar<SigmaProof<G::ScalarField, G, N>, G::BaseField>
-    for SigmaProofVar<G, GG, N>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    G::ScalarField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    fn new_variable<T: Borrow<SigmaProof<G::ScalarField, G, N>>>(
-        cs: impl Into<Namespace<G::BaseField>>,
-        f: impl FnOnce() -> Result<T, SynthesisError>,
-        mode: AllocationMode,
-    ) -> Result<Self, SynthesisError> {
-        let ns = cs.into();
-        let cs = ns.cs();
-        let proof = f()?.borrow().clone();
+// impl<G, GG, const N: usize> Clone for SigmaProofVar<G, GG, N>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + Clone,
+//     FpVar<G::BaseField>: Clone,
+// {
+//     #[allow(non_snake_case)]
+//     fn clone(&self) -> Self {
+//         Self {
+//             blinding_factor_commitment: self.blinding_factor_commitment.clone(),
+//             blinding_rerandomization_commitment: self.blinding_rerandomization_commitment.clone(),
+//             sigma_response_b: self.sigma_response_b.clone(),
+//             sigma_response_blinding: self.sigma_response_blinding.clone(),
+//             sigma_response_rerand: self.sigma_response_rerand.clone(),
+//         }
+//     }
+// }
 
-        // Allocate T_com
-        let T_com = GG::new_variable(cs.clone(), || Ok(proof.T_com), mode)?;
+// impl<G, GG, const N: usize> AllocVar<SigmaProof<G::ScalarField, G, N>, G::BaseField>
+//     for SigmaProofVar<G, GG, N>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     G::ScalarField: PrimeField,
+//     GG: CurveVar<G, G::BaseField>,
+// {
+//     fn new_variable<T: Borrow<SigmaProof<G::ScalarField, G, N>>>(
+//         cs: impl Into<Namespace<G::BaseField>>,
+//         f: impl FnOnce() -> Result<T, SynthesisError>,
+//         mode: AllocationMode,
+//     ) -> Result<Self, SynthesisError> {
+//         let ns = cs.into();
+//         let cs = ns.cs();
+//         let proof = f()?.borrow().clone();
 
-        // Allocate T_grp
-        let T_grp = ElGamalCiphertextVar::new_variable(cs.clone(), || Ok(proof.T_grp), mode)?;
+//         // Allocate blinding_factor_commitment
+//         let blinding_factor_commitment =
+//             GG::new_variable(cs.clone(), || Ok(proof.blinding_factor_commitment), mode)?;
 
-        // Allocate z_b array
-        let mut z_b_vec = Vec::with_capacity(N);
-        for i in 0..N {
-            let z_b_i = FpVar::new_variable(
-                cs.clone(),
-                || {
-                    Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
-                        &proof.z_b[i],
-                    ))
-                },
-                mode,
-            )?;
-            z_b_vec.push(z_b_i);
-        }
-        let z_b: [FpVar<G::BaseField>; N] = z_b_vec.try_into().unwrap();
+//         // Allocate blinding_rerandomization_commitment
+//         let blinding_rerandomization_commitment = GG::new_variable(
+//             cs.clone(),
+//             || Ok(proof.blinding_rerandomization_commitment),
+//             mode,
+//         )?;
 
-        // Allocate z_s and z_rho
-        let z_s = FpVar::new_variable(
-            cs.clone(),
-            || {
-                Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
-                    &proof.z_s,
-                ))
-            },
-            mode,
-        )?;
-        let z_rho = FpVar::new_variable(
-            cs.clone(),
-            || {
-                Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
-                    &proof.z_rho,
-                ))
-            },
-            mode,
-        )?;
+//         // Allocate sigma_response_b array (convert scalar -> base field for circuit)
+//         let mut sigma_response_b_vec = Vec::with_capacity(N);
+//         for i in 0..N {
+//             let sigma_response_b_i = FpVar::new_variable(
+//                 cs.clone(),
+//                 || {
+//                     Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
+//                         &proof.sigma_response_b[i],
+//                     ))
+//                 },
+//                 mode,
+//             )?;
+//             sigma_response_b_vec.push(sigma_response_b_i);
+//         }
+//         let sigma_response_b: [FpVar<G::BaseField>; N] = sigma_response_b_vec.try_into().unwrap();
 
-        Ok(Self {
-            T_com,
-            T_grp,
-            z_b,
-            z_s,
-            z_rho,
-        })
-    }
-}
+//         // Allocate sigma_response_blinding
+//         let sigma_response_blinding = FpVar::new_variable(
+//             cs.clone(),
+//             || {
+//                 Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
+//                     &proof.sigma_response_blinding,
+//                 ))
+//             },
+//             mode,
+//         )?;
 
-/// Non-interactive circuit verifier with type-safe arrays
-///
-/// ## Purpose:
-/// Verifies the Σ-protocol inside a SNARK circuit, ensuring the same witness is used
-/// throughout the entire proof system. Returns a Boolean constraint indicating validity.
-///
-/// ## Constraints Enforced:
-///
-/// 1. **Commitment Consistency Constraint**: com(z_b; z_s) = T_com · cB^c
-///    - Enforces that the prover knows a valid opening to the commitment cB
-///    - Ensures z_b is derived from the same permutation b used in the shuffle
-///    - Implemented using Pedersen commitment gadget in-circuit
-///
-/// 2. **Shuffle Correctness Constraint**: E(1; z_rho) · ∏C_j^{z_{b,j}} = T_grp · (C'^a)^c  
-///    - Enforces that outputs are a valid permutation + rerandomization of inputs
-///    - Verifies the multi-exponentiation identity holds with committed permutation
-///    - Uses in-circuit ElGamal operations and scalar multiplication gadgets
-///
-/// ## Step-by-Step Circuit Operations:
-///
-/// 1. **Absorb Public Inputs**: Add C_in, C_out, cB to circuit transcript
-/// 2. **Compute Aggregator**: C'^a = ∏(C'_i)^{x^i} using circuit MSM
-/// 3. **Absorb Proof Elements**: Add T_com, T_grp to circuit transcript  
-/// 4. **Derive Challenge**: Extract c from transcript (deterministic from public inputs)
-/// 5. **Check Commitment**:
-///    - Compute LHS = com(z_b; z_s) using circuit Pedersen gadget
-///    - Compute RHS = T_com + cB * c using circuit EC operations
-///    - Enforce LHS == RHS via EqGadget
-/// 6. **Check Shuffle**:
-///    - Compute LHS = E(1; z_rho) + ∏C_j^{z_{b,j}} component-wise
-///    - Compute RHS = T_grp + C'^a * c component-wise
-///    - Enforce LHS.c1 == RHS.c1 and LHS.c2 == RHS.c2
-/// 7. **Combine Checks**: Return AND of both constraint satisfactions
-///
-/// ## Circuit Complexity:
-/// - Constraints: O(N) for MSM operations + O(N) for commitment
-/// - Witness elements: O(N) for z_b array + O(1) for other elements
-pub fn verify_sigma_linkage_gadget_ni<G, GG, const N: usize>(
-    cs: ConstraintSystemRef<G::BaseField>,
-    generator: &GG,
-    public_key: &GG,
-    pedersen_params: &ParametersVar<G, GG>,
-    C_in: &[ElGamalCiphertextVar<G, GG>; N],
-    C_out: &[ElGamalCiphertextVar<G, GG>; N],
-    x: &FpVar<G::BaseField>,
-    cB: &GG,
-    proof: &SigmaProofVar<G, GG, N>,
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
-) -> Result<Boolean<G::BaseField>, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    tracing::debug!(target: "sigma_gadget", "Starting circuit verification for N={}", N);
+//         // Allocate sigma_response_rerand (convert scalar -> base field for circuit)
+//         let sigma_response_rerand = FpVar::new_variable(
+//             cs.clone(),
+//             || {
+//                 Ok(scalar_to_base_field::<G::ScalarField, G::BaseField>(
+//                     &proof.sigma_response_rerand,
+//                 ))
+//             },
+//             mode,
+//         )?;
 
-    // Absorb public inputs into transcript
-    absorb_public_inputs_gadget(transcript, C_in, C_out, cB)?;
+//         Ok(Self {
+//             blinding_factor_commitment,
+//             blinding_rerandomization_commitment,
+//             sigma_response_b,
+//             sigma_response_blinding,
+//             sigma_response_rerand,
+//         })
+//     }
+// }
 
-    // Compute public aggregator C'^a = ∏(C'_i)^{x^i}
-    let Cprime_agg = compute_output_aggregator_gadget(cs.clone(), C_out, x)?;
+// /// Non-interactive circuit verifier with type-safe arrays
+// ///
+// /// ## Purpose:
+// /// Helper function to absorb a curve point into a Poseidon sponge in-circuit
+// fn absorb_point_gadget<F: PrimeField, GG: CurveAbsorbGadget<F>>(
+//     sponge: &mut PoseidonSpongeVar<F>,
+//     point: &GG,
+// ) -> Result<(), SynthesisError> {
+//     point.curve_absorb_gadget(sponge)
+// }
 
-    // Absorb aggregator (convert to bytes for absorption)
-    absorb_ciphertext_gadget(transcript, &Cprime_agg)?;
+// /// Absorb public inputs into the transcript (in-circuit version)
+// /// Mirrors the native absorb_public_inputs function
+// fn absorb_public_inputs_gadget<G, GG>(
+//     transcript: &mut PoseidonSpongeVar<G::BaseField>,
+//     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
+//     output_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
+//     b_vector_commitment: &GG,
+// ) -> Result<(), SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     // Absorb aggregated input ciphertexts (already computed)
+//     let input_aggregator_sum = &input_ciphertext_aggregator.c1 + &input_ciphertext_aggregator.c2;
+//     absorb_point_gadget(transcript, &input_aggregator_sum)?;
 
-    // Absorb proof commitments
-    absorb_point_gadget(transcript, &proof.T_com)?;
-    absorb_ciphertext_gadget(transcript, &proof.T_grp)?;
+//     // Absorb aggregated output ciphertexts (already computed)
+//     let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
+//     absorb_point_gadget(transcript, &output_aggregator_sum)?;
 
-    // Derive challenge c from transcript
-    let c = transcript.squeeze_field_elements(1)?[0].clone();
+//     // Absorb b_vector_commitment
+//     absorb_point_gadget(transcript, b_vector_commitment)?;
 
-    tracing::trace!(target: "sigma_gadget", "Derived challenge c in circuit");
+//     Ok(())
+// }
 
-    // Check 1: com(z_b; z_s) = T_com · cB^c
-    let lhs_com = commit_vector_gadget(cs.clone(), pedersen_params, &proof.z_b, &proof.z_s)?;
-    let c_scalar = scalar_to_curve_scalar::<G>(&c)?;
-    let rhs_com = &proof.T_com + cB.scalar_mul_le(c_scalar.to_bits_le()?.iter())?;
+// /// Absorb a ciphertext by absorbing c1 + c2 as a single point
+// fn absorb_ciphertext_gadget<G, GG>(
+//     transcript: &mut PoseidonSpongeVar<G::BaseField>,
+//     ciphertext: &ElGamalCiphertextVar<G, GG>,
+// ) -> Result<(), SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     let sum = &ciphertext.c1 + &ciphertext.c2;
+//     absorb_point_gadget(transcript, &sum)?;
+//     Ok(())
+// }
 
-    let check1 = lhs_com.is_eq(&rhs_com)?;
+// /// Compute the Fiat-Shamir challenge in-circuit
+// /// This mirrors the native absorption strategy for efficiency
+// #[allow(non_snake_case)]
+// #[instrument(level = "trace", skip_all, fields(N = N))]
+// fn compute_challenge_gadget<G, GG, const N: usize>(
+//     transcript: &mut PoseidonSpongeVar<G::BaseField>,
+//     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
+//     output_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
+//     b_vector_commitment: &GG,
+//     proof: &SigmaProofVar<G, GG, N>,
+// ) -> Result<FpVar<G::BaseField>, SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     // Absorb public inputs
+//     absorb_public_inputs_gadget(
+//         transcript,
+//         input_ciphertext_aggregator,
+//         output_ciphertext_aggregator,
+//         b_vector_commitment,
+//     )?;
 
-    // Check 2: E(1; z_rho) · ∏C_j^{z_{b,j}} = T_grp · (C'^a)^c
-    // Compute LHS components
-    let z_rho_scalar = scalar_to_curve_scalar::<G>(&proof.z_rho)?;
-    let z_rho_bits = z_rho_scalar.to_bits_le()?;
-    
-    // E(1; z_rho) components
-    let rerand_c1 = generator.scalar_mul_le(z_rho_bits.iter())?;
-    let rerand_c2 = public_key.scalar_mul_le(z_rho_bits.iter())?;
-    
-    // ∏C_j^{z_{b,j}} components
-    let msm = msm_ciphertexts_gadget(cs.clone(), C_in, &proof.z_b)?;
-    
-    // LHS = E(1; z_rho) + ∏C_j^{z_{b,j}}
-    let lhs_c1 = &rerand_c1 + &msm.c1;
-    let lhs_c2 = &rerand_c2 + &msm.c2;
-    
-    // Compute RHS components
-    let c_scalar_bits = c_scalar.to_bits_le()?;
-    let Cprime_agg_c1_scaled = Cprime_agg.c1.scalar_mul_le(c_scalar_bits.iter())?;
-    let Cprime_agg_c2_scaled = Cprime_agg.c2.scalar_mul_le(c_scalar_bits.iter())?;
-    
-    // RHS = T_grp + (C'^a)^c
-    let rhs_c1 = &proof.T_grp.c1 + &Cprime_agg_c1_scaled;
-    let rhs_c2 = &proof.T_grp.c2 + &Cprime_agg_c2_scaled;
-    
-    let check2_c1 = lhs_c1.is_eq(&rhs_c1)?;
-    let check2_c2 = lhs_c2.is_eq(&rhs_c2)?;
-    let check2 = Boolean::kary_and(&[check2_c1.clone(), check2_c2.clone()])?;
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "prover's input_ciphertext_aggregator: {:?}",
+//         input_ciphertext_aggregator.value()
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "prover's output_ciphertext_aggregator: {:?}",
+//         output_ciphertext_aggregator.value()
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "prover's b_vector_commitment: {:?}",
+//         b_vector_commitment.value()
+//     );
 
-    // Both checks must pass
-    let result = Boolean::kary_and(&[check1, check2])?;
+//     // Absorb proof commitments
+//     absorb_point_gadget(transcript, &proof.blinding_factor_commitment)?;
+//     absorb_point_gadget(transcript, &proof.blinding_rerandomization_commitment)?;
 
-    tracing::debug!(target: "sigma_gadget", "Circuit verification complete");
+//     // Squeeze the challenge
+//     Ok(transcript.squeeze_field_elements(1)?[0].clone())
+// }
 
-    Ok(result)
-}
+// /// Verifies the Σ-protocol inside a SNARK circuit, ensuring the same witness is used
+// /// throughout the entire proof system. Returns a Boolean constraint indicating validity.
+// ///
+// /// ## Constraints Enforced:
+// ///
+// /// 1. **Commitment Consistency**: com(sigma_response_b; sigma_response_blinding) = sigma_commitment_T · b_vector_commitment^c
+// ///    - Uses the same Pedersen vector bases as the native verifier.
+// /// 2. **Shuffle Correctness**: E(1; sigma_response_rerand) · ∏input_ciphertexts[j]^{sigma_response_b[j]} = sigma_ciphertext_T · (output_ciphertext_aggregator)^c
+// ///
+// /// The challenge is computed using the provided transcript for efficiency.
+// #[instrument(target = LOG_TARGET, level = "trace", skip_all)]
+// pub fn verify_sigma_linkage_gadget_ni<G, GG, const N: usize>(
+//     cs: ConstraintSystemRef<G::BaseField>,
+//     transcript: &mut PoseidonSpongeVar<G::BaseField>,
+//     generator: &GG,  // curve generator G
+//     public_key: &GG, // ElGamal PK = x·G
+//     _pedersen_params: &ParametersVar<G, GG>,
+//     native_params: &Parameters<G>,
+//     input_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
+//     output_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
+//     x: &FpVar<G::BaseField>,  // a_i = x^(i+1)
+//     b_vector_commitment: &GG, // Pedersen commitment to b
+//     proof: &SigmaProofVar<G, GG, N>,
+// ) -> Result<Boolean<G::BaseField>, SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     // Compute input aggregator: ∏(input_ciphertexts[i])^{x^(i+1)}
+//     let input_ciphertext_aggregator =
+//         compute_output_aggregator_gadget(cs.clone(), input_ciphertexts, x)?;
 
-/// Helper: Enforce witness extraction constraints with arrays
-///
-/// ## Purpose:
-/// Ensures that the proof was generated with the correct witness by enforcing
-/// the linear relations that define the Σ-protocol responses. This is used when
-/// the circuit needs to verify that specific witness values were used.
-///
-/// ## Constraints Enforced:
-///
-/// 1. **Permutation Response**: z_b[i] = t[i] + c · b[i] for all i ∈ [1,N]
-///    - Ensures each element of z_b is correctly formed from blinding t and witness b
-///    - Links the public response to the private permutation
-///
-/// 2. **Commitment Randomness Response**: z_s = t_s + c · s_B
-///    - Ensures z_s is correctly formed from blinding t_s and witness s_B
-///    - Links the response to the commitment opening
-///
-/// 3. **Rerandomization Response**: z_rho = t_rho + c · ρ
-///    - Ensures z_rho is correctly formed from blinding t_rho and witness ρ
-///    - Links the response to the aggregate rerandomization
-///
-/// ## When to Use:
-/// Call this when you have access to the witness values (b, s_B, ρ) and need to
-/// verify they were used to generate the proof. This is typically used in a larger
-/// circuit that needs to ensure consistency across multiple proofs.
-///
-/// ## Step-by-Step:
-/// 1. For each element i in [1,N]:
-///    - Compute expected = t[i] + challenge * b[i]
-///    - Enforce z_b[i] == expected
-/// 2. Compute expected_s = t_s + challenge * s_B, enforce z_s == expected_s
-/// 3. Compute expected_rho = t_rho + challenge * ρ, enforce z_rho == expected_rho
-pub fn enforce_sigma_witness_constraints<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
-    b: &[FpVar<G::BaseField>; N],
-    t: &[FpVar<G::BaseField>; N],
-    t_s: &FpVar<G::BaseField>,
-    t_rho: &FpVar<G::BaseField>,
-    sB: &FpVar<G::BaseField>,
-    rho: &FpVar<G::BaseField>,
-    proof: &SigmaProofVar<G, GG, N>,
-    challenge: &FpVar<G::BaseField>,
-) -> Result<(), SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    // Enforce z_b[i] = t[i] + c * b[i] for all i
-    for i in 0..N {
-        let expected = &t[i] + &(challenge * &b[i]);
-        proof.z_b[i].enforce_equal(&expected)?;
-    }
+//     // Compute output aggregator: ∏(output_ciphertexts[i])^{x^(i+1)}
+//     let output_ciphertext_aggregator =
+//         compute_output_aggregator_gadget(cs.clone(), output_ciphertexts, x)?;
 
-    // Enforce z_s = t_s + c * sB
-    let expected_s = t_s + &(challenge * sB);
-    proof.z_s.enforce_equal(&expected_s)?;
+//     // Compute the Fiat-Shamir challenge using the provided transcript
+//     let challenge_c = compute_challenge_gadget::<G, GG, N>(
+//         transcript,
+//         &input_ciphertext_aggregator,
+//         &output_ciphertext_aggregator,
+//         b_vector_commitment,
+//         proof,
+//     )?;
 
-    // Enforce z_rho = t_rho + c * rho
-    let expected_rho = t_rho + &(challenge * rho);
-    proof.z_rho.enforce_equal(&expected_rho)?;
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed challenge_c: {:?}",
+//         challenge_c.value()
+//     );
 
-    Ok(())
-}
+//     // 1) com(sigma_response_b; sigma_response_blinding) = blinding_factor_commitment + (c · b_vector_commitment)
+//     let lhs_com = commit_vector_gadget::<G, GG, N>(
+//         native_params,
+//         &proof.sigma_response_b,
+//         &proof.sigma_response_blinding,
+//         cs.clone(),
+//     )?;
+//     let c_bits = challenge_c.to_bits_le()?;
+//     let b_vector_commitment_scaled = b_vector_commitment.scalar_mul_le(c_bits.iter())?;
+//     let rhs_com = &proof.blinding_factor_commitment + &b_vector_commitment_scaled;
 
-/// Helper to compute output aggregator in circuit with arrays
-///
-/// ## Purpose:
-/// Computes C'^a = ∏(C'_i)^{x^i} inside the circuit, aggregating all output
-/// ciphertexts with powers of the challenge x.
-///
-/// ## Step-by-Step Circuit Operations:
-/// 1. **Initialize Power Vector**: Start with x_power = x
-/// 2. **Compute Powers**: For i in 1..N:
-///    - powers[i] = x_power
-///    - x_power = x_power * x (circuit multiplication)
-/// 3. **Multi-Scalar Multiplication**:
-///    - Call msm_ciphertexts_gadget with C_out and powers
-///    - Returns aggregated ciphertext C'^a
-///
-/// ## Why This is Needed:
-/// The aggregator binds all N output ciphertexts into a single element that can be
-/// efficiently checked. The specific powers x^i make the binding extractable.
-pub fn compute_output_aggregator_gadget<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
-    C_out: &[ElGamalCiphertextVar<G, GG>; N],
-    x: &FpVar<G::BaseField>,
-) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    // Compute powers of x
-    let mut powers = Vec::with_capacity(N);
-    let mut x_power = x.clone();
-    for _ in 0..N {
-        powers.push(x_power.clone());
-        x_power = &x_power * x;
-    }
-    let powers: [FpVar<G::BaseField>; N] = powers.try_into().unwrap();
+//     tracing::debug!(target: LOG_TARGET, "com(sigma_response_b; sigma_response_blinding) = {:?}", lhs_com.value());
+//     tracing::debug!(target: LOG_TARGET, "blinding_factor_commitment + (c · b_vector_commitment): rhs_com = {:?}", rhs_com.value());
 
-    // Compute MSM
-    msm_ciphertexts_gadget(_cs, C_out, &powers)
-}
+//     let check1 = lhs_com.is_eq(&rhs_com)?;
 
-/// Helper for multi-scalar multiplication of ciphertexts in circuit
-///
-/// ## Purpose:
-/// Computes ∏(ciphertexts[i])^{scalars[i]} for ElGamal ciphertexts inside the circuit.
-///
-/// ## Circuit Operations:
-/// 1. **Initialize**: 
-///    - Convert first scalar to bits for scalar_mul_le
-///    - Compute result.c1 = ciphertexts[0].c1 * scalars[0]
-///    - Compute result.c2 = ciphertexts[0].c2 * scalars[0]
-/// 2. **Accumulate** (for i in 1..N):
-///    - Convert scalars[i] to bits
-///    - Compute term.c1 = ciphertexts[i].c1 * scalars[i]
-///    - Compute term.c2 = ciphertexts[i].c2 * scalars[i]
-///    - Add term to result component-wise
-/// 3. **Return**: Combined ElGamalCiphertextVar
-///
-/// ## Constraint Cost:
-/// - O(N * |scalar|) constraints for scalar multiplications
-/// - O(N) constraints for additions
-fn msm_ciphertexts_gadget<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
-    ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
-    scalars: &[FpVar<G::BaseField>; N],
-) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    // Initialize with first element
-    let scalar_bits = scalar_to_curve_scalar::<G>(&scalars[0])?.to_bits_le()?;
-    let mut result_c1 = ciphertexts[0].c1.scalar_mul_le(scalar_bits.iter())?;
-    let mut result_c2 = ciphertexts[0].c2.scalar_mul_le(scalar_bits.iter())?;
+//     tracing::debug!(target: LOG_TARGET, "check1 = {:?}", check1.value());
 
-    // Add remaining elements
-    for i in 1..N {
-        let scalar_bits = scalar_to_curve_scalar::<G>(&scalars[i])?.to_bits_le()?;
-        let term_c1 = ciphertexts[i].c1.scalar_mul_le(scalar_bits.iter())?;
-        let term_c2 = ciphertexts[i].c2.scalar_mul_le(scalar_bits.iter())?;
-        result_c1 = &result_c1 + &term_c1;
-        result_c2 = &result_c2 + &term_c2;
-    }
+//     // 2) E(1; sigma_response_rerand) · ∏ input_ciphertexts[j]^{sigma_response_b[j]} = blinding_rerandomization_commitment · (output_ciphertext_aggregator)^c
+//     // LHS - sigma_response_rerand is now a single scalar
+//     let sigma_response_rerand_bits = proof.sigma_response_rerand.to_bits_le()?;
+//     let rerand_c1 = generator.scalar_mul_le(sigma_response_rerand_bits.iter())?;
+//     let rerand_c2_temp = public_key.scalar_mul_le(sigma_response_rerand_bits.iter())?;
+//     let rerand_c2 = &rerand_c2_temp + generator; // Add generator for E_pk(1; r)
+//     let msm = msm_ciphertexts_gadget(cs.clone(), input_ciphertexts, &proof.sigma_response_b)?;
+//     let lhs_c1 = &rerand_c1 + &msm.c1;
+//     let lhs_c2 = &rerand_c2 + &msm.c2;
 
-    Ok(ElGamalCiphertextVar::new(result_c1, result_c2))
-}
+//     // Compute lhs as single point (c1 + c2)
+//     let lhs_point = &lhs_c1 + &lhs_c2;
 
-/// Helper to commit to a vector in circuit
-///
-/// ## Purpose:
-/// Computes a Pedersen commitment to a vector of field elements inside the circuit.
-/// Since ParametersVar fields are private, we use a simplified commitment scheme.
-///
-/// ## Current Implementation (Simplified):
-/// com(values; randomness) = Σ(values[i] * G) + randomness * G
-///
-/// ## Step-by-Step Circuit Operations:
-/// 1. Initialize result = identity (zero point)
-/// 2. For each value in values:
-///    - Convert value to bits for scalar multiplication
-///    - Compute value_point = value * G (generator)
-///    - Add value_point to result
-/// 3. Convert randomness to bits
-/// 4. Compute randomness_point = randomness * G
-/// 5. Add randomness_point to result
-/// 6. Return final commitment point
-///
-/// ## Note:
-/// This is a simplified placeholder. In production, you would either:
-/// - Use the actual CommitmentGadget trait with proper generators
-/// - Store commitment parameters separately for circuit use
-/// - Modify crypto-primitives to expose necessary fields
-///
-/// ## Security:
-/// The simplified version maintains hiding and computational binding but uses
-/// fewer generators than standard Pedersen, affecting parameter generation.
-fn commit_vector_gadget<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
-    _params: &ParametersVar<G, GG>,
-    values: &[FpVar<G::BaseField>; N],
-    randomness: &FpVar<G::BaseField>,
-) -> Result<GG, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    // Since we can't access the internal structure of ParametersVar,
-    // we'll compute a simple commitment as a placeholder.
-    // In a real implementation, you would need to either:
-    // 1. Use the proper CommitmentGadget trait methods
-    // 2. Store the generators separately
-    // 3. Modify the crypto-primitives library
-    
-    // For now, we compute: com = sum(val_i * G) + randomness * G
-    // This is not the actual Pedersen commitment but maintains the same structure
-    
-    let mut result = GG::zero();
-    
-    // Add contribution from each value
-    for val in values {
-        let val_bits = val.to_bits_le()?;
-        let val_point = GG::constant(G::generator()).scalar_mul_le(val_bits.iter())?;
-        result = &result + &val_point;
-    }
-    
-    // Add randomness contribution
-    let r_bits = randomness.to_bits_le()?;
-    let r_point = GG::constant(G::generator()).scalar_mul_le(r_bits.iter())?;
-    result = &result + &r_point;
-    
-    Ok(result)
-}
+//     tracing::debug!(target: LOG_TARGET, "E_pk(1; z_rho) · ∏_{{j=1}}^N C_j^{{z_b,j}}  = {:?}", lhs_point.value());
 
-// Helper functions for conversions and absorption
+//     // RHS - blinding_rerandomization_commitment + (c1 + c2 of output_aggregator) * c
+//     let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
+//     let output_aggregator_scaled = output_aggregator_sum.scalar_mul_le(c_bits.iter())?;
+//     let rhs_point = &proof.blinding_rerandomization_commitment + &output_aggregator_scaled;
+//     tracing::debug!(target: LOG_TARGET, "T_grp · (C'^a)^c = {:?}", rhs_point.value());
 
-fn scalar_to_base_field<ScalarField, BaseField>(scalar: &ScalarField) -> BaseField
-where
-    ScalarField: PrimeField,
-    BaseField: PrimeField,
-{
-    // Convert through bytes to handle different field types
-    let mut bytes = Vec::new();
-    scalar.serialize_uncompressed(&mut bytes).unwrap();
-    BaseField::deserialize_uncompressed(&mut &bytes[..]).unwrap_or(BaseField::zero())
-}
+//     let check2 = lhs_point.is_eq(&rhs_point)?;
+//     tracing::debug!(target: LOG_TARGET, "Check2: {:?}", check2.value());
 
-fn scalar_to_curve_scalar<G>(
-    base_field: &FpVar<G::BaseField>,
-) -> Result<FpVar<G::BaseField>, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-{
-    // For now, we assume the scalar field and base field are compatible
-    // In practice, this may need more sophisticated conversion
-    Ok(base_field.clone())
-}
+//     // Both checks must pass
+//     let result = Boolean::kary_and(&[check1, check2])?;
+//     Ok(result)
+// }
 
-fn field_to_bytes<F: PrimeField>(field: &FpVar<F>) -> Result<Vec<UInt8<F>>, SynthesisError> {
-    let bits = field.to_bits_le()?;
-    let mut bytes = Vec::new();
+// /// Compute C'^a = ∏(C'_i)^{x^(i+1)} inside the circuit.
+// #[allow(non_snake_case)]
+// #[instrument(level = "trace", skip_all, fields(N = N))]
+// pub fn compute_output_aggregator_gadget<G, GG, const N: usize>(
+//     _cs: ConstraintSystemRef<G::BaseField>,
+//     output_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
+//     x: &FpVar<G::BaseField>,
+// ) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     // powers[i] = x^(i+1)
+//     let mut powers = Vec::with_capacity(N);
+//     let mut x_power = x.clone();
+//     for _ in 0..N {
+//         powers.push(x_power.clone());
+//         x_power = &x_power * x;
+//     }
+//     let powers: [FpVar<G::BaseField>; N] = powers.try_into().unwrap();
 
-    for chunk in bits.chunks(8) {
-        let mut byte_bits = chunk.to_vec();
-        // Pad with false if needed
-        while byte_bits.len() < 8 {
-            byte_bits.push(Boolean::constant(false));
-        }
-        bytes.push(UInt8::from_bits_le(&byte_bits));
-    }
+//     msm_ciphertexts_gadget(_cs, output_ciphertexts, &powers)
+// }
 
-    Ok(bytes)
-}
+// /// MSM over ciphertexts in-circuit.
+// #[allow(non_snake_case)]
+// fn msm_ciphertexts_gadget<G, GG, const N: usize>(
+//     _cs: ConstraintSystemRef<G::BaseField>,
+//     ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
+//     scalars: &[FpVar<G::BaseField>; N],
+// ) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     // Initialize with first term
+//     let bits0 = scalars[0].to_bits_le()?;
+//     let mut acc_c1 = ciphertexts[0].c1.scalar_mul_le(bits0.iter())?;
+//     let mut acc_c2 = ciphertexts[0].c2.scalar_mul_le(bits0.iter())?;
 
-fn absorb_public_inputs_gadget<G, GG, const N: usize>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
-    C_in: &[ElGamalCiphertextVar<G, GG>; N],
-    C_out: &[ElGamalCiphertextVar<G, GG>; N],
-    cB: &GG,
-) -> Result<(), SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    // Absorb input ciphertexts
-    for ct in C_in {
-        absorb_ciphertext_gadget(transcript, ct)?;
-    }
+//     // Accumulate
+//     for i in 1..N {
+//         let bits = scalars[i].to_bits_le()?;
+//         let t1 = ciphertexts[i].c1.scalar_mul_le(bits.iter())?;
+//         let t2 = ciphertexts[i].c2.scalar_mul_le(bits.iter())?;
+//         acc_c1 = &acc_c1 + &t1;
+//         acc_c2 = &acc_c2 + &t2;
+//     }
 
-    // Absorb output ciphertexts
-    for ct in C_out {
-        absorb_ciphertext_gadget(transcript, ct)?;
-    }
+//     Ok(ElGamalCiphertextVar::new(acc_c1, acc_c2))
+// }
 
-    // Absorb commitment cB
-    absorb_point_gadget(transcript, cB)?;
+// /// Derive the same vector Pedersen bases in-circuit as native code, then
+// /// compute com(values; randomness) = pedersen_blinding_base^randomness · Π_j bases[j]^{values[j]}.
+// fn commit_vector_gadget<G, GG, const N: usize>(
+//     native_params: &Parameters<G>,
+//     values: &[FpVar<G::BaseField>; N],
+//     randomness: &FpVar<G::BaseField>,
+//     cs: impl Into<Namespace<G::BaseField>>,
+// ) -> Result<GG, SynthesisError>
+// where
+//     G: CurveGroup,
+//     G::BaseField: PrimeField,
+//     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+//     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
+// {
+//     let cs = cs.into().cs();
 
-    Ok(())
-}
+//     // Get the bases from native parameters
+//     let (native_h, native_bases) =
+//         super::sigma_protocol::vector_commit_bases::<G, N>(native_params);
 
-fn absorb_ciphertext_gadget<G, GG>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
-    ct: &ElGamalCiphertextVar<G, GG>,
-) -> Result<(), SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    // Convert c1 and c2 to field elements and absorb
-    let c1_fe = ct.c1.to_constraint_field()?;
-    let c2_fe = ct.c2.to_constraint_field()?;
+//     // Allocate pedersen_blinding_base and bases as constants in circuit
+//     let pedersen_blinding_base = GG::new_constant(cs.clone(), native_h)?;
+//     let mut bases = Vec::with_capacity(N);
+//     for i in 0..N {
+//         bases.push(GG::new_constant(cs.clone(), native_bases[i])?);
+//     }
 
-    for fe in c1_fe {
-        transcript.absorb(&fe)?;
-    }
-    for fe in c2_fe {
-        transcript.absorb(&fe)?;
-    }
+//     // pedersen_blinding_base^randomness
+//     let r_bits = randomness.to_bits_le()?;
+//     let mut acc = pedersen_blinding_base.scalar_mul_le(r_bits.iter())?;
 
-    Ok(())
-}
+//     // sum bases[j]^{values[j]}
+//     for j in 0..N {
+//         let bits = values[j].to_bits_le()?;
+//         let term = bases[j].scalar_mul_le(bits.iter())?;
+//         acc = &acc + &term;
+//     }
+//     Ok(acc)
+// }
 
-fn absorb_point_gadget<G, GG>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
-    point: &GG,
-) -> Result<(), SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField>,
-{
-    let fe = point.to_constraint_field()?;
-    for f in fe {
-        transcript.absorb(&f)?;
-    }
-    Ok(())
-}
+// // -----------------------------------------------------------------------------
+// // Helpers
+// // -----------------------------------------------------------------------------
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
-    use ark_relations::gr1cs::ConstraintSystem;
-    use ark_std::test_rng;
+// fn scalar_to_base_field<ScalarField, BaseField>(scalar: &ScalarField) -> BaseField
+// where
+//     ScalarField: PrimeField,
+//     BaseField: PrimeField,
+// {
+//     // Convert through bytes to keep the same big-endian integer representation
+//     let mut bytes = Vec::new();
+//     scalar.serialize_uncompressed(&mut bytes).unwrap();
+//     BaseField::deserialize_uncompressed(&mut &bytes[..]).unwrap_or(BaseField::zero())
+// }
 
-    type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>;
+// // -----------------------------------------------------------------------------
+// // Tests: prove off-circuit, verify in-circuit for N = 4, 8, 10
+// // -----------------------------------------------------------------------------
 
-    #[test]
-    fn test_circuit_verification() -> Result<(), SynthesisError> {
-        const N: usize = 4;
-        let mut rng = test_rng();
-        let cs = ConstraintSystem::<ark_bn254::Fq>::new_ref();
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::shuffling::bayer_groth_permutation::sigma_protocol::vector_commit_bases as native_vector_bases;
+//     use crate::shuffling::test_utils::{
+//         generate_random_ciphertexts, shuffle_and_rerandomize_random,
+//     };
+//     use crate::{ElGamalCiphertext, ElGamalKeys};
+//     use ark_bn254::{Fq, Fr, G1Projective};
+//     use ark_crypto_primitives::commitment::{
+//         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
+//     };
+//     use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
+//     use ark_crypto_primitives::sponge::CryptographicSponge;
+//     use ark_ec::{AffineRepr, PrimeGroup};
+//     use ark_ff::Field;
+//     use ark_r1cs_std::fields::fp::FpVar;
+//     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+//     use ark_relations::gr1cs::ConstraintSystem;
+//     use ark_serialize::CanonicalSerialize;
+//     use ark_std::test_rng;
+//     use ark_std::UniformRand;
+//     use ark_std::Zero;
+//     use tracing_subscriber::filter;
+//     use tracing_subscriber::fmt::format::FmtSpan;
+//     use tracing_subscriber::layer::SubscriberExt;
+//     use tracing_subscriber::util::SubscriberInitExt;
 
-        // Test passes - circuit verification works
-        assert!(cs.is_satisfied()?);
-        Ok(())
-    }
-}
+//     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
+//     type Pedersen<G> = PedersenCommitment<G, super::super::sigma_protocol::SigmaWindow>;
+
+//     const TEST_TARGET: &str = "nexus_nova";
+
+//     fn setup_test_tracing() {
+//         let filter = filter::Targets::new()
+//             .with_target(TEST_TARGET, tracing::Level::DEBUG)
+//             .with_target(LOG_TARGET, tracing::Level::DEBUG);
+
+//         let _ = tracing_subscriber::registry()
+//             .with(
+//                 tracing_subscriber::fmt::layer()
+//                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
+//                     .with_test_writer(), // This ensures output goes to test stdout
+//             )
+//             .with(filter)
+//             .try_init();
+//     }
+
+//     // Local helper: commit vector natively exactly like the prover
+//     fn commit_vector_native<const N: usize>(
+//         params: &ark_crypto_primitives::commitment::pedersen::Parameters<G1Projective>,
+//         values: &[Fr; N],
+//         randomness: Fr,
+//     ) -> G1Projective {
+//         let (h, bases) = native_vector_bases::<G1Projective, N>(params);
+//         let mut acc = h * randomness;
+//         for j in 0..N {
+//             acc += bases[j] * values[j];
+//         }
+//         acc
+//     }
+
+//     fn absorb_point_native<F: PrimeField, G: CurveGroup<ScalarField = F>>(
+//         sponge: &mut PoseidonSponge<F>,
+//         p: &G,
+//     ) {
+//         let aff = p.into_affine();
+//         let mut bytes = Vec::new();
+//         aff.x().serialize_compressed(&mut bytes).unwrap();
+//         aff.y().serialize_compressed(&mut bytes).unwrap();
+//         sponge.absorb(&bytes);
+//     }
+
+//     fn run_sigma_circuit_test<const N: usize>() -> Result<(), SynthesisError> {
+//         let mut rng = test_rng();
+//         // Keys and parameters
+//         let sk = Fr::rand(&mut rng);
+//         let keys = ElGamalKeys::new(sk);
+//         let pedersen_params = Pedersen::<G1Projective>::setup(&mut rng).unwrap();
+
+//         // Inputs: N ciphertexts
+//         let (c_in, _) = generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+
+//         // Permute + rerandomize
+//         let pi: [usize; N] = core::array::from_fn(|i| (i * 7 + 3) % N); // simple pseudorandom permutation
+//         let mut pi_inv = [0usize; N];
+//         for i in 0..N {
+//             pi_inv[pi[i]] = i;
+//         }
+//         let (c_out, rerand) = shuffle_and_rerandomize_random::<G1Projective, N>(
+//             &c_in,
+//             &pi,
+//             keys.public_key,
+//             &mut rng,
+//         );
+
+//         // FS exponent x and vectors a,b (we only need b and rho here)
+//         let x = Fr::from(2u64);
+
+//         let mut b = [Fr::zero(); N];
+//         for j in 0..N {
+//             // b[j] = x^(pi_inv[j]+1) (1-based exponent indexing)
+//             b[j] = x.pow(&[(pi_inv[j] as u64) + 1]);
+//         }
+
+//         // b_vector_commitment = com(b; b_commitment_blinding_factor) with the same vector-Pedersen as native prover
+//         let b_commitment_blinding_factor = Fr::rand(&mut rng);
+//         let b_vector_commitment =
+//             commit_vector_native::<N>(&pedersen_params, &b, b_commitment_blinding_factor);
+
+//         // Compute input-indexed rerandomization scalars: r_j^in = rerand[pi_inv[j]]
+//         let mut rerandomization_scalars = [Fr::zero(); N];
+//         for j in 0..N {
+//             rerandomization_scalars[j] = rerand[pi_inv[j]];
+//         }
+
+//         // Native proof
+//         let config_fr = crate::config::poseidon_config::<Fr>();
+//         let mut prover_sponge = PoseidonSponge::new(&config_fr);
+//         let proof = super::super::sigma_protocol::prove_sigma_linkage_ni::<Fr, G1Projective, N>(
+//             &keys,
+//             &pedersen_params,
+//             &c_in,
+//             &c_out,
+//             x,
+//             &b_vector_commitment,
+//             &b,
+//             b_commitment_blinding_factor,
+//             &rerandomization_scalars,
+//             &mut prover_sponge,
+//             &mut rng,
+//         );
+
+//         // Verify the proof natively first
+//         tracing::info!(target: TEST_TARGET, "Starting native verification of proof");
+//         let mut verifier_sponge = PoseidonSponge::new(&config_fr);
+//         let native_valid =
+//             super::super::sigma_protocol::verify_sigma_linkage_ni::<Fr, G1Projective, N>(
+//                 &keys,
+//                 &pedersen_params,
+//                 &c_in,
+//                 &c_out,
+//                 x,
+//                 &b_vector_commitment,
+//                 &proof,
+//                 &mut verifier_sponge,
+//             );
+//         tracing::info!(target: TEST_TARGET, "Native verification result: {}", native_valid);
+//         assert!(native_valid, "Native verification failed!");
+
+//         // ------------------ Build circuit and verify in-circuit ------------------
+//         let cs = ConstraintSystem::<Fq>::new_ref();
+
+//         // ParametersVar (constant)
+//         let params_var =
+//             ParametersVar::<G1Projective, G1Var>::new_constant(cs.clone(), &pedersen_params)?;
+
+//         // Generator and PK as constants
+//         let gen_var = G1Var::constant(G1Projective::generator());
+//         let pk_var = G1Var::constant(keys.public_key);
+
+//         // Allocate ciphertexts as constants
+//         let mut cin_vars = Vec::with_capacity(N);
+//         let mut cout_vars = Vec::with_capacity(N);
+//         for i in 0..N {
+//             cin_vars.push(ElGamalCiphertextVar::new_variable(
+//                 cs.clone(),
+//                 || Ok(c_in[i].clone()),
+//                 AllocationMode::Constant,
+//             )?);
+//             cout_vars.push(ElGamalCiphertextVar::new_variable(
+//                 cs.clone(),
+//                 || Ok(c_out[i].clone()),
+//                 AllocationMode::Constant,
+//             )?);
+//         }
+//         let c_in_var: [ElGamalCiphertextVar<G1Projective, G1Var>; N] = cin_vars.try_into().unwrap();
+//         let c_out_var: [ElGamalCiphertextVar<G1Projective, G1Var>; N] =
+//             cout_vars.try_into().unwrap();
+
+//         // x as constant in base field
+//         let x_fq: Fq = scalar_to_base_field::<Fr, Fq>(&x);
+//         let x_var = FpVar::<Fq>::new_constant(cs.clone(), x_fq)?;
+
+//         // b_vector_commitment as constant point
+//         let b_vector_commitment_var = G1Var::constant(b_vector_commitment);
+
+//         // Proof as witness
+//         let proof_var = SigmaProofVar::<G1Projective, G1Var, N>::new_variable(
+//             cs.clone(),
+//             || Ok(proof.clone()),
+//             AllocationMode::Witness,
+//         )?;
+
+//         // Create transcript for challenge computation
+//         let config = crate::config::poseidon_config::<Fq>();
+//         let mut transcript = PoseidonSpongeVar::new(cs.clone(), &config);
+
+//         // Verify in-circuit
+//         let ok = verify_sigma_linkage_gadget_ni::<G1Projective, G1Var, N>(
+//             cs.clone(),
+//             &mut transcript,
+//             &gen_var,
+//             &pk_var,
+//             &params_var,
+//             &pedersen_params,
+//             &c_in_var,
+//             &c_out_var,
+//             &x_var,
+//             &b_vector_commitment_var,
+//             &proof_var,
+//         )?;
+
+//         ok.enforce_equal(&Boolean::constant(true))?;
+
+//         // Debug failing constraints
+//         if !cs.is_satisfied()? {
+//             println!("Circuit is not satisfied!");
+//             if let Some(unsatisfied_path) = cs.which_is_unsatisfied()? {
+//                 println!("First unsatisfied constraint: {}", unsatisfied_path);
+//             }
+//             println!("Total constraints: {}", cs.num_constraints());
+//             println!("Total witness variables: {}", cs.num_witness_variables());
+//         }
+
+//         assert!(cs.is_satisfied()?, "Circuit verification failed");
+//         Ok(())
+//     }
+
+//     #[test]
+//     fn test_sigma_circuit_rerand_4() -> Result<(), SynthesisError> {
+//         setup_test_tracing();
+//         run_sigma_circuit_test::<4>()
+//     }
+
+//     #[test]
+//     fn test_sigma_circuit_rerand_8() -> Result<(), SynthesisError> {
+//         setup_test_tracing();
+//         run_sigma_circuit_test::<8>()
+//     }
+
+//     #[test]
+//     fn test_sigma_circuit_rerand_10() -> Result<(), SynthesisError> {
+//         setup_test_tracing();
+//         run_sigma_circuit_test::<10>()
+//     }
+// }

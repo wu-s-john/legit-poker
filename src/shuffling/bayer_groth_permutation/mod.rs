@@ -1,5 +1,5 @@
 //! Bayer-Groth permutation equality proof implementation
-//! 
+//!
 //! This module implements the permutation equality proof from the Bayer-Groth shuffle protocol,
 //! providing both native (non-SNARK) and circuit gadget implementations.
 //!
@@ -67,11 +67,14 @@
 pub mod fiat_shamir;
 pub mod gadgets;
 pub mod native;
-pub mod sigma_protocol;
 pub mod sigma_gadgets;
+pub mod sigma_protocol;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sponge_ec_test;
 
 // Re-export main types and functions
 pub use fiat_shamir::BayerGrothTranscript;
@@ -85,14 +88,14 @@ pub use native::{
 };
 
 // Re-export sigma protocol types and functions
-pub use sigma_protocol::{
-    SigmaProof, prove_sigma_linkage_ni, verify_sigma_linkage_ni,
-    compute_output_aggregator, msm_ciphertexts,
-};
-pub use sigma_gadgets::{
-    SigmaProofVar, verify_sigma_linkage_gadget_ni,
-    enforce_sigma_witness_constraints, compute_output_aggregator_gadget,
-};
+// pub use sigma_protocol::{
+//     SigmaProof, prove_sigma_linkage_ni, verify_sigma_linkage_ni,
+//     compute_output_aggregator, msm_ciphertexts,
+// };
+// pub use sigma_gadgets::{
+//     SigmaProofVar, verify_sigma_linkage_gadget_ni,
+//     compute_output_aggregator_gadget,
+// };
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -103,31 +106,31 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 pub struct PermutationProof<F: PrimeField, G: CurveGroup> {
     /// Commitment to permutation vector a (passed in, not computed)
     pub c_a: G,
-    
+
     /// Commitment to vector b (passed in, not computed)
     pub c_b: G,
-    
+
     /// Blinding factor for c_a (derived from Fiat-Shamir)
     pub r: F,
-    
+
     /// Blinding factor for c_b (derived from Fiat-Shamir)
     pub s: F,
-    
+
     /// Challenge x
     pub x: F,
-    
+
     /// Challenge y
     pub y: F,
-    
+
     /// Challenge z
     pub z: F,
-    
+
     /// Left product L = ∏(d_i - z)
     pub left_product: F,
-    
+
     /// Right product R = ∏(y*i + x^i - z)
     pub right_product: F,
-    
+
     /// Elliptic curve point P = [L]G
     pub curve_point: G,
 }

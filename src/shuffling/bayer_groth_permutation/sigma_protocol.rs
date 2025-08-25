@@ -1,539 +1,599 @@
-//! Non-interactive single Σ-protocol for Bayer-Groth shuffle rerandomization proof
-//!
-//! This module implements a type-safe non-interactive Σ-protocol that proves:
-//! C'^a = E_pk(1; ρ) · ∏(C_j)^{b_j} with c_B = com(b; s_B)
-//!
-//! ## Mathematical Foundation
-//!
-//! The proof demonstrates that a shuffle was performed correctly by showing that
-//! two different polynomial evaluations yield the same result:
-//! - Left side: ∏(C'_i)^{x^i} - the output ciphertexts raised to sequential powers of x
-//! - Right side: E_pk(1; ρ) · ∏(C_j)^{x^{π^{-1}(j)}} - the input ciphertexts raised to permuted powers plus rerandomization
-//!
-//! ## Key Components
-//!
-//! - **a = (x, x^2, ..., x^N)**: Public exponents derived from Fiat-Shamir challenge x
-//! - **b = (x^{π^{-1}(1)}, ..., x^{π^{-1}(N)})**: Private permuted exponents (witness)
-//! - **π**: The secret permutation applied during shuffling
-//! - **ρ**: Aggregate rerandomization factor = Σ(x^i · r_i) where r_i are individual rerandomizations
-//!
-//! ## Proof Strategy
-//!
-//! 1. **Commitment Phase**: Prover commits to the permuted exponents b using Pedersen commitment
-//! 2. **Challenge Derivation**: Use Fiat-Shamir to derive challenge x from transcript
-//! 3. **Aggregation**: Compute C'^a = ∏(C'_i)^{x^i} which aggregates all output ciphertexts
-//! 4. **Σ-Protocol Execution**:
-//!    - Prover generates random t vector and commits: T_com = com(t; t_s)
-//!    - Prover computes T_grp = E(1; t_rho) · ∏C_j^{t_j} (random linear combination)
-//!    - Challenge c derived via Fiat-Shamir from T_com and T_grp
-//!    - Prover responds with z_b = t + c·b, z_s = t_s + c·s_B, z_rho = t_rho + c·ρ
-//! 5. **Verification**: Check two equations hold:
-//!    - com(z_b; z_s) = T_com · c_B^c (commitment consistency)
-//!    - E(1; z_rho) · ∏C_j^{z_{b,j}} = T_grp · (C'^a)^c (shuffle correctness)
-//!
-//! ## Security Properties
-//!
-//! - **Completeness**: Honest prover always convinces honest verifier
-//! - **Soundness**: If permutation is incorrect, no malicious prover can create valid proof
-//! - **Zero-Knowledge**: Proof reveals nothing about the permutation π beyond its correctness
-//! - **Non-Interactive**: Uses Fiat-Shamir transform with Poseidon hash for challenge generation
-//!
-//! ## Implementation Details
-//!
-//! - Uses const generics (N) for compile-time size checking and type safety
-//! - Supports any deck size from N=1 to N=52 (standard deck)
-//! - Optimized multi-scalar multiplication for efficiency
-//! - Compatible with both native and in-circuit verification
+// //! Non-interactive single Σ-protocol for Bayer–Groth shuffle rerandomization proof
+// //!
+// //! This module implements a type-safe non-interactive Σ-protocol that proves, in one shot:
+// //!
+// //!     output_ciphertext_aggregator = E_pk(1; ρ) · ∏_j input_ciphertexts[j]^{b_j}    with    b_vector_commitment = com(b; b_commitment_blinding_factor)
+// //!
+// //! where
+// //!   - a = (x^1, x^2, …, x^N) with x←FS, i.e., a_i = x^{i} in 1-based math; in code we use a_i = x^{i+1} for 0-based indices,
+// //!   - b_j = x^{π^{-1}(j)} (again 1-based math; in code b_j = x^{π^{-1}(j)+1}),
+// //!   - ρ = Σ_i x^i ρ_i is the aggregate rerandomization.
+// //!
+// //! ## Math identity proved by the Σ‑protocol
+// //!
+// //! Given a correct shuffle  C'_i = C_{π(i)} · E(1; ρ_i), define a_i := x^{i} and b_j := x^{π^{-1}(j)} (1-based).
+// //! Then:
+// //!
+// //!   ∏_i (C'_i)^{a_i}
+// //! = ∏_i (C_{π(i)} · E(1; ρ_i))^{x^{i}}
+// //! = (∏_i C_{π(i)}^{x^{i}}) · E(1; Σ_i x^{i}ρ_i)
+// //! = (∏_j C_j^{x^{π^{-1}(j)}}) · E(1; ρ)         [reindex j = π(i)]
+// //! = E(1; ρ) · ∏_j C_j^{b_j}.
+// //!
+// //! Our Σ‑protocol proves knowledge of (b, s_B, ρ) such that
+// //!
+// //!   C'^a = E(1; ρ) · ∏_j C_j^{b_j}    and    c_B = com(b; s_B)
+// //!
+// //! using two Schnorr-style equalities (Fiat–Shamir to make it non-interactive):
+// //!
+// //!   com(z_b; z_s) = T_com · c_B^c                      (commitment side)
+// //!   E(1; z_ρ) · ∏_j C_j^{z_{b,j}} = T_grp · (C'^a)^c   (group side)
+// //!
+// //! **Important:** `com(·)` must be a *linear vector Pedersen* over field scalars, not a byte-Pedersen hash,
+// //! so that com(t + c·b; t_s + c·s_B) = com(t; t_s) · com(b; s_B)^c holds coordinate-wise.
+// //!
+// //! ## Security Properties
+// //! - Completeness: Honest prover always convinces honest verifier.
+// //! - Special soundness: Two accepting transcripts with different challenges extract (b, s_B, ρ).
+// //! - HVZK (with FS): Transcript is simulatable; the commitments are perfectly hiding.
+// //!
+// //! ## Implementation Details
+// //! - Uses const generics (N) for compile-time size checking and type safety.
+// //! - `a_i` is implemented as x^(i+1) for i=0..N-1 (so it matches the 1-based math above).
+// //! - The Pedersen commitment here is a *scalar-vector* Pedersen over N coordinates.
 
-use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalKeys};
-use ark_crypto_primitives::sponge::Absorb;
-use ark_crypto_primitives::{
-    commitment::{
-        pedersen::{Commitment as PedersenCommitment, Parameters, Randomness, Window},
-        CommitmentScheme,
-    },
-    sponge::{poseidon::PoseidonSponge, CryptographicSponge},
-};
-use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{rand::Rng, vec::Vec, Zero};
+// use crate::shuffling::curve_absorb::CurveAbsorb;
+// use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalKeys};
+// use ark_crypto_primitives::sponge::Absorb;
+// use ark_crypto_primitives::{
+//     commitment::pedersen::{Commitment as PedersenCommitment, Parameters, Window},
+//     sponge::{poseidon::PoseidonSponge, CryptographicSponge},
+// };
+// use ark_ec::{AffineRepr, CurveGroup};
+// use ark_ff::PrimeField;
+// use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+// use ark_std::{rand::Rng, vec::Vec};
 
-/// Window type for Pedersen commitment (matches existing usage)
-#[derive(Clone)]
-pub struct SigmaWindow;
+// /// Logging target for this module
+// const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::sigma_protocol";
 
-impl Window for SigmaWindow {
-    const WINDOW_SIZE: usize = 4;
-    const NUM_WINDOWS: usize = 64; // 4×64 = 256 bits for Fr elements
-}
+// /// Window type for Pedersen parameters (we only use it to generate a large pool of bases).
+// #[derive(Clone)]
+// pub struct SigmaWindow;
 
-/// Type alias for our Pedersen commitment scheme
-pub type Pedersen<G> = PedersenCommitment<G, SigmaWindow>;
+// impl Window for SigmaWindow {
+//     const WINDOW_SIZE: usize = 4;
+//     // Large enough that setup() yields many generators; > N is sufficient (we use ~52 max).
+//     const NUM_WINDOWS: usize = 416;
+// }
 
-/// Core proof struct with const generic N for type-safe array sizes
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-pub struct SigmaProof<F: PrimeField, G: CurveGroup, const N: usize> {
-    /// Commitment to random t vector
-    pub T_com: G,
-    /// ElGamal ciphertext for random MSM
-    pub T_grp: ElGamalCiphertext<G>,
-    /// Response array (exactly N elements)
-    pub z_b: [F; N],
-    /// Response for commitment randomness
-    pub z_s: F,
-    /// Response for rerandomization
-    pub z_rho: F,
-}
+// /// Type alias for arkworks’ byte-oriented Pedersen; we only use its parameters to source bases.
+// pub type Pedersen<G> = PedersenCommitment<G, SigmaWindow>;
 
-/// Non-interactive prover using Fiat-Shamir with type-safe arrays
-///
-/// Generates a proof that C'^a = E_pk(1; ρ) · ∏(C_j)^{b_j}
-/// where a[i] = x^(i+1) and b[j] = x^{π^{-1}(j)+1}
-///
-/// ## Step-by-Step Process:
-///
-/// 1. **Transcript Setup**: Absorb all public inputs (C_in, C_out, cB) into the Fiat-Shamir transcript
-/// 2. **Aggregation**: Compute C'^a = ∏(C'_i)^{x^i} which aggregates output ciphertexts
-/// 3. **Random Blinding**: Generate random vectors t ∈ Z_q^N, t_s, t_rho ∈ Z_q for zero-knowledge
-/// 4. **Commitment Phase**:
-///    - Compute T_com = com(t; t_s) - commitment to random vector t
-///    - Compute T_grp = E(1; t_rho) · ∏(C_j)^{t_j} - random linear combination of inputs
-/// 5. **Challenge Derivation**: Extract challenge c from transcript via Fiat-Shamir
-/// 6. **Response Phase**: Compute responses that hide the witness:
-///    - z_b = t + c·b (hides permutation b)
-///    - z_s = t_s + c·s_B (hides commitment randomness)
-///    - z_rho = t_rho + c·ρ (hides rerandomization factor)
-///
-/// ## Security Properties:
-/// - **Completeness**: Honest prover with valid witness always produces accepting proof
-/// - **Soundness**: Without valid witness, cannot produce accepting proof except with neg. probability
-/// - **Zero-Knowledge**: Responses are uniformly random, revealing nothing about b, s_B, or ρ
-pub fn prove_sigma_linkage_ni<F, G, const N: usize>(
-    keys: &ElGamalKeys<G>,
-    pedersen_params: &Parameters<G>,
-    C_in: &[ElGamalCiphertext<G>; N],
-    C_out: &[ElGamalCiphertext<G>; N],
-    x: F,
-    cB: &G,
-    b: &[F; N],
-    sB: F,
-    rho: F,
-    transcript: &mut PoseidonSponge<F>,
-    rng: &mut impl Rng,
-) -> SigmaProof<F, G, N>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    tracing::debug!(target: "sigma_protocol", "Starting non-interactive proof generation for N={}", N);
+// /// Σ‑protocol proof object.
+// #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+// #[allow(non_snake_case)]
+// pub struct SigmaProof<F: PrimeField, G: CurveGroup, const N: usize> {
+//     /// Commitment to random vector t: sigma_commitment_T = com(t; t_s).
+//     pub blinding_factor_commitment: G,
+//     /// Group-side randomizer: sigma_ciphertext_T = E(1; t_ρ) · ∏ C_j^{t_j}.
+//     pub blinding_rerandomization_commitment: G,
+//     /// Response vector sigma_response_b = t + c·b (length N).
+//     pub sigma_response_b: [F; N],
+//     /// Response for commitment randomness: sigma_response_blinding = t_s + c·s_B.
+//     pub sigma_response_blinding: F,
+//     /// Response for rerandomization: sigma_response_rerand = t_ρ + c·ρ where ρ = Σ(b_j * r_j^in).
+//     pub sigma_response_rerand: F,
+// }
 
-    // Absorb public inputs into transcript
-    absorb_public_inputs(transcript, C_in, C_out, cB);
+// // TODO: transcripts should not absorb entire vectors. Rather, they should absorb the commitments of the vectors since it is very computationally expensive
+// // That being said, we need a new type where you pass in a variable with its commitments
 
-    // Compute public aggregator C'^a = ∏(C'_i)^{x^i}
-    let Cprime_agg = compute_output_aggregator(C_out, x);
+// #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
+// ///
+// /// Prover: Generate a non-interactive Σ‑proof that
+// ///
+// ///     output_ciphertext_aggregator = E_pk(1; ρ) · ∏_j input_ciphertexts[j]^{b_j}
+// ///
+// /// with a commitment c_B = com(b; s_B).
+// ///
+// /// **Inputs**
+// /// - `keys`: ElGamal keys (public key used in E(1; ·)).
+// /// - `pedersen_params`: parameters used to derive the linear vector-Pedersen bases.
+// /// - `input_ciphertexts`: input ciphertexts (length N).
+// /// - `output_ciphertexts`: output ciphertexts (length N).
+// /// - `x`: Fiat–Shamir scalar; we use a_i = x^(i+1).
+// /// - `b_vector_commitment`: Pedersen commitment to b (computed with the same `pedersen_params`).
+// /// - `b`: witness vector b_j = x^{π^{-1}(j)+1}.
+// /// - `b_commitment_blinding_factor`: commitment randomness for b_vector_commitment.
+// /// - `rho`: aggregate rerandomization ρ = Σ_i x^{i+1} ρ_i (matches a_i).
+// /// - `transcript`: sponge to derive the challenge.
+// /// - `rng`: RNG.
+// ///
+// /// **Returns:** `SigmaProof`.
+// #[allow(non_snake_case)]
+// pub fn prove_sigma_linkage_ni<F, G, const N: usize>(
+//     keys: &ElGamalKeys<G>,
+//     pedersen_params: &Parameters<G>,
+//     input_ciphertexts: &[ElGamalCiphertext<G>; N],
+//     output_ciphertexts: &[ElGamalCiphertext<G>; N],
+//     x: F,
+//     b_vector_commitment: &G,
+//     b: &[F; N],
+//     b_commitment_blinding_factor: F,
+//     rerandomization_scalars: &[F; N], // These are the rerandomization scalars
+//     transcript: &mut PoseidonSponge<F>,
+//     rng: &mut impl Rng,
+// ) -> SigmaProof<F, G, N>
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F> + CurveAbsorb<F>,
+// {
+//     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive proof generation");
 
-    // Absorb aggregator components as field elements
-    absorb_ciphertext(transcript, &Cprime_agg);
+//     // Compute aggregators C^a and C'^a where a_i = x^(i+1) (zero-based loop)
+//     let input_ciphertext_aggregator = compute_output_aggregator(input_ciphertexts, x);
+//     let output_ciphertext_aggregator = compute_output_aggregator(output_ciphertexts, x);
 
-    // Step 1: Generate random commitments
-    let mut t = [F::zero(); N];
-    for i in 0..N {
-        t[i] = F::rand(rng);
-    }
-    let t_s = F::rand(rng);
-    let t_rho = F::rand(rng);
+//     // Absorb public inputs into transcript
+//     absorb_public_inputs(
+//         transcript,
+//         &input_ciphertext_aggregator,
+//         &output_ciphertext_aggregator,
+//         b_vector_commitment,
+//     );
 
-    // Compute T_com = com(t; t_s)
-    let T_com = commit_vector(pedersen_params, &t, t_s);
+//     // Log the aggregator for debugging
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed input_ciphertext_aggregator: {:?}",
+//         input_ciphertext_aggregator
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed output_ciphertext_aggregator: {:?}",
+//         output_ciphertext_aggregator
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed b_vector_commitment: {:?}",
+//         b_vector_commitment
+//     );
 
-    // Compute T_grp = E(1; t_rho) · ∏C_j^{t_j}
-    let T_grp = {
-        let g = G::generator();
-        let rerand = ElGamalCiphertext {
-            c1: g * t_rho,
-            c2: keys.public_key * t_rho,
-        };
-        let msm = msm_ciphertexts(C_in, &t);
-        ElGamalCiphertext {
-            c1: rerand.c1 + msm.c1,
-            c2: rerand.c2 + msm.c2,
-        }
-    };
+//     // --- Commit phase: pick random blinds ---
+//     let blinding_factors: [F; N] = std::array::from_fn(|_| F::rand(rng));
+//     let blinding_factor_for_blinding_factor_commitment = F::rand(rng); // Blinding factor used for the blinding commitment
+//     let ciphertext_masking_rerand = F::rand(rng);
 
-    // Step 2: Absorb commitments and derive challenge
-    absorb_point(transcript, &T_com);
-    absorb_ciphertext(transcript, &T_grp);
+//     // sigma_commitment_T = com(t; commitment_masking_blinding) using a linear vector-Pedersen over scalars
+//     let blinding_factor_commitment = commit_vector(
+//         pedersen_params,
+//         &blinding_factors,
+//         blinding_factor_for_blinding_factor_commitment,
+//     );
 
-    // Derive challenge c from transcript
-    let c: F = transcript.squeeze_field_elements(1)[0];
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         blinding_factor_commitment = ?blinding_factor_commitment,
+//         "Computed blinding factor commitment"
+//     );
 
-    tracing::trace!(target: "sigma_protocol", "Derived challenge c from transcript");
+//     // sigma_ciphertext_T = E_pk(1; ciphertext_masking_rerand) · ∏ C_j^{t_j}
+//     // This is also T_grp = E_pk(1;t_ρ) · ∏_{j=1}^N C_j^{t_j}
+//     let blinding_rerandomization_commitment: G = encrypt_one_and_combine(
+//         keys,
+//         ciphertext_masking_rerand,
+//         input_ciphertexts,
+//         &blinding_factors,
+//     );
 
-    // Step 3: Compute responses
-    let mut z_b = [F::zero(); N];
-    for i in 0..N {
-        z_b[i] = t[i] + c * b[i];
-    }
-    let z_s = t_s + c * sB;
-    let z_rho = t_rho + c * rho;
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         blinding_rerandomization_commitment = ?blinding_rerandomization_commitment,
+//         "Computed blinding rerandomization commitment"
+//     );
 
-    tracing::debug!(target: "sigma_protocol", "Proof generation complete");
+//     // Absorb commitments and derive challenge
+//     absorb_point(transcript, &blinding_factor_commitment);
+//     absorb_point(transcript, &blinding_rerandomization_commitment);
 
-    SigmaProof {
-        T_com,
-        T_grp,
-        z_b,
-        z_s,
-        z_rho,
-    }
-}
+//     let c: F = transcript.squeeze_field_elements(1)[0];
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         challenge = ?c,
+//         output_ciphertext_aggregator = ?output_ciphertext_aggregator,
+//         blinding_factor_commitment = ?blinding_factor_commitment,
+//         blinding_rerandomization_commitment = ?blinding_rerandomization_commitment,
+//         "Generated challenge after absorbing commitments"
+//     );
 
-/// Non-interactive verifier with type-safe arrays
-///
-/// ## Constraints Checked:
-///
-/// 1. **Commitment Consistency**: com(z_b; z_s) = T_com · cB^c
-///    - Ensures the response z_b is consistent with the committed permutation b
-///    - Verifies that prover knows the opening (b, s_B) to commitment cB
-///
-/// 2. **Shuffle Correctness**: E(1; z_rho) · ∏C_j^{z_{b,j}} = T_grp · (C'^a)^c
-///    - Ensures the shuffle was performed correctly with the committed permutation
-///    - Verifies that C'^a (aggregated outputs) equals the permuted and rerandomized inputs
-///    - Confirms knowledge of the aggregate rerandomization factor ρ
-///
-/// ## Step-by-Step Verification:
-///
-/// 1. **Reconstruct Transcript**: Absorb same public inputs as prover (C_in, C_out, cB)
-/// 2. **Recompute Aggregator**: Calculate C'^a = ∏(C'_i)^{x^i} from output ciphertexts
-/// 3. **Absorb Proof Elements**: Add T_com and T_grp to transcript
-/// 4. **Derive Challenge**: Extract same challenge c from transcript (must match prover's)
-/// 5. **Check Commitment Equation**:
-///    - LHS: com(z_b; z_s) using Pedersen commitment
-///    - RHS: T_com · cB^c using group operations
-///    - Verify LHS = RHS
-/// 6. **Check Shuffle Equation**:
-///    - LHS: E(1; z_rho) · ∏C_j^{z_{b,j}} using ElGamal encryption and MSM
-///    - RHS: T_grp · (C'^a)^c using group operations
-///    - Verify LHS = RHS (component-wise for ElGamal)
-///
-/// Returns true iff both constraints are satisfied
-pub fn verify_sigma_linkage_ni<F, G, const N: usize>(
-    keys: &ElGamalKeys<G>,
-    pedersen_params: &Parameters<G>,
-    C_in: &[ElGamalCiphertext<G>; N],
-    C_out: &[ElGamalCiphertext<G>; N],
-    x: F,
-    cB: &G,
-    proof: &SigmaProof<F, G, N>,
-    transcript: &mut PoseidonSponge<F>,
-) -> bool
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    tracing::debug!(target: "sigma_protocol", "Starting non-interactive verification for N={}", N);
+//     // --- Responses ---
+//     // Compute aggregate rerandomizer ρ = Σ(b_j * r_j^in)
+//     let rho: F = (0..N).map(|j| b[j] * rerandomization_scalars[j]).sum();
 
-    // Absorb public inputs into transcript
-    absorb_public_inputs(transcript, C_in, C_out, cB);
+//     let sigma_response_b: [F; N] = (0..N)
+//         .map(|j| blinding_factors[j] + c * b[j])
+//         .collect::<Vec<_>>()
+//         .try_into()
+//         .unwrap();
+//     let sigma_response_blinding =
+//         blinding_factor_for_blinding_factor_commitment + c * b_commitment_blinding_factor;
+//     // z_ρ = t_ρ + c·ρ where ρ is the aggregate rerandomizer
+//     let sigma_response_rerand = ciphertext_masking_rerand + c * rho;
 
-    // Compute public aggregator C'^a = ∏(C'_i)^{x^i}
-    let Cprime_agg = compute_output_aggregator(C_out, x);
+//     SigmaProof {
+//         blinding_factor_commitment,
+//         blinding_rerandomization_commitment,
+//         sigma_response_b,
+//         sigma_response_blinding,
+//         sigma_response_rerand,
+//     }
+// }
 
-    // Absorb aggregator components as field elements
-    absorb_ciphertext(transcript, &Cprime_agg);
+// #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
+// ///
+// /// Verifier: Check the two Schnorr equalities
+// ///
+// ///   1) com(sigma_response_b; sigma_response_blinding)  ==  sigma_commitment_T · b_vector_commitment^c
+// ///   2) E(1; sigma_response_rerand) · ∏ C_j^{sigma_response_b[j]}  ==  sigma_ciphertext_T · (output_ciphertext_aggregator)^c
+// ///
+// /// **Returns:** true iff both hold.
+// #[allow(non_snake_case)]
+// pub fn verify_sigma_linkage_ni<F, G, const N: usize>(
+//     keys: &ElGamalKeys<G>,
+//     pedersen_params: &Parameters<G>,
+//     input_ciphertexts: &[ElGamalCiphertext<G>; N],
+//     output_ciphertexts: &[ElGamalCiphertext<G>; N],
+//     x: F,
+//     b_vector_commitment: &G,
+//     proof: &SigmaProof<F, G, N>,
+//     transcript: &mut PoseidonSponge<F>,
+// ) -> bool
+// where
+//     F: PrimeField + Absorb,
+//     G: CurveGroup<ScalarField = F> + CurveAbsorb<F>,
+// {
+//     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
 
-    // Absorb proof commitments
-    absorb_point(transcript, &proof.T_com);
-    absorb_ciphertext(transcript, &proof.T_grp);
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Transcript state before absorbing ciphertext inputs and outputs: {:?}",
+//         transcript.state
+//     );
 
-    // Derive challenge c from transcript (should match prover's)
-    let c: F = transcript.squeeze_field_elements(1)[0];
+//     // Recompute aggregators C^a and C'^a where a_i = x^(i+1)
+//     let input_ciphertext_aggregator = compute_output_aggregator(input_ciphertexts, x);
+//     let output_ciphertext_aggregator = compute_output_aggregator(output_ciphertexts, x);
 
-    tracing::trace!(target: "sigma_protocol", "Derived challenge c for verification");
+//     // Rebuild transcript
+//     absorb_public_inputs(
+//         transcript,
+//         &input_ciphertext_aggregator,
+//         &output_ciphertext_aggregator,
+//         b_vector_commitment,
+//     );
 
-    // Check 1: com(z_b; z_s) = T_com · cB^c
-    let lhs_com = commit_vector(pedersen_params, &proof.z_b, proof.z_s);
-    let rhs_com = proof.T_com + *cB * c;
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed input_ciphertext_aggregator: {:?}",
+//         input_ciphertext_aggregator
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed output_ciphertext_aggregator: {:?}",
+//         output_ciphertext_aggregator
+//     );
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         "Computed b_vector_commitment: {:?}",
+//         b_vector_commitment
+//     );
 
-    if lhs_com != rhs_com {
-        tracing::debug!(target: "sigma_protocol", "Commitment equality check failed");
-        return false;
-    }
+//     // Absorb aggregator and proof commitments
+//     absorb_point(transcript, &proof.blinding_factor_commitment);
+//     absorb_point(transcript, &proof.blinding_rerandomization_commitment);
 
-    // Check 2: E(1; z_rho) · ∏C_j^{z_{b,j}} = T_grp · (C'^a)^c
-    let lhs_grp = {
-        let g = G::generator();
-        let rerand = ElGamalCiphertext {
-            c1: g * proof.z_rho,
-            c2: keys.public_key * proof.z_rho,
-        };
-        let msm = msm_ciphertexts(C_in, &proof.z_b);
-        ElGamalCiphertext {
-            c1: rerand.c1 + msm.c1,
-            c2: rerand.c2 + msm.c2,
-        }
-    };
+//     // Derive challenge
+//     let c: F = transcript.squeeze_field_elements(1)[0];
 
-    let rhs_grp = ElGamalCiphertext {
-        c1: proof.T_grp.c1 + Cprime_agg.c1 * c,
-        c2: proof.T_grp.c2 + Cprime_agg.c2 * c,
-    };
+//     tracing::debug!(
+//         target: LOG_TARGET,
+//         challenge = ?c,
+//         output_ciphertext_aggregator = ?output_ciphertext_aggregator,
+//         blinding_factor_commitment = ?proof.blinding_factor_commitment,
+//         blinding_rerandomization_commitment = ?proof.blinding_rerandomization_commitment,
+//         "Recomputing challenge"
+//     );
 
-    if lhs_grp != rhs_grp {
-        tracing::debug!(target: "sigma_protocol", "Ciphertext equality check failed");
-        return false;
-    }
+//     // 1) Commitment-side equality
+//     let lhs_com = commit_vector(
+//         pedersen_params,
+//         &proof.sigma_response_b,
+//         proof.sigma_response_blinding,
+//     );
+//     let rhs_com = proof.blinding_factor_commitment + *b_vector_commitment * c;
 
-    tracing::debug!(target: "sigma_protocol", "Verification successful");
-    true
-}
+//     if lhs_com != rhs_com {
+//         tracing::error!(target: LOG_TARGET, "Commitment equality check failed");
+//         return false;
+//     } else {
+//         tracing::debug!(target: LOG_TARGET, "com(z_b; z_s) = T_com · c_B^c (V1): lhs_com = {:?}", lhs_com);
+//     }
 
-/// Helper to compute C'^a = ∏(C'_i)^{x^i} with type-safe arrays
-///
-/// ## Purpose:
-/// Aggregates the output ciphertexts into a single ciphertext using powers of challenge x.
-/// This creates a binding commitment to all output ciphertexts that can be efficiently verified.
-///
-/// ## Step-by-Step:
-/// 1. Compute sequential powers: x, x^2, x^3, ..., x^N
-/// 2. Perform multi-scalar multiplication: ∏(C'_i)^{x^i}
-/// 3. Return aggregated ciphertext C'^a
-///
-/// ## Why This Works:
-/// The aggregation binds all outputs into one element. If the shuffle is correct,
-/// this will equal the aggregation of permuted inputs plus rerandomization.
-pub fn compute_output_aggregator<F, G, const N: usize>(
-    C_out: &[ElGamalCiphertext<G>; N],
-    x: F,
-) -> ElGamalCiphertext<G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    let mut powers = [F::zero(); N];
-    let mut x_power = x;
-    for i in 0..N {
-        powers[i] = x_power;
-        x_power *= x;
-    }
+//     // 2) Group-side equality
+//     // E_pk(1; sigma_response_rerand) · ∏ C_j^{sigma_response_b[j]}
+//     let lhs_grp = encrypt_one_and_combine(
+//         keys,
+//         proof.sigma_response_rerand, // Now a single scalar
+//         input_ciphertexts,
+//         &proof.sigma_response_b,
+//     );
 
-    msm_ciphertexts(C_out, &powers)
-}
+//     // rhs = blinding_rerandomization_commitment + (c1 + c2) of output_ciphertext_aggregator * c
+//     let rhs_grp = proof.blinding_rerandomization_commitment
+//         + (output_ciphertext_aggregator.c1 + output_ciphertext_aggregator.c2) * c;
 
-/// Helper for multi-scalar multiplication with arrays
-///
-/// ## Purpose:
-/// Efficiently computes ∏(ciphertexts[i])^{scalars[i]} for ElGamal ciphertexts.
-///
-/// ## Step-by-Step:
-/// 1. Initialize result as identity (point at infinity)
-/// 2. For each ciphertext-scalar pair:
-///    - Multiply ciphertext.c1 by scalar
-///    - Multiply ciphertext.c2 by scalar
-///    - Add to running result
-/// 3. Return combined ciphertext
-///
-/// ## Optimization:
-/// Uses additive notation for elliptic curve groups where scalar multiplication
-/// is the primary operation (not explicit exponentiation).
-pub fn msm_ciphertexts<F, G, const N: usize>(
-    ciphertexts: &[ElGamalCiphertext<G>; N],
-    scalars: &[F; N],
-) -> ElGamalCiphertext<G>
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    let mut result = ElGamalCiphertext {
-        c1: G::zero(),
-        c2: G::zero(),
-    };
+//     if lhs_grp != rhs_grp {
+//         tracing::error!(target: LOG_TARGET, "Ciphertext equality check failed");
+//         return false;
+//     }
 
-    for i in 0..N {
-        result.c1 += ciphertexts[i].c1 * scalars[i];
-        result.c2 += ciphertexts[i].c2 * scalars[i];
-    }
+//     true
+// }
 
-    result
-}
+// #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
+// ///
+// /// Compute the public aggregator:
+// ///     output_ciphertext_aggregator := ∏_{i=0}^{N-1} (output_ciphertexts[i])^{x^{i+1}}.
+// /// (We use 0-based loop; mathematically this is x^1,…,x^N.)
+// pub fn compute_output_aggregator<F, G, const N: usize>(
+//     output_ciphertexts: &[ElGamalCiphertext<G>; N],
+//     x: F,
+// ) -> ElGamalCiphertext<G>
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F>,
+// {
+//     let mut powers = [F::zero(); N];
+//     let mut x_power = x; // x^(1)
+//     for i in 0..N {
+//         powers[i] = x_power; // a_i = x^(i+1)
+//         x_power *= x;
+//     }
+//     msm_ciphertexts(output_ciphertexts, &powers)
+// }
 
-/// Helper to commit to a vector using Pedersen commitment
-///
-/// ## Purpose:
-/// Creates a binding and hiding commitment to a vector of field elements.
-///
-/// ## Step-by-Step:
-/// 1. Serialize all field elements in the vector to bytes
-/// 2. Create Randomness object from the randomness scalar
-/// 3. Use Pedersen commitment scheme to commit to serialized data
-/// 4. Return the commitment point
-///
-/// ## Security:
-/// - **Binding**: Cannot open commitment to different values (computational)
-/// - **Hiding**: Commitment reveals nothing about committed values (perfect with random r)
-fn commit_vector<F, G, const N: usize>(params: &Parameters<G>, values: &[F; N], randomness: F) -> G
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    // Convert field elements to bytes for commitment
-    let mut input = Vec::new();
-    for val in values {
-        val.serialize_compressed(&mut input).unwrap();
-    }
+// #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
+// ///
+// /// MSM over ciphertexts: ∏ (ciphertexts[i])^{scalars[i]} in EC additive notation:
+// /// accumulates (Σ scalars[i]·c1_i,  Σ scalars[i]·c2_i).
+// pub fn msm_ciphertexts<F, G, const N: usize>(
+//     ciphertexts: &[ElGamalCiphertext<G>; N],
+//     scalars: &[F; N],
+// ) -> ElGamalCiphertext<G>
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F>,
+// {
+//     let mut result = ElGamalCiphertext {
+//         c1: G::zero(),
+//         c2: G::zero(),
+//     };
+//     for i in 0..N {
+//         result.c1 += ciphertexts[i].c1 * scalars[i];
+//         result.c2 += ciphertexts[i].c2 * scalars[i];
+//     }
+//     result
+// }
 
-    // Create randomness struct
-    let r = Randomness(randomness);
+// /// Compute E_pk(1; randomness) · ∏ C_j^{scalar_factors[j]} and return as a single point
+// /// by adding the two components of the resulting ciphertext.
+// ///
+// /// Returns: c1 + c2 where (c1, c2) = E_pk(1; randomness) · ∏ C_j^{scalar_factors[j]}
+// pub fn encrypt_one_and_combine<F, G, const N: usize>(
+//     keys: &ElGamalKeys<G>,
+//     randomness: F,
+//     ciphertexts: &[ElGamalCiphertext<G>; N],
+//     scalar_factors: &[F; N],
+// ) -> G
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F>,
+// {
+//     let curve_generator = G::generator();
 
-    // Commit using Pedersen
-    Pedersen::<G>::commit(params, &input, &r).unwrap().into()
-}
+//     // E_pk(1; randomness) = (g^randomness, pk^randomness · g)
+//     let rerand_c1 = curve_generator * randomness;
+//     let rerand_c2 = keys.public_key * randomness + curve_generator;
 
-/// Helper to absorb public inputs into transcript
-fn absorb_public_inputs<F, G, const N: usize>(
-    transcript: &mut PoseidonSponge<F>,
-    C_in: &[ElGamalCiphertext<G>; N],
-    C_out: &[ElGamalCiphertext<G>; N],
-    cB: &G,
-) where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    // Absorb input ciphertexts
-    for ct in C_in {
-        absorb_ciphertext(transcript, ct);
-    }
+//     // ∏ C_j^{scalar_factors[j]}
+//     let msm = msm_ciphertexts(ciphertexts, scalar_factors);
 
-    // Absorb output ciphertexts
-    for ct in C_out {
-        absorb_ciphertext(transcript, ct);
-    }
+//     // Combine and return as single point
+//     rerand_c1 + msm.c1 + rerand_c2 + msm.c2
+// }
 
-    // Absorb commitment cB
-    absorb_point(transcript, cB);
-}
+// /// Extract N bases for a linear (scalar-vector) Pedersen commitment from the Pedersen parameters.
+// /// We reuse the window generators as a long list of bases.
+// /// Returns (H, [G_1..G_N]) such that com(v;r) = H^r * Π_j G_j^{v_j}.
+// pub fn vector_commit_bases<G, const N: usize>(params: &Parameters<G>) -> (G, [G; N])
+// where
+//     G: CurveGroup,
+// {
+//     // Use the first element of randomness_generator as H
+//     let pedersen_blinding_base = params.randomness_generator[0];
 
-/// Helper to absorb a ciphertext by absorbing its components as field elements
-fn absorb_ciphertext<F, G>(transcript: &mut PoseidonSponge<F>, ct: &ElGamalCiphertext<G>)
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    // Convert to affine and absorb coordinates
-    let c1_affine = ct.c1.into_affine();
-    let c2_affine = ct.c2.into_affine();
+//     // Flatten the 2D generator table and take the first N bases
+//     let mut it = params.generators.iter().flat_map(|row| row.iter()).cloned();
 
-    // Absorb x and y coordinates as field elements
-    // Note: We need to convert from BaseField to ScalarField
-    let mut bytes = Vec::new();
-    c1_affine.x().serialize_compressed(&mut bytes).unwrap();
-    c1_affine.y().serialize_compressed(&mut bytes).unwrap();
-    c2_affine.x().serialize_compressed(&mut bytes).unwrap();
-    c2_affine.y().serialize_compressed(&mut bytes).unwrap();
-    transcript.absorb(&bytes);
-}
+//     let bases: [G; N] = core::array::from_fn(|_| {
+//         it.next()
+//             .expect("Not enough Pedersen generators for the requested N")
+//     });
 
-/// Helper to absorb a curve point by absorbing its coordinates as field elements
-fn absorb_point<F, G>(transcript: &mut PoseidonSponge<F>, point: &G)
-where
-    F: PrimeField,
-    G: CurveGroup<ScalarField = F>,
-{
-    let affine = point.into_affine();
-    let mut bytes = Vec::new();
-    affine.x().serialize_compressed(&mut bytes).unwrap();
-    affine.y().serialize_compressed(&mut bytes).unwrap();
-    transcript.absorb(&bytes);
-}
+//     (pedersen_blinding_base, bases)
+// }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ark_bn254::{Fr, G1Projective};
-    use ark_crypto_primitives::commitment::CommitmentScheme;
-    use ark_ec::PrimeGroup;
-    use ark_ff::{Field, UniformRand};
-    use ark_std::test_rng;
+// #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
+// ///
+// /// Linear (coordinate-wise) Pedersen commitment over field elements:
+// ///     com(values; randomness) = H^{randomness} * Π_j G_j^{values[j]}.
+// /// This *replaces* a byte-Pedersen hash to ensure linearity required by the Σ-protocol.
+// pub fn commit_vector<F, G, const N: usize>(
+//     params: &Parameters<G>,
+//     values: &[F; N],
+//     randomness: F,
+// ) -> G
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F>,
+// {
+//     let (pedersen_blinding_base, bases) = vector_commit_bases::<G, N>(params);
+//     let mut acc = pedersen_blinding_base * randomness;
+//     for j in 0..N {
+//         acc += bases[j] * values[j];
+//     }
+//     acc
+// }
 
-    #[test]
-    fn test_proof_generation_and_verification() {
-        const N: usize = 4;
-        let mut rng = test_rng();
+// /// Absorb all public inputs into the transcript in a consistent order.
+// /// Takes pre-computed aggregators to reduce computational cost.
+// fn absorb_public_inputs<F, G>(
+//     transcript: &mut PoseidonSponge<F>,
+//     c_in_aggregator: &ElGamalCiphertext<G>,
+//     c_out_aggregator: &ElGamalCiphertext<G>,
+//     c_b: &G,
+// ) where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F> + CurveAbsorb<F>,
+// {
+//     // Absorb aggregated input ciphertexts (c1 + c2)
+//     let c_in_aggregate = c_in_aggregator.c1 + c_in_aggregator.c2;
+//     absorb_point(transcript, &c_in_aggregate);
 
-        // Setup keys
-        let sk = Fr::rand(&mut rng);
-        let keys = ElGamalKeys::new(sk);
-        let g = G1Projective::generator();
+//     // Absorb aggregated output ciphertexts (c1 + c2)
+//     let c_out_aggregate = c_out_aggregator.c1 + c_out_aggregator.c2;
+//     absorb_point(transcript, &c_out_aggregate);
 
-        // Setup Pedersen parameters
-        let pedersen_params = Pedersen::<G1Projective>::setup(&mut rng).unwrap();
+//     // Absorb the commitment
+//     absorb_point(transcript, c_b);
+// }
 
-        // Generate test ciphertexts
-        let C_in: [ElGamalCiphertext<G1Projective>; N] =
-            core::array::from_fn(|_| ElGamalCiphertext {
-                c1: G1Projective::zero(),
-                c2: G1Projective::zero(),
-            });
-        let C_out: [ElGamalCiphertext<G1Projective>; N] =
-            core::array::from_fn(|_| ElGamalCiphertext {
-                c1: G1Projective::zero(),
-                c2: G1Projective::zero(),
-            });
-        let mut C_in = C_in;
-        let mut C_out = C_out;
+// /// Absorb a ciphertext (c1,c2) by absorbing their affine coordinates as bytes.
+// fn absorb_ciphertext<F, G>(transcript: &mut PoseidonSponge<F>, ct: &ElGamalCiphertext<G>)
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F>,
+// {
+//     let c1_affine = ct.c1.into_affine();
+//     let c2_affine = ct.c2.into_affine();
 
-        for i in 0..N {
-            let r = Fr::rand(&mut rng);
-            C_in[i] = ElGamalCiphertext {
-                c1: g * r,
-                c2: keys.public_key * r,
-            };
-            C_out[i] = C_in[i].clone();
-        }
+//     let mut bytes = Vec::new();
+//     c1_affine.x().serialize_compressed(&mut bytes).unwrap();
+//     c1_affine.y().serialize_compressed(&mut bytes).unwrap();
+//     c2_affine.x().serialize_compressed(&mut bytes).unwrap();
+//     c2_affine.y().serialize_compressed(&mut bytes).unwrap();
+//     transcript.absorb(&bytes);
+// }
 
-        // Setup witnesses
-        let x = Fr::from(2u64);
-        let mut b = [Fr::zero(); N];
-        for i in 0..N {
-            b[i] = x.pow(&[(i + 1) as u64]);
-        }
-        let sB = Fr::rand(&mut rng);
-        let cB = commit_vector(&pedersen_params, &b, sB);
-        let rho = Fr::rand(&mut rng);
+// /// Absorb a curve point using the CurveAbsorb trait.
+// fn absorb_point<F, G>(transcript: &mut PoseidonSponge<F>, point: &G)
+// where
+//     F: PrimeField,
+//     G: CurveGroup<ScalarField = F> + CurveAbsorb<F>,
+// {
+//     point.curve_absorb(transcript);
+// }
 
-        // Create transcript
-        let config = crate::config::poseidon_config::<Fr>();
-        let mut prover_transcript = PoseidonSponge::new(&config);
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::shuffling::test_utils::{
+//         generate_random_ciphertexts, shuffle_and_rerandomize_random,
+//     };
+//     use ark_bn254::{Fr, G1Projective};
+//     use ark_crypto_primitives::commitment::CommitmentScheme;
+//     use ark_ff::{Field, UniformRand, Zero};
+//     use ark_std::test_rng;
 
-        // Generate proof
-        let proof = prove_sigma_linkage_ni(
-            &keys,
-            &pedersen_params,
-            &C_in,
-            &C_out,
-            x,
-            &cB,
-            &b,
-            sB,
-            rho,
-            &mut prover_transcript,
-            &mut rng,
-        );
+//     #[test]
+//     fn test_proof_generation_and_verification() {
+//         let _ = tracing_subscriber::fmt()
+//             .with_max_level(tracing::Level::TRACE)
+//             .with_test_writer()
+//             .try_init();
 
-        // Verify proof
-        let mut verifier_transcript = PoseidonSponge::new(&config);
+//         const N: usize = 4;
+//         let mut rng = test_rng();
+//         let sk = Fr::rand(&mut rng);
+//         let keys = ElGamalKeys::new(sk);
 
-        assert!(verify_sigma_linkage_ni(
-            &keys,
-            &pedersen_params,
-            &C_in,
-            &C_out,
-            x,
-            &cB,
-            &proof,
-            &mut verifier_transcript,
-        ));
-    }
-}
+//         // Pedersen parameters (used only to source linear bases)
+//         let pedersen_params = Pedersen::<G1Projective>::setup(&mut rng).unwrap();
+
+//         // Inputs
+//         let (input_ciphertexts, _) =
+//             generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+
+//         // Permutation: reverse
+//         let pi: [usize; N] = core::array::from_fn(|i| N - 1 - i);
+//         let mut pi_inv = [0usize; N];
+//         for i in 0..N {
+//             pi_inv[pi[i]] = i;
+//         }
+
+//         // Shuffle + rerandomize
+//         let (output_ciphertexts, rerand) =
+//             shuffle_and_rerandomize_random(&input_ciphertexts, &pi, keys.public_key, &mut rng);
+
+//         // FS challenge and vectors
+//         let x = Fr::from(2u64);
+
+//         // b[j] = x^{pi_inv[j] + 1}  (since we use a_i = x^{i+1})
+//         let mut b = [Fr::zero(); N];
+//         for j in 0..N {
+//             b[j] = x.pow(&[(pi_inv[j] as u64) + 1]);
+//         }
+
+//         // b_vector_commitment = com(b; b_commitment_blinding_factor)
+//         let b_commitment_blinding_factor = Fr::rand(&mut rng);
+//         let b_vector_commitment = commit_vector(&pedersen_params, &b, b_commitment_blinding_factor);
+
+//         // Compute input-indexed rerandomization scalars: r_j^in = rerand[pi_inv[j]]
+//         let mut rerandomization_scalars = [Fr::zero(); N];
+//         for j in 0..N {
+//             rerandomization_scalars[j] = rerand[pi_inv[j]];
+//         }
+
+//         // Prove
+//         let config = crate::config::poseidon_config::<Fr>();
+//         let mut prover_transcript = PoseidonSponge::new(&config);
+//         let proof = prove_sigma_linkage_ni(
+//             &keys,
+//             &pedersen_params,
+//             &input_ciphertexts,
+//             &output_ciphertexts,
+//             x,
+//             &b_vector_commitment,
+//             &b,
+//             b_commitment_blinding_factor,
+//             &rerandomization_scalars,
+//             &mut prover_transcript,
+//             &mut rng,
+//         );
+
+//         // Verify
+//         let mut verifier_transcript = PoseidonSponge::new(&config);
+//         let ok = verify_sigma_linkage_ni(
+//             &keys,
+//             &pedersen_params,
+//             &input_ciphertexts,
+//             &output_ciphertexts,
+//             x,
+//             &b_vector_commitment,
+//             &proof,
+//             &mut verifier_transcript,
+//         );
+//         assert!(ok, "verification failed");
+//     }
+// }

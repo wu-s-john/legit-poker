@@ -2,6 +2,7 @@ pub mod bayer_groth;
 pub mod bayer_groth_permutation;
 pub mod chaum_pedersen;
 pub mod circuit;
+pub mod curve_absorb;
 pub mod data_structures;
 pub mod encryption;
 pub mod error;
@@ -16,6 +17,12 @@ pub mod utils;
 
 #[cfg(test)]
 mod test_scalar_mul;
+
+#[cfg(test)]
+pub mod test_utils;
+
+#[cfg(test)]
+pub mod scalar_multiplication_tests;
 
 pub use chaum_pedersen::*;
 pub use circuit::*;
