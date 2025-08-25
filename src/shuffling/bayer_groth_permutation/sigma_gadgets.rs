@@ -65,15 +65,14 @@ where
     }
 }
 
-impl<G, GG, const N: usize> AllocVar<SigmaProof<G::ScalarField, G, N>, G::BaseField>
-    for SigmaProofVar<G, GG, N>
+impl<G, GG, const N: usize> AllocVar<SigmaProof<G, N>, G::BaseField> for SigmaProofVar<G, GG, N>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
     G::ScalarField: PrimeField,
     GG: CurveVar<G, G::BaseField>,
 {
-    fn new_variable<T: Borrow<SigmaProof<G::ScalarField, G, N>>>(
+    fn new_variable<T: Borrow<SigmaProof<G, N>>>(
         cs: impl Into<Namespace<G::BaseField>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -577,9 +576,9 @@ mod tests {
         }
 
         // Native proof
-        let config_fr = crate::config::poseidon_config::<Fr>();
+        let config_fr = crate::config::poseidon_config::<Fq>();
         let mut prover_sponge = PoseidonSponge::new(&config_fr);
-        let proof = super::super::sigma_protocol::prove_sigma_linkage_ni::<Fr, G1Projective, N>(
+        let proof = super::super::sigma_protocol::prove_sigma_linkage_ni(
             &keys,
             &pedersen_params,
             &c_in,
@@ -596,17 +595,16 @@ mod tests {
         // Verify the proof natively first
         tracing::info!(target: TEST_TARGET, "Starting native verification of proof");
         let mut verifier_sponge = PoseidonSponge::new(&config_fr);
-        let native_valid =
-            super::super::sigma_protocol::verify_sigma_linkage_ni::<Fr, G1Projective, N>(
-                &keys,
-                &pedersen_params,
-                &c_in,
-                &c_out,
-                x,
-                &b_vector_commitment,
-                &proof,
-                &mut verifier_sponge,
-            );
+        let native_valid = super::super::sigma_protocol::verify_sigma_linkage_ni(
+            &keys,
+            &pedersen_params,
+            &c_in,
+            &c_out,
+            x,
+            &b_vector_commitment,
+            &proof,
+            &mut verifier_sponge,
+        );
         tracing::info!(target: TEST_TARGET, "Native verification result: {}", native_valid);
         assert!(native_valid, "Native verification failed!");
 
