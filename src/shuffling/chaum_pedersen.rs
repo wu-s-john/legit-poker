@@ -1,4 +1,3 @@
-use super::utils::generate_chaum_pedersen_witness;
 use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};

@@ -42,17 +42,14 @@
 //! - `a_i` is implemented as x^(i+1) for i=0..N-1 (so it matches the 1-based math above).
 //! - The Pedersen commitment here is a *scalar-vector* Pedersen over N coordinates.
 
-use crate::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalKeys};
-use ark_bn254::G1Affine;
-use ark_crypto_primitives::sponge::constraints::AbsorbGadget;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_crypto_primitives::{
     commitment::pedersen::{Commitment as PedersenCommitment, Parameters, Window},
     sponge::{poseidon::PoseidonSponge, CryptographicSponge},
 };
-use ark_ec::{AffineRepr, CurveGroup};
+use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::UniformRand;
