@@ -8,6 +8,8 @@
 //! 2) The Fiat–Shamir challenge `c` is passed into the circuit (do not recompute it
 //!    in-circuit) to avoid field/domain mismatch with the native transcript.
 
+use std::sync::Arc;
+
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use ark_crypto_primitives::commitment::pedersen::constraints::ParametersVar;
@@ -140,17 +142,6 @@ where
     }
 }
 
-/// Non-interactive circuit verifier with type-safe arrays
-///
-/// ## Purpose:
-/// Helper function to absorb a curve point into a Poseidon sponge in-circuit
-fn absorb_point_gadget<F: PrimeField, GG: CurveAbsorbGadget<F>>(
-    sponge: &mut PoseidonSpongeVar<F>,
-    point: &GG,
-) -> Result<(), SynthesisError> {
-    point.curve_absorb_gadget(sponge)
-}
-
 /// Absorb public inputs into the transcript (in-circuit version)
 /// Mirrors the native absorb_public_inputs function
 fn absorb_public_inputs_gadget<G, GG>(
@@ -167,37 +158,20 @@ where
 {
     // Absorb aggregated input ciphertexts (already computed)
     let input_aggregator_sum = &input_ciphertext_aggregator.c1 + &input_ciphertext_aggregator.c2;
-    absorb_point_gadget(transcript, &input_aggregator_sum)?;
+    input_aggregator_sum.curve_absorb_gadget(transcript)?;
 
     // Absorb aggregated output ciphertexts (already computed)
     let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
-    absorb_point_gadget(transcript, &output_aggregator_sum)?;
+    output_aggregator_sum.curve_absorb_gadget(transcript)?;
 
     // Absorb b_vector_commitment
-    absorb_point_gadget(transcript, b_vector_commitment)?;
+    b_vector_commitment.curve_absorb_gadget(transcript)?;
 
-    Ok(())
-}
-
-/// Absorb a ciphertext by absorbing c1 + c2 as a single point
-fn absorb_ciphertext_gadget<G, GG>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
-    ciphertext: &ElGamalCiphertextVar<G, GG>,
-) -> Result<(), SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    let sum = &ciphertext.c1 + &ciphertext.c2;
-    absorb_point_gadget(transcript, &sum)?;
     Ok(())
 }
 
 /// Compute the Fiat-Shamir challenge in-circuit
 /// This mirrors the native absorption strategy for efficiency
-#[allow(non_snake_case)]
 #[instrument(level = "trace", skip_all, fields(N = N))]
 fn compute_challenge_gadget<G, GG, const N: usize>(
     transcript: &mut PoseidonSpongeVar<G::BaseField>,
@@ -237,8 +211,12 @@ where
     );
 
     // Absorb proof commitments
-    absorb_point_gadget(transcript, &proof.blinding_factor_commitment)?;
-    absorb_point_gadget(transcript, &proof.blinding_rerandomization_commitment)?;
+    proof
+        .blinding_factor_commitment
+        .curve_absorb_gadget(transcript)?;
+    proof
+        .blinding_rerandomization_commitment
+        .curve_absorb_gadget(transcript)?;
 
     // Squeeze the challenge
     Ok(transcript.squeeze_field_elements(1)?[0].clone())

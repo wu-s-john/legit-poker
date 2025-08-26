@@ -241,7 +241,6 @@ where
 ///   2) E(1; sigma_response_rerand) · ∏ C_j^{sigma_response_b[j]}  ==  sigma_ciphertext_T · (output_ciphertext_aggregator)^c
 ///
 /// **Returns:** true iff both hold.
-#[allow(non_snake_case)]
 pub fn verify_sigma_linkage_ni<G: CurveGroup, const N: usize>(
     keys: &ElGamalKeys<G>,
     pedersen_params: &Parameters<G>,
