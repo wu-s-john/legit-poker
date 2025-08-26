@@ -324,14 +324,24 @@ where
             proof_var.input_deck.len(),
         )?;
 
+        // Create ElGamalEncryption instance with precomputed powers
+        let num_bits = C::BaseField::MODULUS_BIT_SIZE as usize;
+        let generator_powers = (0..num_bits)
+            .scan(C::generator(), |acc, _| {
+                let current = *acc;
+                *acc = acc.double();
+                Some(current)
+            })
+            .collect::<Vec<_>>();
+        let elgamal = super::encryption::ElGamalEncryption::<C>::new(generator_powers);
+
         // Apply re-randomization to create the new deck
-        let rerandomized_deck =
-            super::encryption::ElGamalEncryption::<C>::reencrypt_cards_with_new_randomization(
-                cs.clone(),
-                &proof_var.input_deck,
-                &proof_var.encryption_randomization_values,
-                &shuffler_pk_var,
-            )?;
+        let rerandomized_deck = elgamal.reencrypt_cards_with_new_randomization(
+            cs.clone(),
+            &proof_var.input_deck,
+            &proof_var.encryption_randomization_values,
+            &shuffler_pk_var,
+        )?;
 
         tracing::info!(target: LOG_TARGET, "Finish rerandomizing cards");
 
@@ -423,6 +433,7 @@ mod tests {
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_ec::short_weierstrass::Projective;
     use ark_ec::PrimeGroup;
+    use ark_ff::AdditiveGroup;
     use ark_ff::UniformRand;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::gr1cs::ConstraintSystem;
@@ -477,7 +488,7 @@ mod tests {
         )?;
 
         // Allocate the public key
-        let shuffler_pk_var = AllocVar::new_variable(
+        let shuffler_pk_var = ProjectiveVar::<g1::Config, FpVar<Fq>>::new_variable(
             cs.clone(),
             || Ok(shuffler_keys.public_key),
             AllocationMode::Witness,
@@ -491,8 +502,19 @@ mod tests {
             AllocationMode::Witness,
         )?;
 
+        // Create ElGamalEncryption instance with precomputed powers
+        let num_bits = Fq::MODULUS_BIT_SIZE as usize;
+        let generator_powers = (0..num_bits)
+            .scan(C::generator(), |acc, _| {
+                let current = *acc;
+                *acc = acc.double();
+                Some(current)
+            })
+            .collect::<Vec<_>>();
+        let elgamal = ElGamalEncryption::<C>::new(generator_powers);
+
         // Perform re-randomization in circuit
-        let circuit_result = ElGamalEncryption::<C>::rerandomize_ciphertext(
+        let circuit_result = elgamal.rerandomize_ciphertext(
             cs.clone(),
             &ciphertext_var,
             &rerandomization_var,
@@ -574,7 +596,7 @@ mod tests {
                 AllocationMode::Witness,
             )?;
 
-            let shuffler_pk_var = AllocVar::new_variable(
+            let shuffler_pk_var = ProjectiveVar::<g1::Config, FpVar<Fq>>::new_variable(
                 cs.clone(),
                 || Ok(shuffler_keys.public_key),
                 AllocationMode::Witness,
@@ -587,7 +609,18 @@ mod tests {
                 AllocationMode::Witness,
             )?;
 
-            let circuit_result = ElGamalEncryption::<C>::rerandomize_ciphertext(
+            // Create ElGamalEncryption instance with precomputed powers
+            let num_bits = Fq::MODULUS_BIT_SIZE as usize;
+            let generator_powers = (0..num_bits)
+                .scan(C::generator(), |acc, _| {
+                    let current = *acc;
+                    *acc = acc.double();
+                    Some(current)
+                })
+                .collect::<Vec<_>>();
+            let elgamal = ElGamalEncryption::<C>::new(generator_powers);
+
+            let circuit_result = elgamal.rerandomize_ciphertext(
                 cs.clone(),
                 &ciphertext_var,
                 &randomness_var,

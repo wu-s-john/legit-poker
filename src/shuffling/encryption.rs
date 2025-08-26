@@ -12,13 +12,19 @@ const LOG_TARGET: &str = "shuffle::encryption";
 
 /// ElGamal encryption operations
 pub struct ElGamalEncryption<C: CurveGroup> {
-    _phantom: PhantomData<C>,
+    /// Precomputed powers of the generator for efficient fixed-base scalar multiplication
+    pub generator_powers: Vec<C>,
 }
 
 impl<C: CurveGroup> ElGamalEncryption<C>
 where
     C::BaseField: PrimeField,
 {
+    /// Create a new ElGamalEncryption instance with precomputed generator powers
+    pub fn new(generator_powers: Vec<C>) -> Self {
+        Self { generator_powers }
+    }
+
     /// ElGamal encryption circuit for a single card
     /// Implements: c1 = m0 + R, c2 = m1 + P where R = r*g, P = r*pk
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
@@ -78,6 +84,7 @@ where
     /// Implements: c1' = c1 + r' * g, c2' = c2 + r' * pk_shuffler
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
     pub fn rerandomize_ciphertext<CV>(
+        &self,
         cs: ConstraintSystemRef<C::BaseField>,
         ciphertext: &ElGamalCiphertextVar<C, CV>,
         rerandomization: &FpVar<C::BaseField>,
@@ -90,10 +97,12 @@ where
         let cs = n.cs();
 
         crate::track_constraints!(&cs, "rerandomize_ciphertext", LOG_TARGET, {
-            // Fixed-base multiplication: r' * g
-            let generator = CV::constant(C::generator());
+            // Convert randomization to bits
             let r_bits = rerandomization.to_bits_le()?;
-            let r_g = generator.scalar_mul_le(r_bits.iter())?;
+
+            // Fixed-base multiplication using precomputed powers: r' * g
+            let mut r_g = CV::zero();
+            r_g.precomputed_base_scalar_mul_le(r_bits.iter().zip(&self.generator_powers))?;
 
             // Variable-base multiplication: r' * pk_shuffler
             let r_pk = shuffler_pk.scalar_mul_le(r_bits.iter())?;
@@ -112,6 +121,7 @@ where
     /// This function applies re-randomization to each card in the input deck
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
     pub fn reencrypt_cards_with_new_randomization<CV>(
+        &self,
         cs: ConstraintSystemRef<C::BaseField>,
         input_deck: &Vec<ElGamalCiphertextVar<C, CV>>,
         encryption_randomizations: &Vec<FpVar<C::BaseField>>,
@@ -140,7 +150,7 @@ where
                 );
 
                 // Apply rerandomization to the ciphertext
-                let rerandomized_card = Self::rerandomize_ciphertext(
+                let rerandomized_card = self.rerandomize_ciphertext(
                     cs.clone(),
                     card,
                     encryption_randomization,
@@ -157,6 +167,7 @@ where
     /// Verify that a deck has been correctly re-randomized
     #[tracing::instrument(target = LOG_TARGET, name = "verify_rerandomization", skip_all)]
     pub fn verify_rerandomization<CV>(
+        &self,
         cs: ConstraintSystemRef<C::BaseField>,
         input_deck: Vec<ElGamalCiphertextVar<C, CV>>,
         output_deck: Vec<ElGamalCiphertextVar<C, CV>>,
@@ -175,7 +186,7 @@ where
         // For each card, verify that output[i] = rerandomize(input[perm[i]], r[i])
         for (i, perm_idx) in permutation.iter().enumerate() {
             // Compute expected re-randomization
-            let expected = Self::rerandomize_ciphertext(
+            let expected = self.rerandomize_ciphertext(
                 cs.clone(),
                 &input_deck[*perm_idx],
                 &rerandomizations[i],

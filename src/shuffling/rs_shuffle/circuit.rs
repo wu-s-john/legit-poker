@@ -242,6 +242,7 @@ pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
     shuffler_pk: &CV,
     alpha: &FpVar<C::BaseField>,
     beta: &FpVar<C::BaseField>,
+    generator_powers: &[C],
 ) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
 where
     C: CurveGroup,
@@ -267,7 +268,11 @@ where
         let ct_after_shuffle_vec = ct_after_shuffle.to_vec();
         let encryption_randomizations_vec = encryption_randomizations.to_vec();
 
-        let reencrypted_deck = crate::shuffling::encryption::ElGamalEncryption::<C>::reencrypt_cards_with_new_randomization(
+        // Create ElGamalEncryption instance with precomputed powers
+        let elgamal_enc =
+            crate::shuffling::encryption::ElGamalEncryption::<C>::new(generator_powers.to_vec());
+
+        let reencrypted_deck = elgamal_enc.reencrypt_cards_with_new_randomization(
             cs.clone(),
             &ct_after_shuffle_vec,
             &encryption_randomizations_vec,
@@ -321,6 +326,8 @@ where
     pub witness: WitnessData<N, LEVELS>,
     /// Number of samples used in bit generation
     pub num_samples: usize,
+    /// Precomputed powers of the generator for efficient fixed-base scalar multiplication
+    pub generator_powers: Vec<C>,
     _phantom: PhantomData<CV>,
 }
 
@@ -343,6 +350,7 @@ where
         beta: F,
         witness: WitnessData<N, LEVELS>,
         num_samples: usize,
+        generator_powers: Vec<C>,
     ) -> Self {
         Self {
             ct_init_pub,
@@ -355,6 +363,7 @@ where
             beta,
             witness,
             num_samples,
+            generator_powers,
             _phantom: PhantomData,
         }
     }
@@ -483,6 +492,7 @@ where
                     &shuffler_pk_var,
                     &alpha_var,
                     &beta_var,
+                    &self.generator_powers,
                 )?;
 
                 // Verify that the result matches the expected final ciphertexts
@@ -785,6 +795,7 @@ mod tests {
     use ark_bls12_381::Fr as TestField;
     use ark_ec::short_weierstrass::Projective;
     use ark_ec::CurveConfig;
+    use ark_ff::AdditiveGroup;
     use ark_grumpkin::GrumpkinConfig;
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
@@ -1522,6 +1533,16 @@ mod tests {
         let beta =
             FpVar::new_constant(cs.clone(), BaseField::from(23u64)).expect("Failed to create beta");
 
+        // Generate precomputed generator powers
+        let num_bits = BaseField::MODULUS_BIT_SIZE as usize;
+        let generator_powers = (0..num_bits)
+            .scan(GrumpkinProjective::generator(), |acc, _| {
+                let current = *acc;
+                *acc = acc.double();
+                Some(current)
+            })
+            .collect::<Vec<_>>();
+
         // 4. Run the SNARK function
         let ct_final_snark = rs_shuffle_with_reencryption::<
             GrumpkinProjective,
@@ -1537,6 +1558,7 @@ mod tests {
             &shuffler_pk_var,
             &alpha,
             &beta,
+            &generator_powers,
         )
         .expect("rs_shuffle_with_reencryption failed");
 
