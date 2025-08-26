@@ -422,8 +422,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {
             let dealing_time = phase_start.elapsed();
             println!("   ✅ Cards successfully dealt and decrypted");
-            println!("   ⏱️  Dealing took {:.2} seconds", dealing_time.as_secs_f64());
-            println!("   ⏱️  Total shuffle + deal time: {:.2} seconds", (shuffle_time + dealing_time).as_secs_f64());
+            println!(
+                "   ⏱️  Dealing took {:.2} seconds",
+                dealing_time.as_secs_f64()
+            );
+            println!(
+                "   ⏱️  Total shuffle + deal time: {:.2} seconds",
+                (shuffle_time + dealing_time).as_secs_f64()
+            );
             // Try to get the actual human player's cards
             if let Some(game) = game_manager.games.get(&game_id) {
                 if let Some(human_player) = game.players.iter().find(|p| p.id == "human_player") {
@@ -674,9 +680,9 @@ fn test_standalone_encryption_decryption(
 
     println!("✅ Generating blinding contributions...");
     // Generate blinding contributions from each shuffler
-    let contrib1 = shuffler1.generate_player_blinding_contribution(aggregated_pk, player_pk);
-    let contrib2 = shuffler2.generate_player_blinding_contribution(aggregated_pk, player_pk);
-    let contrib3 = shuffler3.generate_player_blinding_contribution(aggregated_pk, player_pk);
+    let contrib1 = shuffler1.generate_player_blinding_contribution(aggregated_pk, player_pk, rng);
+    let contrib2 = shuffler2.generate_player_blinding_contribution(aggregated_pk, player_pk, rng);
+    let contrib3 = shuffler3.generate_player_blinding_contribution(aggregated_pk, player_pk, rng);
 
     // Verify contributions
     assert!(

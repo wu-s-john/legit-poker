@@ -43,8 +43,6 @@ where
         secret: C::ScalarField,
         g: C,
         h: C,
-        alpha: C,
-        beta: C,
         rng: &mut R,
     ) -> Self {
         // Step 1: Generate deterministic witness
@@ -218,7 +216,7 @@ mod tests {
         // Generate proof (deterministic)
         let config = poseidon_config::<<G1Projective as CurveGroup>::BaseField>();
         let mut sponge = PoseidonSponge::new(&config);
-        let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, alpha, beta, &mut rng);
+        let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, &mut rng);
 
         // Verify proof
         let mut verify_sponge = PoseidonSponge::new(&config);
@@ -248,7 +246,7 @@ mod tests {
             let beta = h * secret;
             let config = poseidon_config::<<G1Projective as CurveGroup>::BaseField>();
             let mut sponge = PoseidonSponge::new(&config);
-            let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, alpha, beta, &mut rng);
+            let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, &mut rng);
 
             proofs.push(proof);
             alphas.push(alpha);

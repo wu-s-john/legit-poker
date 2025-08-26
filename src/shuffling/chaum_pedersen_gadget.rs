@@ -271,7 +271,7 @@ mod tests {
         let config = crate::poseidon_config::<Fq>();
         let mut sponge = PoseidonSponge::new(&config);
 
-        let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, alpha, beta, &mut rng);
+        let proof = ChaumPedersenProof::prove(&mut sponge, secret, g, h, &mut rng);
 
         tracing::info!(target: TEST_TARGET, "=== Native Verification ===");
         // Verify natively using BN254 circuit-compatible verification

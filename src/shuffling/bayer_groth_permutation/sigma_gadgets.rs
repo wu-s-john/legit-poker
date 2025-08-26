@@ -8,8 +8,6 @@
 //! 2) The Fiat–Shamir challenge `c` is passed into the circuit (do not recompute it
 //!    in-circuit) to avoid field/domain mismatch with the native transcript.
 
-use std::sync::Arc;
-
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use ark_crypto_primitives::commitment::pedersen::constraints::ParametersVar;
@@ -444,19 +442,18 @@ mod tests {
     use crate::shuffling::test_utils::{
         generate_random_ciphertexts, shuffle_and_rerandomize_random,
     };
-    use crate::{ElGamalCiphertext, ElGamalKeys};
+    use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::{
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
     };
     use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
     use ark_crypto_primitives::sponge::CryptographicSponge;
-    use ark_ec::{AffineRepr, PrimeGroup};
+    use ark_ec::PrimeGroup;
     use ark_ff::Field;
     use ark_r1cs_std::fields::fp::FpVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::gr1cs::ConstraintSystem;
-    use ark_serialize::CanonicalSerialize;
     use ark_std::test_rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
@@ -497,17 +494,6 @@ mod tests {
             acc += bases[j] * values[j];
         }
         acc
-    }
-
-    fn absorb_point_native<F: PrimeField, G: CurveGroup<ScalarField = F>>(
-        sponge: &mut PoseidonSponge<F>,
-        p: &G,
-    ) {
-        let aff = p.into_affine();
-        let mut bytes = Vec::new();
-        aff.x().serialize_compressed(&mut bytes).unwrap();
-        aff.y().serialize_compressed(&mut bytes).unwrap();
-        sponge.absorb(&bytes);
     }
 
     fn run_sigma_circuit_test<const N: usize>() -> Result<(), SynthesisError> {

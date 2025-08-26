@@ -6,7 +6,6 @@ use ark_relations::{
     gr1cs::{ConstraintSystemRef, SynthesisError},
     ns,
 };
-use std::marker::PhantomData;
 
 const LOG_TARGET: &str = "shuffle::encryption";
 

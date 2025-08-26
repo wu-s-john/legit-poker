@@ -60,15 +60,7 @@ where
         // Generate the non-interactive Chaum-Pedersen proof (deterministic)
         let config = poseidon_config::<C::BaseField>();
         let mut sponge = PoseidonSponge::new(&config);
-        let proof = ChaumPedersenProof::prove(
-            &mut sponge,
-            secret_share,
-            generator,
-            h,
-            blinding_base_contribution,
-            blinding_combined_contribution,
-            rng,
-        );
+        let proof = ChaumPedersenProof::prove(&mut sponge, secret_share, generator, h, rng);
 
         Self {
             blinding_base_contribution,

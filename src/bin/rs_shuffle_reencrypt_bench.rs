@@ -299,6 +299,16 @@ where
         num_samples,
     ) = generate_test_data::<E, C2, N, LEVELS>(&mut rng);
 
+    // Generate precomputed generator powers
+    let num_bits = E::ScalarField::MODULUS_BIT_SIZE as usize;
+    let generator_powers = (0..num_bits)
+        .scan(C2::generator(), |acc, _| {
+            let current = *acc;
+            *acc = acc.double();
+            Some(current)
+        })
+        .collect::<Vec<_>>();
+
     // Create the circuit
     println!("\n📋 Creating circuit instance...");
     let circuit = RSShuffleWithReencryptionCircuit::<E::ScalarField, C2, CV, N, LEVELS>::new(
@@ -312,6 +322,7 @@ where
         beta,
         witness.clone(),
         num_samples,
+        generator_powers.clone(),
     );
 
     // Measure constraint system size
@@ -331,6 +342,7 @@ where
             beta,
             witness.clone(),
             num_samples,
+            generator_powers.clone(),
         );
     circuit_for_analysis
         .generate_constraints(cs.clone())
@@ -361,6 +373,7 @@ where
             beta,
             witness.clone(),
             num_samples,
+            generator_powers.clone(),
         );
     let (pk, vk) = Groth16::<E>::circuit_specific_setup(circuit_for_setup, &mut rng)
         .expect("Failed to generate proving and verifying keys");
@@ -507,7 +520,7 @@ fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
         }
     };
-    
+
     #[cfg(not(feature = "gpu"))]
     let prover = {
         if config.use_gpu {
@@ -556,7 +569,7 @@ fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             Ok(Groth16::<Bn254>::prove(&pk, circuit, rng)?)
         }
     };
-    
+
     #[cfg(not(feature = "gpu"))]
     let prover = {
         if config.use_gpu {
@@ -605,7 +618,7 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
         }
     };
-    
+
     #[cfg(not(feature = "gpu"))]
     let prover = {
         if config.use_gpu {
@@ -654,7 +667,7 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
             Ok(Groth16::<Bls12_381>::prove(&pk, circuit, rng)?)
         }
     };
-    
+
     #[cfg(not(feature = "gpu"))]
     let prover = {
         if config.use_gpu {
@@ -699,7 +712,7 @@ fn main() {
             }
         }
     }
-    
+
     #[cfg(not(feature = "gpu"))]
     if cli.gpu {
         eprintln!("❌ GPU acceleration requested but not compiled in.");

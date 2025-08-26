@@ -1,5 +1,3 @@
-use crate::poseidon_config;
-use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::{
     alloc::AllocVar,
@@ -9,7 +7,6 @@ use ark_r1cs_std::{
     GR1CSVar,
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
-use ark_serialize::CanonicalSerialize;
 
 pub fn from_emulated_to_circuit_field<TargetF: PrimeField, BaseF: PrimeField>(
     x: EmulatedFpVar<TargetF, BaseF>,
