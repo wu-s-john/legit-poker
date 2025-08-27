@@ -88,6 +88,28 @@ impl CurveAbsorbGadget<ark_bn254::Fq>
 }
 
 // ============================================================================
+// Circuit implementation for Grumpkin ProjectiveVar
+// Note: Grumpkin is a Short Weierstrass curve, not Twisted Edwards
+// Grumpkin's base field is BN254::Fr
+// ============================================================================
+
+impl CurveAbsorbGadget<ark_bn254::Fr>
+    for ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
+{
+    fn curve_absorb_gadget(
+        &self,
+        sponge: &mut PoseidonSpongeVar<ark_bn254::Fr>,
+    ) -> Result<(), SynthesisError> {
+        // Convert to affine and absorb
+        use ark_r1cs_std::convert::ToConstraintFieldGadget;
+        let affine = self.to_affine()?;
+        let coords = affine.to_constraint_field()?;
+        sponge.absorb(&coords)?;
+        Ok(())
+    }
+}
+
+// ============================================================================
 // Helper functions for convenient usage
 // ============================================================================
 

@@ -5,6 +5,7 @@ pub mod macros;
 pub mod player_service;
 pub mod shuffler_service;
 pub mod shuffling;
+pub mod vrf;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
