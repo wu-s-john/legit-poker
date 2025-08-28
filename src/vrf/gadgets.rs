@@ -1,8 +1,10 @@
 //! VRF gadgets for SNARK circuits
 
 use super::{
-    dst_beta_digest, dst_challenge_digest, dst_nonce_digest, VrfParams, VrfPedersenWindow,
+    cofactor::mul_by_cofactor_const, dst_beta_digest, dst_challenge_digest, dst_nonce_digest,
+    VrfParams, VrfPedersenWindow,
 };
+use crate::field_conversion::{base_to_scalar_with_bits, scalar_to_base_for_absorption};
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::{poseidon_config, track_constraints};
 use ark_crypto_primitives::crh::pedersen::constraints::{
@@ -19,7 +21,7 @@ use ark_r1cs_std::{
     boolean::Boolean,
     fields::{emulated_fp::EmulatedFpVar, fp::FpVar, FieldVar},
     groups::CurveVar,
-    prelude::{ToBitsGadget, ToBytesGadget},
+    prelude::ToBitsGadget,
     uint8::UInt8,
     GR1CSVar,
 };
@@ -47,13 +49,10 @@ where
         ConstraintF<C>,
     >>::evaluate(params_var, msg_bytes)?;
 
-    // Cofactor clear: multiply by cofactor using doublings
-    // For Grumpkin/Jubjub: cofactor = 8 → 3 doublings
-    // For Bandersnatch: cofactor = 4 → 2 doublings
-    let mut h = h_raw.clone();
-    h.double_in_place()?;
-    h.double_in_place()?;
-    h.double_in_place()?; // Safe to do extra doubling
+    // Cofactor clear: multiply by cofactor to ensure point is in prime-order subgroup
+    // For Grumpkin (cofactor = 1): this is a no-op
+    // For curves like Jubjub (cofactor = 8): this performs necessary scalar multiplication
+    let h = mul_by_cofactor_const::<C, ConstraintF<C>, GG>(&h_raw)?;
 
     Ok(h)
 }
@@ -86,46 +85,32 @@ where
     sponge.absorb(&dst_var)?;
 
     // Convert sk to base field elements for absorption
-    // We absorb the bit representation
-    let sk_bits = sk.to_bits_le()?;
-    let sk_fe_bits: Vec<FpVar<ConstraintF<C>>> =
-        sk_bits.iter().map(|b| FpVar::from(b.clone())).collect();
-    sponge.absorb(&sk_fe_bits)?;
+    // We absorb the bytes of the scalar field element to match native
+    let sk_fields = scalar_to_base_for_absorption::<C>(sk)?;
+    sponge.absorb(&sk_fields)?;
 
     // Absorb H using CurveAbsorbGadget trait
     h.curve_absorb_gadget(&mut sponge)?;
 
-    // Absorb message bytes
-    let msg_fe: Vec<FpVar<ConstraintF<C>>> = msg_bytes
-        .iter()
-        .map(|byte| {
-            let bits = byte.to_bits_le()?;
-            let mut value = FpVar::zero();
-            let mut power = FpVar::one();
-            for bit in bits.iter().take(8) {
-                let bit_fe = FpVar::from(bit.clone());
-                value += &bit_fe * &power;
-                power.double_in_place()?;
-            }
-            Ok(value)
-        })
-        .collect::<Result<Vec<_>, SynthesisError>>()?;
-    sponge.absorb(&msg_fe)?;
+    // Absorb message bytes - convert each UInt8 to field element
+    // This matches native: sponge.absorb(&BaseField::from(*byte as u64))
+    for byte in msg_bytes {
+        let bits = byte.to_bits_le()?;
+        let mut value = FpVar::zero();
+        let mut power = FpVar::one();
+        for bit in bits.iter().take(8) {
+            let bit_fe = FpVar::from(bit.clone());
+            value += &bit_fe * &power;
+            power.double_in_place()?;
+        }
+        sponge.absorb(&value)?;
+    }
 
     // Squeeze nonce in base field
     let k_base = sponge.squeeze_field_elements(1)?[0].clone();
 
     // Convert to scalar field (non-native) and get bits
-    let k_bytes = k_base.to_bytes_le()?;
-    let k_scalar = EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(cs, || {
-        // Compute the actual value for witness generation
-        let bytes = k_bytes
-            .iter()
-            .map(|b| b.value().unwrap_or_default())
-            .collect::<Vec<u8>>();
-        Ok(C::ScalarField::from_le_bytes_mod_order(&bytes))
-    })?;
-    let k_bits = k_scalar.to_bits_le()?;
+    let (k_scalar, k_bits) = base_to_scalar_with_bits::<C>(cs, &k_base)?;
 
     Ok((k_scalar, k_bits))
 }
@@ -168,16 +153,7 @@ where
     let c_base = sponge.squeeze_field_elements(1)?[0].clone();
 
     // Convert to scalar field (non-native) and get bits
-    let c_bytes = c_base.to_bytes_le()?;
-    let c_scalar = EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(cs, || {
-        // Compute the actual value for witness generation
-        let bytes = c_bytes
-            .iter()
-            .map(|b| b.value().unwrap_or_default())
-            .collect::<Vec<u8>>();
-        Ok(C::ScalarField::from_le_bytes_mod_order(&bytes))
-    })?;
-    let c_bits = c_scalar.to_bits_le()?;
+    let (c_scalar, c_bits) = base_to_scalar_with_bits::<C>(cs, &c_base)?;
 
     Ok((c_scalar, c_bits))
 }

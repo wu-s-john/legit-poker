@@ -4,10 +4,11 @@ use super::{
     dst_beta_digest, dst_challenge_digest, dst_nonce_digest, VrfParams, VrfPedersenWindow, VrfProof,
 };
 use crate::poseidon_config;
+use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::crh::{pedersen, CRHScheme};
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::{AffineRepr, CurveGroup};
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, Field, PrimeField};
 use ark_serialize::CanonicalSerialize;
 
 const LOG_TARGET: &str = "vrf::native";
@@ -17,7 +18,7 @@ pub fn hash_to_curve<C: CurveGroup>(params: &VrfParams<C>, msg: &[u8]) -> C {
     let p = pedersen::CRH::<C, VrfPedersenWindow>::evaluate(&params.pedersen_crh_params, msg)
         .expect("Pedersen hash-to-curve should not fail");
 
-    // Cofactor clear (e.g., 8 for Grumpkin/Jubjub, 4 for Bandersnatch)
+    // Cofactor clear (e.g., 1 for Grumpkin, 8 for Jubjub, 4 for Bandersnatch)
     // This ensures the point is in the prime-order subgroup
     p.mul_by_cofactor().into()
 }
@@ -27,35 +28,35 @@ pub fn generate_nonce<C>(sk: &C::ScalarField, h: &C, msg: &[u8]) -> C::ScalarFie
 where
     C: CurveGroup + CanonicalSerialize,
     C::ScalarField: PrimeField + Absorb,
+    C::BaseField: PrimeField + Absorb,
+    <C::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    C: CurveAbsorb<<C::BaseField as Field>::BasePrimeField>,
 {
-    let config = poseidon_config::<C::ScalarField>();
+    type BaseField<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
+
+    let config = poseidon_config::<BaseField<C>>();
     let mut sponge = PoseidonSponge::new(&config);
 
     // Use precomputed digest for efficiency and consistency with circuit
-    let dst_digest = dst_nonce_digest::<C::ScalarField>();
+    let dst_digest = dst_nonce_digest::<BaseField<C>>();
     tracing::debug!(target: LOG_TARGET, "absorbing digest {}", dst_digest);
     sponge.absorb(&dst_digest);
 
-    // Absorb secret key
+    // Convert secret key to base field and absorb
+    // We absorb the bytes of the scalar field element
+    let sk_bytes = sk.into_bigint().to_bytes_le();
     tracing::debug!(target: LOG_TARGET, "absorbing sk {}", sk);
-    sponge.absorb(sk);
-
-    // Serialize and absorb curve point H
-    let mut h_bytes = Vec::new();
-    h.serialize_compressed(&mut h_bytes)
-        .expect("Curve point serialization should not fail");
-
-    tracing::debug!(target: LOG_TARGET, "absorbing bytes {:?}", h_bytes);
-    for byte in &h_bytes {
-        sponge.absorb(&C::ScalarField::from(*byte as u64));
+    for byte in &sk_bytes {
+        sponge.absorb(&BaseField::<C>::from(*byte as u64));
     }
 
-    // Absorb message in chunks to avoid overflow
-    for chunk in msg.chunks(31) {
-        let mut b = [0u8; 32];
-        b[..chunk.len()].copy_from_slice(chunk);
-        let fe = C::ScalarField::from_le_bytes_mod_order(&b);
-        sponge.absorb(&fe);
+    // Absorb curve point H using CurveAbsorb trait
+    h.curve_absorb(&mut sponge);
+    tracing::debug!(target: LOG_TARGET, "absorbed curve point H");
+
+    // Absorb message bytes
+    for byte in msg {
+        sponge.absorb(&BaseField::<C>::from(*byte as u64));
     }
 
     tracing::debug!(target: LOG_TARGET, "absorbing message {:?}", msg);
@@ -66,7 +67,12 @@ where
         msg.len()
     );
 
-    sponge.squeeze_field_elements(1)[0]
+    // Squeeze nonce in base field and convert to scalar field
+    let k_base: BaseField<C> = sponge.squeeze_field_elements(1)[0];
+
+    // Convert from base field to scalar field via bytes (mod order)
+    let k_bytes = k_base.into_bigint().to_bytes_le();
+    C::ScalarField::from_le_bytes_mod_order(&k_bytes)
 }
 
 /// Generate challenge c from transcript using Poseidon
@@ -74,51 +80,54 @@ pub fn generate_challenge<C>(pk: &C, h: &C, gamma: &C, u: &C, v: &C) -> C::Scala
 where
     C: CurveGroup + CanonicalSerialize,
     C::ScalarField: PrimeField + Absorb,
+    C::BaseField: PrimeField + Absorb,
+    <C::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    C: CurveAbsorb<<C::BaseField as Field>::BasePrimeField>,
 {
-    let config = poseidon_config::<C::ScalarField>();
+    type BaseField<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
+
+    let config = poseidon_config::<BaseField<C>>();
     let mut sponge = PoseidonSponge::new(&config);
 
     // Use precomputed digest for efficiency and consistency with circuit
-    let dst_digest = dst_challenge_digest::<C::ScalarField>();
+    let dst_digest = dst_challenge_digest::<BaseField<C>>();
     tracing::trace!(target: LOG_TARGET, "digest challenge {}", dst_digest);
     sponge.absorb(&dst_digest);
 
-    // Absorb all points in order: pk, H, Γ, U, V
+    // Absorb all points in order: pk, H, Γ, U, V using CurveAbsorb trait
     for p in [pk, h, gamma, u, v] {
-        let mut bytes = Vec::new();
-        p.serialize_compressed(&mut bytes)
-            .expect("Curve point serialization should not fail");
-        for byte in &bytes {
-            sponge.absorb(&C::ScalarField::from(*byte as u64));
-        }
+        p.curve_absorb(&mut sponge);
     }
 
     tracing::trace!(target: LOG_TARGET, "Challenge generation: absorbed 5 curve points {:?}", [pk, h, gamma, u, v]);
 
-    sponge.squeeze_field_elements(1)[0]
+    // Squeeze challenge in base field and convert to scalar field
+    let c_base: BaseField<C> = sponge.squeeze_field_elements(1)[0];
+
+    // Convert from base field to scalar field via bytes (mod order)
+    let c_bytes = c_base.into_bigint().to_bytes_le();
+    C::ScalarField::from_le_bytes_mod_order(&c_bytes)
 }
 
 /// Compute β from Γ using Poseidon over base field
-pub fn beta_from_gamma<C>(gamma: &C) -> C::BaseField
+pub fn beta_from_gamma<C>(gamma: &C) -> <C::BaseField as Field>::BasePrimeField
 where
     C: CurveGroup + CanonicalSerialize,
     C::BaseField: PrimeField + Absorb,
+    <C::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    C: CurveAbsorb<<C::BaseField as Field>::BasePrimeField>,
 {
-    let config = poseidon_config::<C::BaseField>();
+    type BaseField<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
+
+    let config = poseidon_config::<BaseField<C>>();
     let mut sponge = PoseidonSponge::new(&config);
 
     // Use precomputed digest for efficiency and consistency with circuit
-    let dst_digest = dst_beta_digest::<C::BaseField>();
+    let dst_digest = dst_beta_digest::<BaseField<C>>();
     sponge.absorb(&dst_digest);
 
-    // Serialize and absorb gamma
-    let mut gamma_bytes = Vec::new();
-    gamma
-        .serialize_compressed(&mut gamma_bytes)
-        .expect("Curve point serialization should not fail");
-    for byte in &gamma_bytes {
-        sponge.absorb(&C::BaseField::from(*byte as u64));
-    }
+    // Absorb gamma using CurveAbsorb trait for consistency with circuit
+    gamma.curve_absorb(&mut sponge);
 
     tracing::trace!(target: LOG_TARGET, "Beta computation: absorbed gamma point");
 
@@ -142,11 +151,13 @@ pub fn prove_vrf<C>(
     pk: &C,
     sk: C::ScalarField,
     msg: &[u8],
-) -> (VrfProof<C>, C::BaseField)
+) -> (VrfProof<C>, <C::BaseField as Field>::BasePrimeField)
 where
     C: CurveGroup + CanonicalSerialize,
     C::ScalarField: PrimeField + Absorb,
     C::BaseField: PrimeField + Absorb,
+    <C::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    C: CurveAbsorb<<C::BaseField as Field>::BasePrimeField>,
 {
     tracing::debug!(target: LOG_TARGET, "Starting VRF proof generation");
 
@@ -206,11 +217,13 @@ pub fn verify_vrf<C>(
     pk: &C,
     msg: &[u8],
     proof: &VrfProof<C>,
-) -> Option<C::BaseField>
+) -> Option<<C::BaseField as Field>::BasePrimeField>
 where
     C: CurveGroup + CanonicalSerialize,
     C::ScalarField: PrimeField + Absorb,
     C::BaseField: PrimeField + Absorb,
+    <C::BaseField as Field>::BasePrimeField: PrimeField + Absorb,
+    C: CurveAbsorb<<C::BaseField as Field>::BasePrimeField>,
 {
     tracing::debug!(target: LOG_TARGET, "Starting VRF proof verification");
 

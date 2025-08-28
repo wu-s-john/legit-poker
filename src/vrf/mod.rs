@@ -4,6 +4,7 @@
 //! The implementation is optimized for SNARK circuits by using prove_vrf inside the circuit
 //! rather than verify_vrf, as it requires fewer variable-base scalar multiplications.
 
+pub mod cofactor;
 pub mod gadgets;
 pub mod native;
 #[cfg(test)]

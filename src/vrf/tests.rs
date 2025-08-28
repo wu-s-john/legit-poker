@@ -95,7 +95,7 @@ impl ConstraintSynthesizer<BaseField> for VrfProveCircuit {
 }
 
 fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-    let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
+    let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
 
     let timer = tracing_subscriber::fmt::time::uptime();
 
@@ -186,8 +186,9 @@ fn test_native_vs_snark_parity() {
         .expect("Circuit generation should succeed");
     assert!(cs.is_satisfied().unwrap(), "Circuit should be satisfied");
 
-    // Print constraint count
-    println!(
+    // Log constraint count
+    tracing::debug!(
+        target: TEST_TARGET,
         "VRF prove_gadget constraint count: {}",
         cs.num_constraints()
     );
@@ -316,10 +317,11 @@ fn test_beta_computation_consistency() {
 
 #[test]
 fn test_hash_to_curve_consistency() {
-    let _guard = setup_test_tracing();
     use crate::vrf::gadgets::hash_to_curve_var;
     use crate::vrf::native::hash_to_curve;
     use ark_crypto_primitives::crh::pedersen::constraints::CRHParametersVar as PedersenCRHParamsVar;
+
+    let _guard = setup_test_tracing();
 
     let mut rng = test_rng();
     let params = VrfParams::<TestCurve>::setup(&mut rng);
@@ -334,14 +336,15 @@ fn test_hash_to_curve_consistency() {
     ];
 
     for msg in test_messages {
-        println!(
-            "\nTesting hash_to_curve for message of length: {}",
+        tracing::debug!(
+            target: TEST_TARGET,
+            "Testing hash_to_curve for message of length: {}",
             msg.len()
         );
 
         // Native computation
         let h_native = hash_to_curve::<TestCurve>(&params, &msg);
-        println!("Native hash_to_curve result: {:?}", h_native);
+        tracing::debug!(target: TEST_TARGET, "Native hash_to_curve result: {:?}", h_native);
 
         // Circuit computation
         let cs = ConstraintSystem::<BaseField>::new_ref();
@@ -363,7 +366,7 @@ fn test_hash_to_curve_consistency() {
                 .expect("Should compute hash_to_curve in circuit");
 
         let h_circuit = h_circuit_var.value().expect("Should get value");
-        println!("Circuit hash_to_curve result: {:?}", h_circuit);
+        tracing::debug!(target: TEST_TARGET, "Circuit hash_to_curve result: {:?}", h_circuit);
 
         // Verify they match
         assert_eq!(
@@ -379,7 +382,7 @@ fn test_hash_to_curve_consistency() {
         );
     }
 
-    println!("\n✅ All hash_to_curve consistency tests passed!");
+    tracing::debug!(target: TEST_TARGET, "✅ All hash_to_curve consistency tests passed!");
 }
 
 #[test]
@@ -401,8 +404,9 @@ fn test_generate_nonce_consistency() {
     ];
 
     for (sk, msg) in test_cases {
-        println!(
-            "\nTesting nonce generation for message length: {}",
+        tracing::debug!(
+            target: TEST_TARGET,
+            "Testing nonce generation for message length: {}",
             msg.len()
         );
 
@@ -411,7 +415,7 @@ fn test_generate_nonce_consistency() {
 
         // Native nonce generation
         let nonce_native = generate_nonce::<TestCurve>(&sk, &h_native, &msg);
-        println!("Native nonce: {:?}", nonce_native);
+        tracing::debug!(target: TEST_TARGET, "Native nonce: {:?}", nonce_native);
 
         // Circuit nonce generation
         let cs = ConstraintSystem::<BaseField>::new_ref();
@@ -444,7 +448,7 @@ fn test_generate_nonce_consistency() {
         .expect("Should generate nonce in circuit");
 
         let nonce_circuit = nonce_circuit_var.value().expect("Should get nonce value");
-        println!("Circuit nonce: {:?}", nonce_circuit);
+        tracing::debug!(target: TEST_TARGET, "Circuit nonce: {:?}", nonce_circuit);
 
         // Verify they match
         assert_eq!(
@@ -458,15 +462,14 @@ fn test_generate_nonce_consistency() {
         );
     }
 
-    println!("\n✅ Nonce generation consistency tests completed!");
+    tracing::debug!(target: TEST_TARGET, "✅ Nonce generation consistency tests completed!");
 }
 
 #[test]
 fn test_challenge_generation_consistency() {
     let _guard = setup_test_tracing();
-    use crate::vrf::gadgets::{generate_challenge_var, hash_to_curve_var};
+    use crate::vrf::gadgets::generate_challenge_var;
     use crate::vrf::native::{generate_challenge, generate_nonce, hash_to_curve};
-    use ark_crypto_primitives::crh::pedersen::constraints::CRHParametersVar as PedersenCRHParamsVar;
 
     let mut rng = test_rng();
     let params = VrfParams::<TestCurve>::setup(&mut rng);
@@ -485,7 +488,7 @@ fn test_challenge_generation_consistency() {
 
     // Generate challenge natively
     let c_native = generate_challenge::<TestCurve>(&pk, &h, &gamma, &u, &v);
-    println!("Native challenge: {:?}", c_native);
+    tracing::debug!(target: TEST_TARGET, "Native challenge: {:?}", c_native);
 
     // Circuit version
     let cs = ConstraintSystem::<BaseField>::new_ref();
@@ -510,7 +513,7 @@ fn test_challenge_generation_consistency() {
     .expect("Should generate challenge in circuit");
 
     let c_circuit = c_circuit_var.value().expect("Should get challenge value");
-    println!("Circuit challenge: {:?}", c_circuit);
+    tracing::debug!(target: TEST_TARGET, "Circuit challenge: {:?}", c_circuit);
 
     // Verify they match
     assert_eq!(
@@ -523,5 +526,5 @@ fn test_challenge_generation_consistency() {
         "Circuit constraints should be satisfied"
     );
 
-    println!("✅ Challenge generation consistency test completed!");
+    tracing::debug!(target: TEST_TARGET, "✅ Challenge generation consistency test completed!");
 }
