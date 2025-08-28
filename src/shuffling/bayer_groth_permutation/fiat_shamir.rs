@@ -14,7 +14,9 @@ use ark_r1cs_std::{
     uint8::UInt8,
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
-use ark_std::{vec, vec::Vec};
+use ark_std::vec::Vec;
+
+const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
 /// Transcript for Bayer-Groth permutation proof using Fiat-Shamir
 pub struct BayerGrothTranscript<F: PrimeField> {
@@ -40,7 +42,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         c_a.serialize_compressed(&mut bytes).unwrap();
         self.sponge.absorb(&bytes);
 
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Absorbed commitment c_A");
+        tracing::debug!(target: LOG_TARGET, "Absorbed commitment c_A");
     }
 
     /// Derive challenge x ∈ F_q* and blinding factor r
@@ -59,7 +61,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
             x = F::one();
         }
 
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Derived challenge x and blinding r");
+        tracing::debug!(target: LOG_TARGET, "Derived challenge x and blinding r");
 
         (x, r)
     }
@@ -72,15 +74,11 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     ///
     /// Returns: Vector b (not the commitment, which is computed externally)
     pub fn compute_hidden_vector_b(&self, permutation: &[usize], x: F) -> Vec<F> {
-        let mut b = vec![F::zero(); permutation.len()];
+        // b[i] = x^π(i)
+        // Note: permutation contains 1-indexed values
+        let b: Vec<F> = permutation.iter().map(|&pi| x.pow(&[pi as u64])).collect();
 
-        for (i, &pi) in permutation.iter().enumerate() {
-            // b[i] = x^π(i)
-            // Note: permutation contains 1-indexed values
-            b[i] = x.pow(&[pi as u64]);
-        }
-
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Computed hidden vector b of length {}", b.len());
+        tracing::debug!(target: LOG_TARGET, "Computed hidden vector b of length {}", b.len());
 
         b
     }
@@ -92,14 +90,14 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         c_b.serialize_compressed(&mut bytes).unwrap();
         self.sponge.absorb(&bytes);
 
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Absorbed commitment c_B");
+        tracing::debug!(target: LOG_TARGET, "Absorbed commitment c_B");
     }
 
     /// Derive the blinding factor s for commitment c_B
     pub fn derive_blinding_factor_s(&mut self) -> F {
         let s = self.sponge.squeeze_field_elements(1)[0];
 
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Derived blinding factor s");
+        tracing::debug!(target: LOG_TARGET, "Derived blinding factor s");
 
         s
     }
@@ -111,7 +109,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         let y = elements[0];
         let z = elements[1];
 
-        tracing::debug!(target: "bayer_groth::fiat_shamir", "Derived challenges y and z");
+        tracing::debug!(target: LOG_TARGET, "Derived challenges y and z");
 
         (y, z)
     }
@@ -404,6 +402,7 @@ mod tests {
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::Zero;
     use ark_std::{test_rng, UniformRand};
+    use rand::RngCore;
 
     #[test]
     fn test_fiat_shamir_deterministic() {
@@ -524,9 +523,17 @@ mod tests {
         assert!(!x_var.value()?.is_zero());
         assert_eq!(b_vars.len(), perm.len());
 
-        println!("✓ Gadget Fiat-Shamir test passed");
-        println!("  Constraints: {}", cs.num_constraints());
-        println!("  Variables: {}", cs.num_witness_variables());
+        tracing::debug!(target = LOG_TARGET, "✓ Gadget Fiat-Shamir test passed");
+        tracing::debug!(
+            target = LOG_TARGET,
+            "  Constraints: {}",
+            cs.num_constraints()
+        );
+        tracing::debug!(
+            target = LOG_TARGET,
+            "  Variables: {}",
+            cs.num_witness_variables()
+        );
 
         Ok(())
     }
@@ -568,7 +575,107 @@ mod tests {
             }
         }
 
-        println!("✓ Gadget deterministic test passed");
+        tracing::debug!(target = LOG_TARGET, "✓ Gadget deterministic test passed");
+        Ok(())
+    }
+
+    /// Test complete Bayer-Groth protocol with Fiat-Shamir
+    #[test]
+    fn test_complete_protocol() -> Result<(), SynthesisError> {
+        let mut rng = test_rng();
+        let n = 52; // Standard deck size
+
+        // Generate random permutation (shuffle)
+        let mut perm: Vec<usize> = (1..=n).collect();
+        // Fisher-Yates shuffle
+        for i in (1..n).rev() {
+            let j = (rng.next_u32() as usize) % (i + 1);
+            perm.swap(i, j);
+        }
+
+        // Create vector a from permutation
+        let a_vals: Vec<Fr> = perm.iter().map(|&i| Fr::from(i as u64)).collect();
+
+        // Simulate external commitment to a (in practice, this is expensive)
+        let c_a = G1Projective::rand(&mut rng);
+
+        // Initialize Fiat-Shamir transcript
+        let mut transcript = BayerGrothTranscript::<Fr>::new(b"BayerGroth-Test");
+
+        // Step 1: Absorb commitment to a and derive x, r
+        transcript.absorb_commitment_a(&c_a);
+        let (x_val, _r_val) = transcript.derive_challenge_x_and_blinding();
+
+        // Step 2: Compute hidden vector b
+        let b_vals = transcript.compute_hidden_vector_b(&perm, x_val);
+
+        // Simulate external commitment to b
+        let c_b = G1Projective::rand(&mut rng);
+
+        // Step 3: Absorb commitment to b and derive s
+        transcript.absorb_commitment_b(&c_b);
+        let _s_val = transcript.derive_blinding_factor_s();
+
+        // Step 4: Derive final challenges y, z
+        let (y_val, z_val) = transcript.derive_challenges_y_z();
+
+        // Native computation - import from crate
+        use crate::shuffling::bayer_groth_permutation::linking_rs_native as native;
+        use ark_bn254::G1Affine;
+        use ark_ec::AffineRepr;
+
+        let (left_native, right_native, _) = native::compute_permutation_proof::<Fr, G1Projective>(
+            &a_vals,
+            &b_vals,
+            y_val,
+            z_val,
+            x_val,
+            G1Affine::generator(),
+        );
+
+        // Circuit computation
+        let cs = ConstraintSystem::<Fr>::new_ref();
+
+        use crate::shuffling::bayer_groth_permutation::linking_rs_gadgets::{
+            alloc_vector, left_product_gadget, linear_blend_gadget, right_product_gadget,
+        };
+
+        let a = alloc_vector(cs.clone(), &a_vals, AllocationMode::Witness)?;
+        let b = alloc_vector(cs.clone(), &b_vals, AllocationMode::Witness)?;
+        let x = FpVar::new_witness(cs.clone(), || Ok(x_val))?;
+        let y = FpVar::new_witness(cs.clone(), || Ok(y_val))?;
+        let z = FpVar::new_witness(cs.clone(), || Ok(z_val))?;
+
+        // For this test, we'll skip the curve point computation since it requires
+        // proper curve variable setup. We'll just test the field operations.
+        let d = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
+        let left_circuit = left_product_gadget(cs.clone(), &d, &z)?;
+        let right_circuit = right_product_gadget(cs.clone(), &y, &x, &z, n)?;
+
+        // Verify results match
+        assert_eq!(left_circuit.value()?, left_native);
+        assert_eq!(right_circuit.value()?, right_native);
+        assert_eq!(left_native, right_native);
+
+        // Check constraint satisfaction
+        assert!(cs.is_satisfied()?);
+
+        tracing::debug!(
+            target = LOG_TARGET,
+            "✓ Complete Bayer-Groth protocol test passed for n={}",
+            n
+        );
+        tracing::debug!(
+            target = LOG_TARGET,
+            "  Constraints: {}",
+            cs.num_constraints()
+        );
+        tracing::debug!(
+            target = LOG_TARGET,
+            "  Variables: {}",
+            cs.num_witness_variables()
+        );
+
         Ok(())
     }
 }

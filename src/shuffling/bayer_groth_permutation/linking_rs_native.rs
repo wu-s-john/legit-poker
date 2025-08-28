@@ -2,7 +2,7 @@
 
 use ark_ec::CurveGroup;
 use ark_ff::{Field, PrimeField};
-use ark_std::{vec, vec::Vec};
+use ark_std::vec::Vec;
 
 /// Compute linear blend: d_i = y * a_i + b_i for i = 1, ..., N
 pub fn compute_linear_blend<F: Field>(a: &[F], b: &[F], y: F) -> Vec<F> {
@@ -88,14 +88,8 @@ where
 /// Compute the hidden vector b = (x^π(1), ..., x^π(N))
 /// given a permutation and challenge x
 pub fn compute_hidden_vector<F: Field>(permutation: &[usize], x: F) -> Vec<F> {
-    let mut b = vec![F::zero(); permutation.len()];
-
-    for (i, &pi) in permutation.iter().enumerate() {
-        // b[i] = x^π(i+1) since permutation is 1-indexed
-        b[i] = x.pow(&[pi as u64]);
-    }
-
-    b
+    // b[i] = x^π(i+1) since permutation is 1-indexed
+    permutation.iter().map(|&pi| x.pow(&[pi as u64])).collect()
 }
 
 /// Verify that a permutation proof is correct (native)

@@ -10,7 +10,7 @@
 //!
 //! ## Key Components
 //!
-//! ### Native Implementation (`native.rs`, `sigma_protocol.rs`)
+//! ### Native Implementation (`linking_rs_native.rs`, `sigma_protocol.rs`)
 //! - `compute_permutation_proof`: Generates proof of permutation equality
 //! - `prove_sigma_linkage_ni`: Non-interactive Σ-protocol prover
 //! - `verify_sigma_linkage_ni`: Non-interactive Σ-protocol verifier
@@ -65,37 +65,23 @@
 //! ```
 
 pub mod fiat_shamir;
-pub mod gadgets;
-pub mod native;
+pub mod linking_rs_gadgets;
+pub mod linking_rs_native;
 pub mod sigma_gadgets;
 pub mod sigma_protocol;
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod sponge_ec_test;
 
-// Re-export main types and functions
 pub use fiat_shamir::BayerGrothTranscript;
-pub use gadgets::{
+pub use linking_rs_gadgets::{
     fixed_base_scalar_mul_gadget, left_product_gadget, linear_blend_gadget, right_product_gadget,
     verify_permutation_equality_gadget,
 };
-pub use native::{
+pub use linking_rs_native::{
     compute_left_product, compute_linear_blend, compute_permutation_proof, compute_right_product,
     fixed_base_scalar_mul,
 };
-
-// Re-export sigma protocol types and functions
-// pub use sigma_protocol::{
-//     SigmaProof, prove_sigma_linkage_ni, verify_sigma_linkage_ni,
-//     compute_output_aggregator, msm_ciphertexts,
-// };
-// pub use sigma_gadgets::{
-//     SigmaProofVar, verify_sigma_linkage_gadget_ni,
-//     compute_output_aggregator_gadget,
-// };
 
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;

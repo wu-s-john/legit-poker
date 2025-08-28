@@ -639,12 +639,12 @@ mod tests {
 
         // Debug failing constraints
         if !cs.is_satisfied()? {
-            println!("Circuit is not satisfied!");
+            tracing::debug!(target = LOG_TARGET, "Circuit is not satisfied!");
             if let Some(unsatisfied_path) = cs.which_is_unsatisfied()? {
-                println!("First unsatisfied constraint: {}", unsatisfied_path);
+                tracing::debug!(target = LOG_TARGET, "First unsatisfied constraint: {}", unsatisfied_path);
             }
-            println!("Total constraints: {}", cs.num_constraints());
-            println!("Total witness variables: {}", cs.num_witness_variables());
+            tracing::debug!(target = LOG_TARGET, "Total constraints: {}", cs.num_constraints());
+            tracing::debug!(target = LOG_TARGET, "Total witness variables: {}", cs.num_witness_variables());
         }
 
         assert!(cs.is_satisfied()?, "Circuit verification failed");

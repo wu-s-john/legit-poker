@@ -6,6 +6,8 @@
 #[cfg(test)]
 mod tests {
     use ark_bn254::{Fq, G1Affine, G1Projective};
+    
+    const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
     use ark_crypto_primitives::sponge::{
         constraints::CryptographicSpongeVar,
         poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge},
@@ -39,7 +41,7 @@ mod tests {
         // Squeeze out a field element as the result
         let native_result: Fq = native_sponge.squeeze_field_elements(1)[0];
 
-        println!("Native sponge result: {:?}", native_result);
+        tracing::debug!(target = LOG_TARGET, "Native sponge result: {:?}", native_result);
 
         // ============= SNARK Circuit Sponge Absorption =============
         let cs = ConstraintSystem::<Fq>::new_ref();
@@ -67,7 +69,7 @@ mod tests {
         // Extract the concrete value from the circuit variable
         let circuit_result = circuit_result_var.value().unwrap();
 
-        println!("Circuit sponge result: {:?}", circuit_result);
+        tracing::debug!(target = LOG_TARGET, "Circuit sponge result: {:?}", circuit_result);
 
         // ============= Compare Results =============
         // Assert that native and circuit results are equal
@@ -82,7 +84,7 @@ mod tests {
             "Constraint system should be satisfied"
         );
 
-        println!("✅ Test passed: Native and circuit sponge absorption produce identical results!");
+        tracing::debug!(target = LOG_TARGET, "✅ Test passed: Native and circuit sponge absorption produce identical results!");
     }
 
     #[test]
@@ -92,7 +94,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
 
         for i in 0..5 {
-            println!("\n--- Testing point {} ---", i + 1);
+            tracing::debug!(target = LOG_TARGET, "\n--- Testing point {} ---", i + 1);
 
             // Generate random point
             let point = G1Affine::rand(&mut rng);
@@ -121,10 +123,10 @@ mod tests {
             assert_eq!(native_result, circuit_result);
             assert!(cs.is_satisfied().unwrap());
 
-            println!("Point {} passed ✓", i + 1);
+            tracing::debug!(target = LOG_TARGET, "Point {} passed ✓", i + 1);
         }
 
-        println!("\n✅ All multiple point tests passed!");
+        tracing::debug!(target = LOG_TARGET, "\n✅ All multiple point tests passed!");
     }
 
     #[test]
@@ -160,6 +162,6 @@ mod tests {
         );
         assert!(cs.is_satisfied().unwrap());
 
-        println!("✅ Identity point test passed!");
+        tracing::debug!(target = LOG_TARGET, "✅ Identity point test passed!");
     }
 }
