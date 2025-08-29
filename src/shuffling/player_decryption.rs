@@ -3,7 +3,7 @@ use super::curve_absorb::CurveAbsorb;
 use super::data_structures::ElGamalCiphertext;
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
-use ark_ec::CurveGroup;
+use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
@@ -49,13 +49,15 @@ where
 
         // Compute public values
         // Blinding base: g^secret_share_j
-        let blinding_base_contribution = generator * secret_share;
+        let blinding_base_contribution = (generator * secret_share).into_affine().into_group();
 
         // H = aggregated_public_key · player_public_key (combined base)
-        let h = aggregated_public_key + player_public_key;
+        let h = (aggregated_public_key + player_public_key)
+            .into_affine()
+            .into_group();
 
         // Blinding combined: H^secret_share_j = (aggregated_public_key · player_public_key)^secret_share_j
-        let blinding_combined_contribution = h * secret_share;
+        let blinding_combined_contribution = (h * secret_share).into_affine().into_group();
 
         // Generate the non-interactive Chaum-Pedersen proof (deterministic)
         let config = poseidon_config::<C::BaseField>();
@@ -208,29 +210,47 @@ where
     C::Affine: Absorb,
     C: CurveAbsorb<C::BaseField>,
 {
-    // First verify all blinding contributions
-    for (i, contribution) in blinding_contributions.iter().enumerate() {
-        if !contribution.verify(aggregated_public_key, player_public_key) {
-            warn!(target: LOG_TARGET, "Invalid blinding contribution at index {}", i);
-            return Err("Invalid blinding contribution");
-        }
-    }
+    // First verify all blinding contributions using try_for_each for early abort
+    blinding_contributions
+        .iter()
+        .enumerate()
+        .try_for_each(|(i, contribution)| {
+            if !contribution.verify(aggregated_public_key, player_public_key) {
+                warn!(target: LOG_TARGET, "Invalid blinding contribution at index {}", i);
+                Err("Invalid blinding contribution")
+            } else {
+                Ok(())
+            }
+        })?;
 
-    // Start with the shuffled deck ciphertext
-    let mut blinded_base = initial_ciphertext.c1; // g^r
-    let mut blinded_message_with_player_key = initial_ciphertext.c2; // pk^r * g^m_i
-    let mut player_unblinding_helper = C::zero(); // Will accumulate g^Δ
-    let mut proofs = Vec::new();
+    // Combine all blinding contributions using separate folds for clarity
 
-    // Combine all blinding contributions
-    for contribution in blinding_contributions.iter() {
-        blinded_base = blinded_base + contribution.blinding_base_contribution; // Add g^δ_j
-        blinded_message_with_player_key =
-            blinded_message_with_player_key + contribution.blinding_combined_contribution; // Add (pk·y_u)^δ_j
-        player_unblinding_helper =
-            player_unblinding_helper + contribution.blinding_base_contribution; // Accumulate g^δ_j for unblinding helper
-        proofs.push(contribution.proof.clone()); // Collect proof for transcript
-    }
+    // Accumulate blinded base: g^r + Σg^δ_j
+    let blinded_base = blinding_contributions
+        .iter()
+        .fold(initial_ciphertext.c1, |acc, contribution| {
+            acc + contribution.blinding_base_contribution
+        });
+
+    // Accumulate blinded message with player key: pk^r * g^m_i + Σ(pk·y_u)^δ_j
+    let blinded_message_with_player_key = blinding_contributions
+        .iter()
+        .fold(initial_ciphertext.c2, |acc, contribution| {
+            acc + contribution.blinding_combined_contribution
+        });
+
+    // Accumulate player unblinding helper: Σg^δ_j
+    let player_unblinding_helper = blinding_contributions
+        .iter()
+        .fold(C::zero(), |acc, contribution| {
+            acc + contribution.blinding_base_contribution
+        });
+
+    // Collect all proofs for the transcript
+    let proofs: Vec<_> = blinding_contributions
+        .iter()
+        .map(|contribution| contribution.proof.clone())
+        .collect();
 
     Ok(PlayerAccessibleCiphertext {
         blinded_base,

@@ -11,7 +11,6 @@ use ark_crypto_primitives::sponge::{
 };
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField};
-use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -37,8 +36,8 @@ where
     pub t_g: CV,
     /// Second commitment: T_H = H^w
     pub t_h: CV,
-    /// Response: z = w + c·secret (emulated scalar field)
-    pub z: FpVar<C::BaseField>,
+    /// Response: z = w + c·secret (as bits for scalar multiplication)
+    pub z_bits: Vec<Boolean<C::BaseField>>,
 }
 
 impl<C, CV> Clone for ChaumPedersenProofVar<C, CV>
@@ -52,7 +51,7 @@ where
         Self {
             t_g: self.t_g.clone(),
             t_h: self.t_h.clone(),
-            z: self.z.clone(),
+            z_bits: self.z_bits.clone(),
         }
     }
 }
@@ -83,25 +82,16 @@ where
         let t_h = CV::new_variable(cs.clone(), || Ok(proof.t_h), mode)?;
         tracing::trace!(target: LOG_TARGET, "Allocated t_h: {:?}", t_h.value());
 
-        // Convert z from scalar field to base field
-        // proof.z is C::ScalarField, but we need it as C::BaseField for circuit operations
-        let z = FpVar::<C::BaseField>::new_variable(
-            cs.clone(),
-            || {
-                proof
-                    .z
-                    .into_bigint()
-                    .to_bytes_le()
-                    .as_slice()
-                    .try_into()
-                    .map(C::BaseField::from_le_bytes_mod_order)
-                    .map_err(|_| SynthesisError::AssignmentMissing)
-            },
-            mode,
-        )?;
-        tracing::trace!(target: LOG_TARGET, "Allocated z: {:?}", z.value());
+        // Allocate z as bits for scalar multiplication
+        // proof.z is C::ScalarField, convert to bits for circuit operations
+        let z_bits_values = proof.z.into_bigint().to_bits_le();
+        let z_bits = z_bits_values
+            .into_iter()
+            .map(|bit| Boolean::new_variable(cs.clone(), || Ok(bit), mode))
+            .collect::<Result<Vec<_>, _>>()?;
+        tracing::trace!(target: LOG_TARGET, "Allocated z as {} bits", z_bits.len());
 
-        Ok(Self { t_g, t_h, z })
+        Ok(Self { t_g, t_h, z_bits })
     }
 }
 
@@ -178,8 +168,7 @@ where
         tracing::debug!(target: LOG_TARGET, "Verifying equation 1: g^z = T_g · α^c");
 
         // Compute lhs1 = g^z (using scalar_mul_le with bits)
-        let z_bits = self.z.to_bits_le()?;
-        let lhs1 = g.clone().scalar_mul_le(z_bits.iter())?;
+        let lhs1 = g.clone().scalar_mul_le(self.z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1.value());
 
         // Compute rhs1 = T_g + α^c
@@ -195,7 +184,7 @@ where
         tracing::debug!(target: LOG_TARGET, "Verifying equation 2: h^z = T_h · β^c");
 
         // Compute lhs2 = h^z (using scalar_mul_le with bits)
-        let lhs2 = h.clone().scalar_mul_le(z_bits.iter())?;
+        let lhs2 = h.clone().scalar_mul_le(self.z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2.value());
 
         // Compute rhs2 = T_h + β^c

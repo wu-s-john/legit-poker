@@ -2,7 +2,7 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
-use ark_ff::{PrimeField, UniformRand};
+use ark_ff::{BigInteger, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::Zero;
@@ -124,10 +124,16 @@ where
         tracing::debug!(target: LOG_TARGET, "Absorbing t_h: {:?}", t_h);
         t_h.curve_absorb(sponge);
 
-        // Generate challenge
-        let challenge = sponge.squeeze_field_elements(1)[0];
-        tracing::debug!(target: LOG_TARGET, "Computed challenge: {:?}", challenge);
-        challenge
+        // Generate challenge in base field
+        let challenge_base: C::BaseField = sponge.squeeze_field_elements(1)[0];
+        tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base);
+        
+        // Convert to scalar field - must match circuit's embed_to_emulated behavior
+        // For curves where base field != scalar field, we need proper conversion
+        let challenge_bytes = challenge_base.into_bigint().to_bytes_le();
+        let challenge_scalar = C::ScalarField::from_le_bytes_mod_order(&challenge_bytes);
+        tracing::debug!(target: LOG_TARGET, "Computed challenge (scalar field): {:?}", challenge_scalar);
+        challenge_scalar
     }
 }
 
