@@ -5,10 +5,73 @@ use ark_ff::PrimeField;
 use ark_r1cs_std::uint16::UInt16;
 use ark_r1cs_std::uint8::UInt8;
 use ark_r1cs_std::{fields::fp::FpVar, prelude::*};
-use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
+use core::borrow::Borrow;
 use core::ops::Not;
 
 use crate::showdown::{HandCategory, M0, M1, M2, M3, M4, M5};
+
+/// Circuit representation of HandCategory enum
+#[derive(Clone)]
+pub struct HandCategoryVar<F: PrimeField> {
+    value: UInt8<F>,
+}
+
+impl<F: PrimeField> HandCategoryVar<F> {
+    /// HandCategory constants
+    pub const HIGH_CARD: u8 = 0;
+    pub const ONE_PAIR: u8 = 1;
+    pub const TWO_PAIR: u8 = 2;
+    pub const THREE_OF_A_KIND: u8 = 3;
+    pub const STRAIGHT: u8 = 4;
+    pub const FLUSH: u8 = 5;
+    pub const FULL_HOUSE: u8 = 6;
+    pub const FOUR_OF_A_KIND: u8 = 7;
+    pub const STRAIGHT_FLUSH: u8 = 8;
+
+    /// Create a constant HandCategoryVar from a HandCategory enum
+    pub fn constant(cat: HandCategory) -> Self {
+        Self {
+            value: UInt8::constant(cat as u8),
+        }
+    }
+
+    /// Create a HandCategoryVar from an existing UInt8
+    pub fn from_uint8(value: UInt8<F>) -> Self {
+        Self { value }
+    }
+
+    /// Get the underlying UInt8 value
+    pub fn value(&self) -> &UInt8<F> {
+        &self.value
+    }
+
+    /// Check if this category equals a specific HandCategory
+    pub fn is_equal(&self, cat: HandCategory) -> Result<Boolean<F>, SynthesisError> {
+        self.value.is_eq(&UInt8::constant(cat as u8))
+    }
+
+    /// Check if this is a straight or straight flush
+    pub fn is_straight_type(&self) -> Result<Boolean<F>, SynthesisError> {
+        let is_straight = self.is_equal(HandCategory::Straight)?;
+        let is_straight_flush = self.is_equal(HandCategory::StraightFlush)?;
+        Ok(&is_straight | &is_straight_flush)
+    }
+}
+
+impl<F: PrimeField> AllocVar<HandCategory, F> for HandCategoryVar<F> {
+    fn new_variable<T: Borrow<HandCategory>>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+        let cat_value = f()?.borrow().clone();
+        let value = UInt8::new_variable(cs, || Ok(cat_value as u8), mode)?;
+        Ok(Self { value })
+    }
+}
 
 /// Boolean assert helper
 fn assert_true<F: PrimeField>(b: &Boolean<F>) -> Result<(), SynthesisError> {
@@ -29,10 +92,10 @@ fn uint8_to_fpvar<F: PrimeField>(x: &UInt8<F>) -> Result<FpVar<F>, SynthesisErro
 
 /// Pack (cat, c1..c5) into field via base-16 multipliers.
 fn pack_score_field_var<F: PrimeField>(
-    cat: &UInt8<F>,
+    cat: &HandCategoryVar<F>,
     c: &[UInt8<F>; 5],
 ) -> Result<FpVar<F>, SynthesisError> {
-    let mut acc = uint8_to_fpvar(cat)? * FpVar::<F>::constant(F::from(M5 as u64));
+    let mut acc = uint8_to_fpvar(cat.value())? * FpVar::<F>::constant(F::from(M5 as u64));
     let mul = |x: &UInt8<F>, m: u32| -> Result<FpVar<F>, SynthesisError> {
         Ok(uint8_to_fpvar(x)? * FpVar::<F>::constant(F::from(m as u64)))
     };
@@ -218,7 +281,7 @@ fn decode_card_var<F: PrimeField>(idx: &UInt8<F>) -> Result<(UInt8<F>, UInt8<F>)
 
 /// Category-specific tie-break vector c[5] from canonical ranks r0..r4
 fn tiebreak_vector_var<F: PrimeField>(
-    cat: &UInt8<F>,
+    cat: &HandCategoryVar<F>,
     ranks: &[UInt8<F>; 5],
     is_wheel: &Boolean<F>,
 ) -> Result<[UInt8<F>; 5], SynthesisError> {
@@ -229,7 +292,7 @@ fn tiebreak_vector_var<F: PrimeField>(
     let r3 = ranks[3].clone();
     let r4 = ranks[4].clone();
 
-    let cat_val = cat.value().unwrap_or(0);
+    let cat_val = cat.value().value().unwrap_or(0);
 
     // Build output based on category
     let out = if cat_val == HandCategory::Straight as u8
@@ -273,7 +336,7 @@ fn tiebreak_vector_var<F: PrimeField>(
 #[allow(clippy::too_many_arguments)]
 pub fn verify_and_score_from_indices<F: PrimeField>(
     _cs: ConstraintSystemRef<F>,
-    claimed_cat: UInt8<F>,
+    claimed_cat: HandCategoryVar<F>,
     idx5: [UInt8<F>; 5],
 ) -> Result<(FpVar<F>, [UInt8<F>; 5]), SynthesisError> {
     // Decode all 5 indexes -> (rank,suit)
@@ -323,7 +386,7 @@ pub fn verify_and_score_from_indices<F: PrimeField>(
     let is_straight = &is_run | &is_wheel;
 
     // Category exactness per canonical layout (as in native)
-    let catv = claimed_cat.value().unwrap_or(0);
+    let catv = claimed_cat.value().value().unwrap_or(0);
     match catv {
         x if x == HandCategory::StraightFlush as u8 => {
             assert_true(&same_suit)?;
@@ -415,7 +478,7 @@ mod tests {
         let cs = ConstraintSystem::<Fr>::new_ref();
 
         // Flush AQ972 (hearts)
-        let cat = UInt8::new_witness(cs.clone(), || Ok(HandCategory::Flush as u8)).unwrap();
+        let cat = HandCategoryVar::new_witness(cs.clone(), || Ok(HandCategory::Flush)).unwrap();
         let idx5 = [
             UInt8::new_witness(cs.clone(), || Ok(idx_of(14, Suit::Hearts))).unwrap(),
             UInt8::new_witness(cs.clone(), || Ok(idx_of(12, Suit::Hearts))).unwrap(),
@@ -429,7 +492,13 @@ mod tests {
         use crate::showdown::native::verify_and_score_from_indices as native_vs;
         let (_u, c_native, s_native) = native_vs(
             HandCategory::Flush,
-            [idx_of(14, Suit::Hearts), idx_of(12, Suit::Hearts), idx_of(9, Suit::Hearts), idx_of(7, Suit::Hearts), idx_of(2, Suit::Hearts)],
+            [
+                idx_of(14, Suit::Hearts),
+                idx_of(12, Suit::Hearts),
+                idx_of(9, Suit::Hearts),
+                idx_of(7, Suit::Hearts),
+                idx_of(2, Suit::Hearts),
+            ],
         );
         assert_eq!(
             c.iter().map(|x| x.value().unwrap()).collect::<Vec<_>>(),
@@ -440,19 +509,43 @@ mod tests {
 
     #[test]
     fn gadget_ordering_intra_category() {
-        let mk = |cat: HandCategory, idx: [u8; 5]| -> Fr {
+        let make_five_combo_hand = |cat: HandCategory, idx: [u8; 5]| -> Fr {
             let cs = ConstraintSystem::<Fr>::new_ref();
-            let catv = UInt8::new_witness(cs.clone(), || Ok(cat as u8)).unwrap();
+            let catv = HandCategoryVar::new_witness(cs.clone(), || Ok(cat)).unwrap();
             let idxv = idx.map(|i| UInt8::new_witness(cs.clone(), || Ok(i)).unwrap());
             let (s, _) = verify_and_score_from_indices::<Fr>(cs.clone(), catv, idxv).unwrap();
             assert!(cs.is_satisfied().unwrap());
             s.value().unwrap()
         };
         // Straight: A-high > 9-high > wheel
-        let st_a = [idx_of(14, Suit::Clubs), idx_of(13, Suit::Diamonds), idx_of(12, Suit::Hearts), idx_of(11, Suit::Spades), idx_of(10, Suit::Clubs)];
-        let st_9 = [idx_of(9, Suit::Clubs), idx_of(8, Suit::Diamonds), idx_of(7, Suit::Hearts), idx_of(6, Suit::Spades), idx_of(5, Suit::Clubs)];
-        let st_w = [idx_of(5, Suit::Clubs), idx_of(4, Suit::Diamonds), idx_of(3, Suit::Hearts), idx_of(2, Suit::Spades), idx_of(14, Suit::Clubs)];
-        assert!(mk(HandCategory::Straight, st_a) > mk(HandCategory::Straight, st_9));
-        assert!(mk(HandCategory::Straight, st_9) > mk(HandCategory::Straight, st_w));
+        let st_a = [
+            idx_of(14, Suit::Clubs),
+            idx_of(13, Suit::Diamonds),
+            idx_of(12, Suit::Hearts),
+            idx_of(11, Suit::Spades),
+            idx_of(10, Suit::Clubs),
+        ];
+        let st_9 = [
+            idx_of(9, Suit::Clubs),
+            idx_of(8, Suit::Diamonds),
+            idx_of(7, Suit::Hearts),
+            idx_of(6, Suit::Spades),
+            idx_of(5, Suit::Clubs),
+        ];
+        let st_w = [
+            idx_of(5, Suit::Clubs),
+            idx_of(4, Suit::Diamonds),
+            idx_of(3, Suit::Hearts),
+            idx_of(2, Suit::Spades),
+            idx_of(14, Suit::Clubs),
+        ];
+        assert!(
+            make_five_combo_hand(HandCategory::Straight, st_a)
+                > make_five_combo_hand(HandCategory::Straight, st_9)
+        );
+        assert!(
+            make_five_combo_hand(HandCategory::Straight, st_9)
+                > make_five_combo_hand(HandCategory::Straight, st_w)
+        );
     }
 }

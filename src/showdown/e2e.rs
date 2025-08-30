@@ -47,6 +47,7 @@ fn e2e_three_players_random_showdown() {
         let idx5: [Index; 5] = k5.map(|c| idx_of(c.rank, c.suit));
         let cs = ConstraintSystem::<Fr>::new_ref();
         let catv = UInt8::new_witness(cs.clone(), || Ok(*cat as u8)).unwrap();
+        let catv = gadget::HandCategoryVar::from_uint8(catv);
         let idxv = idx5.map(|i| UInt8::new_witness(cs.clone(), || Ok(i)).unwrap());
         let (score_var, _c_var) =
             gadget::verify_and_score_from_indices::<Fr>(cs.clone(), catv, idxv).unwrap();
