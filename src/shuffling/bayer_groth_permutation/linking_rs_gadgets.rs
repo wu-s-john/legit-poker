@@ -20,7 +20,11 @@ pub fn linear_blend_gadget<F: PrimeField>(
     perm_power_vector: &[FpVar<F>],
     perm_mixing_challenge_y: &FpVar<F>,
 ) -> Result<Vec<FpVar<F>>, SynthesisError> {
-    assert_eq!(perm_vector.len(), perm_power_vector.len(), "Permutation vector and power vector must have same length");
+    assert_eq!(
+        perm_vector.len(),
+        perm_power_vector.len(),
+        "Permutation vector and power vector must have same length"
+    );
 
     let mut d = Vec::with_capacity(perm_vector.len());
 
@@ -76,7 +80,8 @@ pub fn right_product_gadget<F: PrimeField>(
         let i_const = FpVar::<F>::new_constant(cs.clone(), F::from(i as u64))?;
 
         // Compute term: perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z
-        let term = perm_mixing_challenge_y * &i_const + &power_of_challenge - perm_offset_challenge_z;
+        let term =
+            perm_mixing_challenge_y * &i_const + &power_of_challenge - perm_offset_challenge_z;
 
         // Update product
         product *= &term;
@@ -162,16 +167,31 @@ where
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     let n = perm_vector.len();
-    assert_eq!(perm_power_vector.len(), n, "Permutation vector and power vector must have same length");
+    assert_eq!(
+        perm_power_vector.len(),
+        n,
+        "Permutation vector and power vector must have same length"
+    );
 
     // Step 1: Linear blend
-    let d = linear_blend_gadget(cs.clone(), perm_vector, perm_power_vector, perm_mixing_challenge_y)?;
+    let d = linear_blend_gadget(
+        cs.clone(),
+        perm_vector,
+        perm_power_vector,
+        perm_mixing_challenge_y,
+    )?;
 
     // Step 2: Left product
     let left = left_product_gadget(cs.clone(), &d, perm_offset_challenge_z)?;
 
     // Step 3: Right product
-    let right = right_product_gadget(cs.clone(), perm_mixing_challenge_y, perm_power_challenge, perm_offset_challenge_z, n)?;
+    let right = right_product_gadget(
+        cs.clone(),
+        perm_mixing_challenge_y,
+        perm_power_challenge,
+        perm_offset_challenge_z,
+        n,
+    )?;
 
     // Step 4: Verify equality
     verify_permutation_equality_gadget(cs.clone(), &left, &right)?;

@@ -11,8 +11,6 @@ use core::ops::Not;
 
 use crate::showdown::{HandCategory, M0, M1, M2, M3, M4, M5};
 
-const LOG_TARGET: &str = "nexus_nova::showdown::gadget";
-
 /// Circuit representation of HandCategory enum
 #[derive(Clone)]
 pub struct HandCategoryVar<F: PrimeField> {

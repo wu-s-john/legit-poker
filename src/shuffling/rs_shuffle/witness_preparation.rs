@@ -9,8 +9,6 @@ use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::witness_preparation";
-
 /// Main witness preparation function (prover-side)
 pub fn prepare_witness_data<F, const N: usize, const LEVELS: usize>(
     seed: F,

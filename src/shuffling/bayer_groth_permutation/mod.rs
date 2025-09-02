@@ -74,7 +74,7 @@ pub mod sigma_protocol;
 #[cfg(test)]
 mod sponge_ec_test;
 
-pub use bg_setup::{BayerGrothProtocolOutput, BayerGrothTranscript};
+pub use bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 pub use bg_setup_gadget::BayerGrothTranscriptGadget;
 pub use linking_rs_gadgets::{
     fixed_base_scalar_mul_gadget, left_product_gadget, linear_blend_gadget, right_product_gadget,
