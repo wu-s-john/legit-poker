@@ -5,7 +5,7 @@ use ark_crypto_primitives::{
     sponge::{poseidon::PoseidonSponge, CryptographicSponge},
 };
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use ark_std::vec::Vec;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
@@ -14,13 +14,13 @@ const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linkin
 use crate::shuffling::bayer_groth_permutation::sigma_protocol::commit_vector;
 
 /// Output structure for the Bayer-Groth protocol execution
-pub struct BayerGrothSetupParameters<F: PrimeField, G: CurveGroup> {
+pub struct BayerGrothSetupParameters<F: PrimeField, G: CurveGroup, const N: usize> {
     /// The Fiat-Shamir challenge x ∈ F_q* used to compute powers x^π(i)
     /// This challenge is derived from the commitment to the permutation vector
     pub perm_power_challenge: F,
     /// Vector of powers (x^π(1), ..., x^π(N)) where π is the permutation
     /// Each element is the challenge raised to the power of the corresponding permutation value
-    pub perm_power_vector: Vec<F>,
+    pub perm_power_vector: [F; N],
     /// Commitment to the permutation vector (computed internally)
     pub c_perm: G,
     /// Commitment to the power vector (computed internally)
@@ -116,24 +116,26 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// Parameters:
     /// - pedersen_params: Pedersen parameters for computing commitments
     /// - permutation: The permutation values (1-indexed)
-    /// - prover_blinding_r: Prover-provided blinding factor for c_perm
-    /// - prover_blinding_s: Prover-provided blinding factor for c_power
+    /// - prover_blinding_r: Prover-provided blinding factor for c_perm (scalar field)
+    /// - prover_blinding_s: Prover-provided blinding factor for c_power (scalar field)
     ///
     /// Returns: BayerGrothProtocolOutput containing all protocol values including commitments
     pub fn run_protocol<G, const N: usize>(
         &mut self,
         pedersen_params: &Parameters<G>,
         permutation: &[usize; N],
-        prover_blinding_r: F,
-        prover_blinding_s: F,
-    ) -> BayerGrothSetupParameters<F, G>
+        prover_blinding_r: G::ScalarField,
+        prover_blinding_s: G::ScalarField,
+    ) -> BayerGrothSetupParameters<G::ScalarField, G, N>
     where
-        G: CurveGroup<ScalarField = F>,
+        G: CurveGroup<BaseField = F>,
+        G::ScalarField: PrimeField,
+        F: PrimeField,
     {
-        // Convert permutation to field elements
-        let perm_vector: [F; N] = permutation
+        // Convert permutation to scalar field elements
+        let perm_vector: [G::ScalarField; N] = permutation
             .iter()
-            .map(|&i| F::from(i as u64))
+            .map(|&i| G::ScalarField::from(i as u64))
             .collect::<Vec<_>>()
             .try_into()
             .expect("Permutation length mismatch");
@@ -145,29 +147,37 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         self.absorb_perm_vector_commitment(&c_perm);
         tracing::debug!(target: LOG_TARGET, "Absorbed permutation vector commitment {}", c_perm);
 
-        // Step 3: Derive power challenge (no longer derives blinding)
-        let perm_power_challenge = self.derive_perm_power_challenge();
+        // Step 3: Derive power challenge in base field and convert to scalar field
+        let perm_power_challenge_base: G::BaseField = self.derive_perm_power_challenge();
+        // Convert from base field to scalar field for use in computations
+        let perm_power_challenge: G::ScalarField = G::ScalarField::from_le_bytes_mod_order(
+            &perm_power_challenge_base.into_bigint().to_bytes_le(),
+        );
         tracing::debug!(target: LOG_TARGET, "Derived permutation power challenge {}", perm_power_challenge);
 
         // Step 4: Compute permutation power vector
-        let perm_power_vector = compute_perm_power_vector(permutation, perm_power_challenge);
-
-        // Convert power vector to fixed-size array for commitment
-        let perm_power_vector_array: [F; N] = perm_power_vector
-            .clone()
+        let perm_power_vector_vec = compute_perm_power_vector(permutation, perm_power_challenge);
+        let perm_power_vector: [G::ScalarField; N] = perm_power_vector_vec
             .try_into()
-            .expect("Power vector length mismatch");
+            .expect("Vector length should match array size N");
 
         // Step 5: Compute commitment to power vector using prover's blinding factor
         let c_power_perm =
-            commit_vector::<G, N>(pedersen_params, &perm_power_vector_array, prover_blinding_s);
+            commit_vector::<G, N>(pedersen_params, &perm_power_vector, prover_blinding_s);
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);
         tracing::debug!(target: LOG_TARGET, "Absorbed commitment to power vector {}", c_power_perm);
 
-        // Step 7: Derive mixing and offset challenges
-        let (perm_mixing_challenge_y, perm_offset_challenge_z) = self.derive_perm_challenges_y_z();
+        // Step 7: Derive mixing and offset challenges in base field and convert to scalar field
+        let (perm_mixing_challenge_y_base, perm_offset_challenge_z_base) =
+            self.derive_perm_challenges_y_z();
+        let perm_mixing_challenge_y = G::ScalarField::from_le_bytes_mod_order(
+            &perm_mixing_challenge_y_base.into_bigint().to_bytes_le(),
+        );
+        let perm_offset_challenge_z = G::ScalarField::from_le_bytes_mod_order(
+            &perm_offset_challenge_z_base.into_bigint().to_bytes_le(),
+        );
         tracing::debug!(target: LOG_TARGET, "Derived permutation mixing and offset challenges {} {}", perm_mixing_challenge_y, perm_offset_challenge_z);
 
         BayerGrothSetupParameters {
@@ -186,7 +196,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
 ///
 /// Parameters:
 /// - permutation: The permutation π (1-indexed values)
-/// - perm_power_challenge: The challenge x derived from Fiat-Shamir
+/// - perm_power_challenge: The challenge x derived from Fiat-Shamir (in scalar field)
 ///
 /// Returns: Power vector where power_vector[i] = x^π(i)
 fn compute_perm_power_vector<F: PrimeField>(
@@ -210,7 +220,7 @@ mod tests {
 
     use super::*;
     use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::BayerGrothTranscriptGadget;
-    use ark_bn254::{Fr, G1Projective};
+    use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::CommitmentScheme;
     use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar, prelude::*};
     use ark_relations::gr1cs::{ConstraintSystem, SynthesisError};
@@ -228,7 +238,8 @@ mod tests {
         let prover_blinding_s = Fr::rand(&mut rng);
 
         // Run protocol twice with same inputs
-        let mut transcript1 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        // Transcript operates over base field (Fq)
+        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
 
         // Create dummy Pedersen parameters (in real usage these would be setup properly)
         use ark_crypto_primitives::commitment::pedersen::{
@@ -250,7 +261,7 @@ mod tests {
             prover_blinding_s,
         );
 
-        let mut transcript2 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let output2 = transcript2.run_protocol::<G1Projective, 5>(
             &pedersen_params,
             &perm,
@@ -295,7 +306,7 @@ mod tests {
         let pedersen_params = TestPedersen::setup(&mut rng).unwrap();
 
         // Run with different permutations
-        let mut transcript1 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let output1 = transcript1.run_protocol::<G1Projective, 3>(
             &pedersen_params,
             &perm1,
@@ -303,7 +314,7 @@ mod tests {
             prover_blinding_s,
         );
 
-        let mut transcript2 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let output2 = transcript2.run_protocol::<G1Projective, 3>(
             &pedersen_params,
             &perm2,
@@ -333,7 +344,7 @@ mod tests {
     #[test]
     fn test_perm_power_challenge_nonzero() {
         // Test that perm_power_challenge is always non-zero
-        let mut transcript = BayerGrothTranscript::<Fr>::new(b"test");
+        let mut transcript = BayerGrothTranscript::<Fq>::new(b"test");
 
         // Even if the sponge would produce zero, we should get one
         for _ in 0..10 {
@@ -384,7 +395,7 @@ mod tests {
         // Run with first set of blinding factors
         let blinding_r1 = Fr::rand(&mut rng);
         let blinding_s1 = Fr::rand(&mut rng);
-        let mut transcript1 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let output1 = transcript1.run_protocol::<G1Projective, 5>(
             &pedersen_params,
             &perm,
@@ -395,7 +406,7 @@ mod tests {
         // Run with different blinding factors but same permutation
         let blinding_r2 = Fr::rand(&mut rng);
         let blinding_s2 = Fr::rand(&mut rng);
-        let mut transcript2 = BayerGrothTranscript::<Fr>::new(b"test-domain");
+        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let output2 = transcript2.run_protocol::<G1Projective, 5>(
             &pedersen_params,
             &perm,
@@ -500,12 +511,15 @@ mod tests {
         // Simulate external commitment to permutation vector (in practice, this is expensive)
         let c_perm = G1Projective::rand(&mut rng);
 
-        // Initialize Fiat-Shamir transcript
-        let mut transcript = BayerGrothTranscript::<Fr>::new(b"BayerGroth-Test");
+        // Initialize Fiat-Shamir transcript (operates over base field)
+        let mut transcript = BayerGrothTranscript::<Fq>::new(b"BayerGroth-Test");
 
         // Step 1: Absorb commitment to permutation vector and derive power challenge
         transcript.absorb_perm_vector_commitment(&c_perm);
-        let perm_power_challenge_val = transcript.derive_perm_power_challenge();
+        let perm_power_challenge_base = transcript.derive_perm_power_challenge();
+        // Convert from base field to scalar field
+        let perm_power_challenge_val =
+            Fr::from_le_bytes_mod_order(&perm_power_challenge_base.into_bigint().to_bytes_le());
 
         // Step 2: Compute permutation power vector
         let perm_power_vector_vals = compute_perm_power_vector(&perm, perm_power_challenge_val);
@@ -516,9 +530,13 @@ mod tests {
         // Step 3: Absorb commitment to power vector
         transcript.absorb_perm_power_vector_commitment(&c_power);
 
-        // Step 4: Derive final challenges
-        let (perm_mixing_challenge_y_val, perm_offset_challenge_z_val) =
+        // Step 4: Derive final challenges in base field and convert to scalar field
+        let (perm_mixing_challenge_y_base, perm_offset_challenge_z_base) =
             transcript.derive_perm_challenges_y_z();
+        let perm_mixing_challenge_y_val =
+            Fr::from_le_bytes_mod_order(&perm_mixing_challenge_y_base.into_bigint().to_bytes_le());
+        let perm_offset_challenge_z_val =
+            Fr::from_le_bytes_mod_order(&perm_offset_challenge_z_base.into_bigint().to_bytes_le());
 
         // Native computation - import from crate
         use crate::shuffling::bayer_groth_permutation::linking_rs_native as native;
@@ -535,30 +553,32 @@ mod tests {
         );
 
         // Circuit computation
+        // Note: We use Fr (scalar field) for the constraint system since we're doing
+        // scalar field arithmetic. The challenges are drawn from Fq (base field) but
+        // converted to Fr for the actual computation.
         let cs = ConstraintSystem::<Fr>::new_ref();
 
         use crate::shuffling::bayer_groth_permutation::linking_rs_gadgets::{
             alloc_vector, left_product_gadget, linear_blend_gadget, right_product_gadget,
         };
 
+        // Allocate permutation values as circuit variables (these are scalar field elements)
         let perm_vector = alloc_vector(cs.clone(), &perm_vector_vals, AllocationMode::Witness)?;
         let perm_power_vector =
             alloc_vector(cs.clone(), &perm_power_vector_vals, AllocationMode::Witness)?;
+        
+        // Allocate challenges as circuit variables
+        // These were originally drawn from base field (Fq) but converted to scalar field (Fr)
         let perm_power_challenge = FpVar::new_witness(cs.clone(), || Ok(perm_power_challenge_val))?;
         let perm_mixing_challenge_y =
             FpVar::new_witness(cs.clone(), || Ok(perm_mixing_challenge_y_val))?;
         let perm_offset_challenge_z =
             FpVar::new_witness(cs.clone(), || Ok(perm_offset_challenge_z_val))?;
 
-        // For this test, we'll skip the curve point computation since it requires
-        // proper curve variable setup. We'll just test the field operations.
-        let d = linear_blend_gadget(
-            cs.clone(),
-            &perm_vector,
-            &perm_power_vector,
-            &perm_mixing_challenge_y,
-        )?;
-        let left_circuit = left_product_gadget(cs.clone(), &d, &perm_offset_challenge_z)?;
+        // Compute the linear blend d = y * perm_vector + perm_power_vector
+        // All operations are in the scalar field Fr
+        let d = linear_blend_gadget(&perm_vector, &perm_power_vector, &perm_mixing_challenge_y)?;
+        let left_circuit = left_product_gadget(&d, &perm_offset_challenge_z)?;
         let right_circuit = right_product_gadget(
             cs.clone(),
             &perm_mixing_challenge_y,

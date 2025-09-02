@@ -1,10 +1,10 @@
 //! Circuit gadgets for Bayer-Groth permutation equality proof
 
-use ark_ff::PrimeField;
+use ark_ec::CurveGroup;
+use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
-    eq::EqGadget,
-    fields::{fp::FpVar, FieldVar},
+    fields::{emulated_fp::EmulatedFpVar, fp::FpVar, FieldOpsBounds, FieldVar},
     groups::{CurveVar, GroupOpsBounds},
     prelude::*,
 };
@@ -14,70 +14,76 @@ use ark_std::vec::Vec;
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
 /// Gadget for computing linear blend: d_i = perm_mixing_challenge_y * perm_vector_i + perm_power_vector_i
-pub fn linear_blend_gadget<F: PrimeField>(
-    _cs: ConstraintSystemRef<F>,
-    perm_vector: &[FpVar<F>],
-    perm_power_vector: &[FpVar<F>],
-    perm_mixing_challenge_y: &FpVar<F>,
-) -> Result<Vec<FpVar<F>>, SynthesisError> {
+pub fn linear_blend_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
+    perm_vector: &[FV],
+    perm_power_vector: &[FV],
+    perm_mixing_challenge_y: &FV,
+) -> Result<Vec<FV>, SynthesisError>
+where
+    FV: FieldVar<F, ConstraintF>,
+    for<'a> &'a FV: FieldOpsBounds<'a, F, FV>,
+{
     assert_eq!(
         perm_vector.len(),
         perm_power_vector.len(),
         "Permutation vector and power vector must have same length"
     );
 
-    let mut d = Vec::with_capacity(perm_vector.len());
-
-    for (i, (perm_i, power_i)) in perm_vector.iter().zip(perm_power_vector.iter()).enumerate() {
-        // d_i = perm_mixing_challenge_y * perm_vector_i + perm_power_vector_i
-        let term = perm_mixing_challenge_y * perm_i + power_i;
-        d.push(term);
-
-        tracing::trace!(target: LOG_TARGET, "d[{}] = perm_mixing_challenge_y * perm_vector[{}] + perm_power_vector[{}]", i, i, i);
-    }
+    let d: Vec<_> = perm_vector
+        .iter()
+        .zip(perm_power_vector.iter())
+        .enumerate()
+        .map(|(i, (perm_i, power_i))| {
+            tracing::trace!(target: LOG_TARGET, "d[{}] = perm_mixing_challenge_y * perm_vector[{}] + perm_power_vector[{}]", i, i, i);
+            perm_mixing_challenge_y * perm_i + power_i
+        })
+        .collect();
 
     Ok(d)
 }
 
 /// Gadget for computing left product: L = ∏_{i=1}^N (d_i - perm_offset_challenge_z)
-pub fn left_product_gadget<F: PrimeField>(
-    _cs: ConstraintSystemRef<F>,
-    d: &[FpVar<F>],
-    perm_offset_challenge_z: &FpVar<F>,
-) -> Result<FpVar<F>, SynthesisError> {
-    let mut product = FpVar::<F>::one();
-
-    for (i, d_i) in d.iter().enumerate() {
-        // Compute d_i - perm_offset_challenge_z
-        let diff = d_i - perm_offset_challenge_z;
-
-        // Update product: product *= (d_i - perm_offset_challenge_z)
-        product *= &diff;
-
-        tracing::trace!(target: LOG_TARGET, "L partial product at {}: (d[{}] - perm_offset_challenge_z)", i, i);
-    }
+pub fn left_product_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
+    d: &[FV],
+    perm_offset_challenge_z: &FV,
+) -> Result<FV, SynthesisError>
+where
+    FV: FieldVar<F, ConstraintF>,
+    for<'a> &'a FV: FieldOpsBounds<'a, F, FV>,
+{
+    let product = d
+        .iter()
+        .enumerate()
+        .fold(FV::one(), |acc, (i, d_i)| {
+            tracing::trace!(target: LOG_TARGET, "L partial product at {}: (d[{}] - perm_offset_challenge_z)", i, i);
+            acc * (d_i - perm_offset_challenge_z)
+        });
 
     Ok(product)
 }
 
 /// Gadget for computing right product: R = ∏_{i=1}^N (perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z)
 /// Uses running power computation for efficiency
-pub fn right_product_gadget<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    perm_mixing_challenge_y: &FpVar<F>,
-    perm_power_challenge: &FpVar<F>,
-    perm_offset_challenge_z: &FpVar<F>,
+pub fn right_product_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
+    cs: ConstraintSystemRef<ConstraintF>,
+    perm_mixing_challenge_y: &FV,
+    perm_power_challenge: &FV,
+    perm_offset_challenge_z: &FV,
     n: usize,
-) -> Result<FpVar<F>, SynthesisError> {
-    let mut product = FpVar::<F>::one();
-    let mut power_of_challenge = FpVar::<F>::one(); // perm_power_challenge^0 = 1
+) -> Result<FV, SynthesisError>
+where
+    FV: FieldVar<F, ConstraintF>,
+    for<'a> &'a FV: FieldOpsBounds<'a, F, FV>,
+{
+    let mut product = FV::one();
+    let mut power_of_challenge = FV::one(); // perm_power_challenge^0 = 1
 
     for i in 1..=n {
         // Update running power: perm_power_challenge^i = perm_power_challenge^(i-1) * perm_power_challenge
         power_of_challenge *= perm_power_challenge;
 
         // Compute i as field element
-        let i_const = FpVar::<F>::new_constant(cs.clone(), F::from(i as u64))?;
+        let i_const = FV::new_constant(cs.clone(), F::from(i as u64))?;
 
         // Compute term: perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z
         let term =
@@ -92,91 +98,59 @@ pub fn right_product_gadget<F: PrimeField>(
     Ok(product)
 }
 
-/// Gadget for verifying permutation equality: enforce L == R
-pub fn verify_permutation_equality_gadget<F: PrimeField>(
-    _cs: ConstraintSystemRef<F>,
-    left_product: &FpVar<F>,
-    right_product: &FpVar<F>,
-) -> Result<(), SynthesisError> {
-    // Enforce the constraint: L = R
-    left_product.enforce_equal(right_product)?;
-
-    tracing::debug!(target: LOG_TARGET, "Enforced L == R constraint");
-
-    Ok(())
-}
-
 /// Fixed-base scalar multiplication gadget: P = [scalar]G
-/// Uses precomputed tables for efficiency in circuits
-/// 
-/// Note: This function works with constraints over the base field F,
-/// but performs scalar multiplication which naturally uses the scalar field.
-/// The scalar is provided as FpVar<F> and will be interpreted as bits.
+///
+/// Performs scalar multiplication of a base point by a scalar field element.
+/// The scalar is provided as EmulatedFpVar and converted to bits for the multiplication.
 pub fn fixed_base_scalar_mul_gadget<F, C, CV>(
-    _cs: ConstraintSystemRef<F>,
-    scalar: &FpVar<F>,
+    scalar: &EmulatedFpVar<C::ScalarField, F>,
     base: &CV,
 ) -> Result<CV, SynthesisError>
 where
     F: PrimeField,
-    C: ark_ec::CurveGroup,
+    C: CurveGroup,
     CV: CurveVar<C, F>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
-    // Use precomputed base scalar multiplication for efficiency
-    // We need to create pairs of (bit, generator) for each bit position
+    // Convert scalar to bits for scalar multiplication
     let scalar_bits = scalar.to_bits_le()?;
 
-    // Get the base point value for precomputation
-    let base_value = base.value().unwrap_or_default();
+    // Perform scalar multiplication using the built-in method
+    let result = base.scalar_mul_le(scalar_bits.iter())?;
 
-    // Precompute powers of the base: [G, 2G, 4G, 8G, ...]
-    let mut bases = Vec::with_capacity(scalar_bits.len());
-    let mut current_base = base_value;
-    for _ in 0..scalar_bits.len() {
-        bases.push(current_base);
-        current_base = current_base.double();
-    }
-
-    // Create iterator of (bit, &base) pairs
-    let bases_and_bits = scalar_bits
-        .into_iter()
-        .zip(bases.iter())
-        .map(|(bit, base_ref)| (bit, base_ref));
-
-    // Start from zero and accumulate the result
-    let mut result = CV::zero();
-    result.precomputed_base_scalar_mul_le(bases_and_bits)?;
-
-    tracing::debug!(target: LOG_TARGET, "Computed fixed-base scalar mul P = [L]G");
+    tracing::debug!(target: LOG_TARGET, "Computed fixed-base scalar mul P = [scalar]G");
 
     Ok(result)
 }
 
 /// Helper function to compute base^exponent in-circuit
-pub fn compute_power_gadget<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    base: &FpVar<F>,
-    exponent: &FpVar<F>,
-) -> Result<FpVar<F>, SynthesisError> {
-    // Get the concrete value of the exponent if available (for witness generation)
-    let exp_value = exponent.value().unwrap_or(F::one());
+///
+/// Computes base^exponent where the exponent is assumed to be small (e.g., permutation indices).
+/// Currently uses witness generation with native field exponentiation.
+/// TODO: Add proper constraints using bit decomposition and repeated squaring.
+pub fn compute_power_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
+    cs: ConstraintSystemRef<ConstraintF>,
+    base: &FV,
+    exponent: &FV,
+) -> Result<FV, SynthesisError>
+where
+    FV: FieldVar<F, ConstraintF>,
+    for<'a> &'a FV: FieldOpsBounds<'a, F, FV>,
+{
+    // Compute the witness value for the result
+    let result_value = || -> Result<F, SynthesisError> {
+        let exp_val = exponent.value()?;
+        let base_val = base.value()?;
 
-    // Convert to u64 for power computation
-    // This assumes the exponent is small (like permutation indices)
-    let exp_u64 = exp_value.into_bigint().as_ref()[0];
+        // Convert exponent to u64 (assumes small value like permutation index)
+        let exp_u64 = exp_val.into_bigint().as_ref()[0];
 
-    // Compute the result using native field exponentiation
-    let result_value = base.value().unwrap_or(F::one()).pow(&[exp_u64]);
+        // Compute base^exponent
+        Ok(base_val.pow(&[exp_u64]))
+    };
 
     // Allocate the result as a witness variable
-    let result = FpVar::new_witness(cs, || Ok(result_value))?;
-
-    // In a production implementation, we would add constraints to verify
-    // that result = base^exponent using bit decomposition and repeated squaring
-    // For now, we trust the witness generation
-
-    Ok(result)
+    FV::new_witness(cs, result_value)
 }
 
 /// Compute the permutation power vector = (x^π(1), ..., x^π(N)) in-circuit
@@ -187,27 +161,30 @@ pub fn compute_power_gadget<F: PrimeField>(
 /// - perm_power_challenge: The challenge x derived from Fiat-Shamir
 ///
 /// Returns: Power vector as circuit variables
-pub fn compute_perm_power_vector<F: PrimeField>(
-    cs: ConstraintSystemRef<F>,
-    permutation: &[FpVar<F>],
-    perm_power_challenge: &FpVar<F>,
-) -> Result<Vec<FpVar<F>>, SynthesisError> {
-    let mut power_vector = Vec::with_capacity(permutation.len());
+pub fn compute_perm_power_vector<F: PrimeField, ConstraintF: PrimeField, FV, const N: usize>(
+    cs: ConstraintSystemRef<ConstraintF>,
+    permutation: &[FV; N],
+    perm_power_challenge: &FV,
+) -> Result<[FV; N], SynthesisError>
+where
+    FV: FieldVar<F, ConstraintF>,
+    for<'a> &'a FV: FieldOpsBounds<'a, F, FV>,
+{
+    // Use functional array construction to compute x^π(i) for each element
+    let result = permutation
+        .iter()
+        .enumerate()
+        .map(|(i, pi)| {
+            tracing::trace!(target: LOG_TARGET, "Computing power_vector[{}] = x^π({})", i, i);
+            compute_power_gadget(cs.clone(), perm_power_challenge, pi)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
-    for (i, pi) in permutation.iter().enumerate() {
-        // Compute x^π(i) using repeated squaring
-        // Since π(i) is a small value (1 to N), we can compute this efficiently
-        // by converting π(i) to bits and using conditional multiplication
+    let power_vector: [FV; N] = result
+        .try_into()
+        .map_err(|_| SynthesisError::Unsatisfiable)?;
 
-        // For simplicity in the gadget, we'll use a method that computes powers
-        // by repeated multiplication up to a maximum value
-        let power_i = compute_power_gadget(cs.clone(), perm_power_challenge, pi)?;
-        power_vector.push(power_i);
-
-        tracing::trace!(target: LOG_TARGET, "Computed power_vector[{}] = x^π({})", i, i);
-    }
-
-    tracing::debug!(target: LOG_TARGET, "Computed permutation power vector of length {}", power_vector.len());
+    tracing::debug!(target: LOG_TARGET, "Computed permutation power vector of length {}", N);
 
     Ok(power_vector)
 }
@@ -215,53 +192,55 @@ pub fn compute_perm_power_vector<F: PrimeField>(
 /// Complete permutation equality proof gadget
 ///
 /// Computes and verifies the permutation proof in-circuit
-pub fn compute_permutation_proof_gadget<F, C, CV>(
+pub fn compute_permutation_proof_gadget<F, C, CV, FV, const N: usize>(
     cs: ConstraintSystemRef<F>,
-    perm_vector: &[FpVar<F>],
-    perm_power_vector: &[FpVar<F>],
-    perm_mixing_challenge_y: &FpVar<F>,
-    perm_offset_challenge_z: &FpVar<F>,
-    perm_power_challenge: &FpVar<F>,
+    perm_vector: &[FV; N],
+    perm_mixing_challenge_y: &FV,
+    perm_offset_challenge_z: &FV,
+    perm_power_challenge: &FV,
     generator: &CV,
 ) -> Result<CV, SynthesisError>
 where
     F: PrimeField,
-    C: ark_ec::CurveGroup,
+    C: CurveGroup,
     CV: CurveVar<C, F>,
+    FV: FieldVar<C::ScalarField, F>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    for<'a> &'a FV: FieldOpsBounds<'a, C::ScalarField, FV>,
 {
-    let n = perm_vector.len();
-    assert_eq!(
-        perm_power_vector.len(),
-        n,
-        "Permutation vector and power vector must have same length"
-    );
-
-    // Step 1: Linear blend
-    let d = linear_blend_gadget(
+    // Step 1: Compute power vector x^π(i) for each element
+    let perm_power_vector = compute_perm_power_vector::<C::ScalarField, F, FV, N>(
         cs.clone(),
         perm_vector,
-        perm_power_vector,
+        perm_power_challenge,
+    )?;
+
+    // Step 2: Linear blend
+    let d = linear_blend_gadget(
+        &perm_vector[..],
+        &perm_power_vector[..],
         perm_mixing_challenge_y,
     )?;
 
-    // Step 2: Left product
-    let left = left_product_gadget(cs.clone(), &d, perm_offset_challenge_z)?;
+    // Step 3: Left product
+    let left = left_product_gadget(&d, perm_offset_challenge_z)?;
 
-    // Step 3: Right product
+    // Step 4: Right product
     let right = right_product_gadget(
         cs.clone(),
         perm_mixing_challenge_y,
         perm_power_challenge,
         perm_offset_challenge_z,
-        n,
+        N,
     )?;
 
-    // Step 4: Verify equality
-    verify_permutation_equality_gadget(cs.clone(), &left, &right)?;
+    // Step 5: Verify equality
+    left.enforce_equal(&right)?;
 
-    // Step 5: Fixed-base scalar multiplication
-    let point = fixed_base_scalar_mul_gadget::<F, C, CV>(cs, &left, generator)?;
+    // Step 6: Fixed-base scalar multiplication
+    // Convert scalar to bits for multiplication
+    let scalar_bits = left.to_bits_le()?;
+    let point = generator.scalar_mul_le(scalar_bits.iter())?;
 
     // Return the computed point
     Ok(point)
@@ -318,7 +297,7 @@ mod tests {
         let y = FpVar::new_witness(cs.clone(), || Ok(y_val))?;
 
         // Compute in circuit
-        let d = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
+        let d = linear_blend_gadget(&a, &b, &y)?;
 
         // Check each value
         for i in 0..n {
@@ -356,12 +335,12 @@ mod tests {
         let z = FpVar::new_witness(cs.clone(), || Ok(z_val))?;
 
         // Compute products
-        let d = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
-        let left = left_product_gadget(cs.clone(), &d, &z)?;
+        let d = linear_blend_gadget(&a, &b, &y)?;
+        let left = left_product_gadget(&d, &z)?;
         let right = right_product_gadget(cs.clone(), &y, &x, &z, n)?;
 
         // Verify equality
-        verify_permutation_equality_gadget(cs.clone(), &left, &right)?;
+        left.enforce_equal(&right)?;
 
         assert!(cs.is_satisfied()?);
         Ok(())
@@ -401,8 +380,8 @@ mod tests {
         let y = FpVar::new_witness(cs.clone(), || Ok(y_val))?;
         let z = FpVar::new_witness(cs.clone(), || Ok(z_val))?;
 
-        let d_circuit = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
-        let left_circuit = left_product_gadget(cs.clone(), &d_circuit, &z)?;
+        let d_circuit = linear_blend_gadget(&a, &b, &y)?;
+        let left_circuit = left_product_gadget(&d_circuit, &z)?;
         let right_circuit = right_product_gadget(cs.clone(), &y, &x, &z, n)?;
 
         // Compare results
@@ -414,7 +393,7 @@ mod tests {
         assert_eq!(left_circuit.value()?, right_circuit.value()?);
 
         // Verify constraints are satisfied
-        verify_permutation_equality_gadget(cs.clone(), &left_circuit, &right_circuit)?;
+        left_circuit.enforce_equal(&right_circuit)?;
         assert!(cs.is_satisfied()?);
 
         tracing::debug!(
@@ -456,8 +435,8 @@ mod tests {
             let x = FpVar::new_witness(cs.clone(), || Ok(x_val))?;
             let z = FpVar::new_witness(cs.clone(), || Ok(z_val))?;
 
-            let d_circuit = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
-            let left_circuit = left_product_gadget(cs.clone(), &d_circuit, &z)?;
+            let d_circuit = linear_blend_gadget(&a, &b, &y)?;
+            let left_circuit = left_product_gadget(&d_circuit, &z)?;
             let right_circuit = right_product_gadget(cs.clone(), &y, &x, &z, n)?;
 
             // Verify equality
@@ -465,7 +444,7 @@ mod tests {
             assert_eq!(right_circuit.value()?, right_native);
             assert_eq!(left_native, right_native);
 
-            verify_permutation_equality_gadget(cs.clone(), &left_circuit, &right_circuit)?;
+            left_circuit.enforce_equal(&right_circuit)?;
             assert!(cs.is_satisfied()?);
 
             tracing::debug!(target = LOG_TARGET, "✓ Test passed for n={}", n);
@@ -512,15 +491,15 @@ mod tests {
         let x = FpVar::new_witness(cs.clone(), || Ok(x_val))?;
         let z = FpVar::new_witness(cs.clone(), || Ok(z_val))?;
 
-        let d_circuit = linear_blend_gadget(cs.clone(), &a, &b, &y)?;
-        let left_circuit = left_product_gadget(cs.clone(), &d_circuit, &z)?;
+        let d_circuit = linear_blend_gadget(&a, &b, &y)?;
+        let left_circuit = left_product_gadget(&d_circuit, &z)?;
         let right_circuit = right_product_gadget(cs.clone(), &y, &x, &z, n)?;
 
         // Values should not match
         assert_ne!(left_circuit.value()?, right_circuit.value()?);
 
         // Trying to enforce equality should make constraints unsatisfied
-        verify_permutation_equality_gadget(cs.clone(), &left_circuit, &right_circuit)?;
+        left_circuit.enforce_equal(&right_circuit)?;
         assert!(!cs.is_satisfied()?);
 
         tracing::debug!(

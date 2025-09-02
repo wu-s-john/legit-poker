@@ -17,16 +17,21 @@ use ark_std::vec::Vec;
 const LOG_TARGET: &str = "bayer_groth::fiat_shamir_gadget";
 
 /// Output parameters from the Bayer-Groth setup protocol (gadget version)
+/// 
+/// Note: The challenges are now stored as FpVar<F> (base field) since they are
+/// derived from the Poseidon sponge which operates over the base field.
+/// When these challenges need to be used as scalar field elements (e.g., for
+/// scalar multiplication), they should be converted to EmulatedFpVar at the usage site.
 pub struct BayerGrothSetupParametersGadget<F: PrimeField, CG> {
-    /// The power challenge x used to compute the power vector
+    /// The power challenge x used to compute the power vector (base field representation)
     pub perm_power_challenge: FpVar<F>,
     /// Commitment to the permutation vector
     pub c_perm: CG,
     /// Commitment to the power vector
     pub c_power: CG,
-    /// The mixing challenge y
+    /// The mixing challenge y (base field representation)
     pub perm_mixing_challenge_y: FpVar<F>,
-    /// The offset challenge z
+    /// The offset challenge z (base field representation)
     pub perm_offset_challenge_z: FpVar<F>,
 }
 

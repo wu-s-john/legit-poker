@@ -6,6 +6,7 @@
 use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessDataVar};
 use super::permutation::IndexedElGamalCiphertext;
 use super::permutation::{check_grand_product, IndexPositionPair, PermutationProduct};
+use crate::bayer_groth_permutation::bg_setup_gadget::BayerGrothSetupParametersGadget;
 use crate::shuffling::bayer_groth_permutation::{
     bg_setup_gadget::BayerGrothTranscriptGadget,
     linking_rs_gadgets::{compute_perm_power_vector, compute_permutation_proof_gadget},
@@ -14,10 +15,12 @@ use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use crate::track_constraints;
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::groups::GroupOpsBounds;
 use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
-use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
+use ark_r1cs_std::{
+    fields::emulated_fp::EmulatedFpVar, fields::fp::FpVar, groups::CurveVar, prelude::*,
+};
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use std::ops::Not;
 
@@ -505,6 +508,33 @@ where
     })
 }
 
+/// Compute the randomness factor gadget: generator^(y*r + s)
+/// This represents the blinding component of the proof in-circuit
+fn compute_randomness_factor_gadget<F, C, CV>(
+    _cs: ConstraintSystemRef<F>,
+    generator: &CV,
+    y: &EmulatedFpVar<C::ScalarField, F>,
+    blinding_r: &EmulatedFpVar<C::ScalarField, F>,
+    blinding_s: &EmulatedFpVar<C::ScalarField, F>,
+) -> Result<CV, SynthesisError>
+where
+    F: PrimeField,
+    C: CurveGroup,
+    CV: CurveVar<C, F>,
+    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+{
+    // Compute exponent: y * r + s (in scalar field)
+    let exponent = y * blinding_r + blinding_s;
+
+    // Convert to bits for scalar multiplication
+    let exponent_bits = exponent.to_bits_le()?;
+
+    // Compute generator^exponent using scalar multiplication
+    let randomness_factor = generator.scalar_mul_le(exponent_bits.iter())?;
+
+    Ok(randomness_factor)
+}
+
 /// Combined RS shuffle verification with Bayer-Groth permutation proof generation
 ///
 /// This function:
@@ -533,7 +563,7 @@ where
 /// - `transcript`: Bayer-Groth transcript for Fiat-Shamir (private)
 ///
 /// # Returns
-/// - `Ok(CV)`: The curve point from the permutation proof
+/// - `Ok((CV, BayerGrothSetupParametersGadget<F, CV>))`: A tuple containing the complete proof point (including randomness factor) and the Bayer-Groth parameters
 /// - `Err(SynthesisError)`: If any constraint fails
 pub fn rs_shuffle_with_bayer_groth_proof<F, C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
@@ -543,17 +573,22 @@ pub fn rs_shuffle_with_bayer_groth_proof<F, C, CV, const N: usize, const LEVELS:
     c_power: &CV,
     generator: &CV,
     // Private inputs
-    permutation: &[FpVar<F>],
+    permutation: &[EmulatedFpVar<C::ScalarField, F>; N],
     witness_data: &WitnessDataVar<F, N, LEVELS>,
-    indices_init: &[FpVar<F>],
-    indices_after_shuffle: &[FpVar<F>],
+    indices_init: &[FpVar<F>; N],
+    indices_after_shuffle: &[FpVar<F>; N],
+    blinding_factors: &(
+        EmulatedFpVar<C::ScalarField, F>,
+        EmulatedFpVar<C::ScalarField, F>,
+    ), // (blinding_r, blinding_s)
     transcript: &mut BayerGrothTranscriptGadget<F>,
-) -> Result<CV, SynthesisError>
+) -> Result<(CV, BayerGrothSetupParametersGadget<F, CV>), SynthesisError>
 where
     F: PrimeField,
     C: CurveGroup,
     CV: CurveVar<C, F> + CurveAbsorbGadget<F> + Clone,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    C::BaseField: PrimeField,
 {
     track_constraints!(&cs, "rs_shuffle_with_bayer_groth_proof", LOG_TARGET, {
         // Step 1: Verify RS shuffle correctness
@@ -572,8 +607,17 @@ where
 
         // Step 3: Compute permutation power vector
         tracing::debug!(target: LOG_TARGET, "Step 3: Computing permutation power vector");
+        // Convert the power challenge from base field to scalar field
+        let perm_power_challenge_scalar =
+            EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                let power_base = bg_params.perm_power_challenge.value()?;
+                let power_scalar = C::ScalarField::from_le_bytes_mod_order(
+                    &power_base.into_bigint().to_bytes_le(),
+                );
+                Ok(power_scalar)
+            })?;
         let perm_power_vector =
-            compute_perm_power_vector(cs.clone(), permutation, &bg_params.perm_power_challenge)?;
+            compute_perm_power_vector(cs.clone(), permutation, &perm_power_challenge_scalar)?;
 
         // Verify that the computed power vector has the correct length
         assert_eq!(
@@ -582,20 +626,50 @@ where
             "Power vector length mismatch"
         );
 
-        // Step 4: Generate permutation proof point
-        tracing::debug!(target: LOG_TARGET, "Step 4: Generating permutation proof point");
-        let proof_point = compute_permutation_proof_gadget::<F, C, CV>(
+        // Step 4: Generate base permutation proof point
+        tracing::debug!(target: LOG_TARGET, "Step 4: Generating base permutation proof point");
+        // Convert the challenges from base field to scalar field
+        let perm_mixing_challenge_y_scalar =
+            EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                let y_base = bg_params.perm_mixing_challenge_y.value()?;
+                let y_scalar =
+                    C::ScalarField::from_le_bytes_mod_order(&y_base.into_bigint().to_bytes_le());
+                Ok(y_scalar)
+            })?;
+        let perm_offset_challenge_z_scalar =
+            EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                let z_base = bg_params.perm_offset_challenge_z.value()?;
+                let z_scalar =
+                    C::ScalarField::from_le_bytes_mod_order(&z_base.into_bigint().to_bytes_le());
+                Ok(z_scalar)
+            })?;
+        let base_proof_point = compute_permutation_proof_gadget(
             cs.clone(),
             permutation,
-            &perm_power_vector,
-            &bg_params.perm_mixing_challenge_y,
-            &bg_params.perm_offset_challenge_z,
-            &bg_params.perm_power_challenge,
+            &perm_mixing_challenge_y_scalar,
+            &perm_offset_challenge_z_scalar,
+            &perm_power_challenge_scalar,
             generator,
         )?;
 
+        // Step 5: Compute randomness factor
+        tracing::debug!(target: LOG_TARGET, "Step 5: Computing randomness factor");
+
+        // We already have y_scalar from the previous step
+        let randomness_factor = compute_randomness_factor_gadget::<F, C, CV>(
+            cs.clone(),
+            generator,
+            &perm_mixing_challenge_y_scalar,
+            &blinding_factors.0, // blinding_r
+            &blinding_factors.1, // blinding_s
+        )?;
+
+        // Step 6: Combine base proof point with randomness factor to get final proof point
+        tracing::debug!(target: LOG_TARGET, "Step 6: Combining base proof point with randomness factor");
+        let proof_point = base_proof_point + randomness_factor;
+
         tracing::debug!(target: LOG_TARGET, "Successfully generated RS shuffle + Bayer-Groth proof");
-        Ok(proof_point)
+        Ok((proof_point, bg_params))
     })
 }
 
@@ -611,7 +685,9 @@ mod tests {
     use ark_crypto_primitives::commitment::CommitmentScheme;
     use ark_ec::PrimeGroup;
     use ark_ff::{Field, UniformRand};
-    use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+    use ark_r1cs_std::{
+        fields::emulated_fp::EmulatedFpVar, groups::curves::short_weierstrass::ProjectiveVar,
+    };
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::{test_rng, vec::Vec, Zero};
     use tracing_subscriber::{
@@ -621,6 +697,37 @@ mod tests {
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>;
 
     const TEST_TARGET: &str = "nexus_nova";
+
+    /// Compute the expected proof point using the commitment formula:
+    /// c_D * c_{-z} * randomness_factor
+    /// where:
+    /// - c_D = c_perm^y * c_power (also written as c_A^y * c_B)
+    /// - c_{-z} = generator * (-z)
+    /// - randomness_factor = generator^(y*r + s)
+    fn compute_expected_proof_point_native<G: CurveGroup>(
+        c_perm: G,  // c_A: commitment to permutation vector
+        c_power: G, // c_B: commitment to power vector
+        generator: G,
+        y: G::ScalarField,          // mixing challenge
+        z: G::ScalarField,          // offset challenge
+        blinding_r: G::ScalarField, // blinding factor for c_perm
+        blinding_s: G::ScalarField, // blinding factor for c_power
+    ) -> G {
+        // Compute c_D = c_perm^y * c_power (in additive notation: y*c_perm + c_power)
+        let c_d = c_perm.mul(y) + c_power;
+
+        // Compute c_{-z} = generator * (-z)
+        let neg_z = -z;
+        let c_minus_z = generator.mul(neg_z);
+
+        // Compute randomness_factor = generator^(y*r + s)
+        let exponent = y * blinding_r + blinding_s;
+        let randomness_factor = generator.mul(exponent);
+
+        // Final result: c_D + c_{-z} + randomness_factor
+        // This is equivalent to c_D * c_{-z} * randomness_factor in multiplicative notation
+        c_d + c_minus_z + randomness_factor
+    }
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
@@ -635,9 +742,16 @@ mod tests {
             .set_default()
     }
 
-    #[test]
-    fn test_rs_shuffle_with_bayer_groth_proof() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
+    /// Helper function to test RS shuffle with Bayer-Groth proof
+    /// Parameters:
+    /// - seed: Seed for RS shuffle permutation
+    /// - blinding_r: Blinding factor for permutation commitment
+    /// - blinding_s: Blinding factor for power commitment
+    fn test_rs_shuffle_with_params(
+        seed: Fr,
+        blinding_r: Fr,
+        blinding_s: Fr,
+    ) -> Result<(), SynthesisError> {
         const N: usize = 10;
         const LEVELS: usize = 3;
 
@@ -645,7 +759,6 @@ mod tests {
         let cs = ConstraintSystem::<ark_bn254::Fq>::new_ref();
 
         // Step 1: Generate RS shuffle witness data by applying permutation
-        let seed = Fr::from(42u64);
         // Create a simple input array (0..N) with 1-based indexing for permutation
         let input_array: [usize; N] = std::array::from_fn(|i| i + 1);
         let (witness_data, _num_samples, output_array) =
@@ -683,9 +796,7 @@ mod tests {
             val.into_bigint().as_ref()[0] as usize
         });
 
-        // Run native protocol with random blinding factors
-        let blinding_r = Fr::rand(&mut rng);
-        let blinding_s = Fr::rand(&mut rng);
+        // Run native protocol with provided blinding factors
         let native_params = native_transcript.run_protocol::<G1Projective, N>(
             &pedersen_params,
             &perm_usize,
@@ -699,15 +810,22 @@ mod tests {
 
         // Step 5: Allocate circuit variables
 
-        // Allocate permutation as circuit variables
-        let permutation_vars: Vec<FpVar<ark_bn254::Fq>> = permutation_values
-            .iter()
-            .map(|val| {
-                // Convert Fr to Fq for circuit
-                let fq_val = ark_bn254::Fq::from(val.into_bigint());
-                FpVar::new_witness(cs.clone(), || Ok(fq_val))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // Allocate permutation as EmulatedFpVar (scalar field elements in base field circuit)
+        let permutation_vars_vec: Vec<EmulatedFpVar<ark_bn254::Fr, ark_bn254::Fq>> =
+            permutation_values
+                .iter()
+                .map(|val| {
+                    EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                        Ok(*val)
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+        // Convert to array
+        let permutation_vars: [EmulatedFpVar<ark_bn254::Fr, ark_bn254::Fq>; 10] =
+            permutation_vars_vec
+                .try_into()
+                .expect("Permutation should have exactly 10 elements");
 
         // Allocate witness data
         let witness_data_var = super::super::data_structures::WitnessDataVar::new_variable(
@@ -717,16 +835,22 @@ mod tests {
         )?;
 
         // Allocate indices
-        let indices_init: Vec<FpVar<ark_bn254::Fq>> = (0..N)
+        let indices_init_vec: Vec<FpVar<ark_bn254::Fq>> = (0..N)
             .map(|i| FpVar::new_witness(cs.clone(), || Ok(ark_bn254::Fq::from(i as u64))))
             .collect::<Result<Vec<_>, _>>()?;
+        let indices_init: [FpVar<ark_bn254::Fq>; 10] = indices_init_vec
+            .try_into()
+            .expect("Indices init should have exactly 10 elements");
 
         // The indices after shuffle are the original indices in their new positions
         let final_sorted = &witness_data.next_levels[LEVELS - 1];
-        let indices_after_shuffle: Vec<FpVar<ark_bn254::Fq>> = final_sorted
+        let indices_after_shuffle_vec: Vec<FpVar<ark_bn254::Fq>> = final_sorted
             .iter()
             .map(|row| FpVar::new_witness(cs.clone(), || Ok(ark_bn254::Fq::from(row.idx as u64))))
             .collect::<Result<Vec<_>, _>>()?;
+        let indices_after_shuffle: [FpVar<ark_bn254::Fq>; 10] = indices_after_shuffle_vec
+            .try_into()
+            .expect("Indices after shuffle should have exactly 10 elements");
 
         // Allocate alpha challenge
         let alpha = FpVar::new_input(cs.clone(), || Ok(ark_bn254::Fq::from(17u64)))?;
@@ -736,32 +860,63 @@ mod tests {
         let c_power_var = G1Var::new_input(cs.clone(), || Ok(power_commitment))?;
         let generator_var = G1Var::new_constant(cs.clone(), generator)?;
 
+        // Allocate blinding factors as emulated scalar field variables
+        // These are Fr elements (scalar field) that will be used for scalar multiplication
+        let blinding_r_var =
+            EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                Ok(blinding_r)
+            })?;
+        let blinding_s_var =
+            EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                Ok(blinding_s)
+            })?;
+        let blinding_factors = (blinding_r_var, blinding_s_var);
+
         // Create transcript gadget
         let mut transcript_gadget = BayerGrothTranscriptGadget::new(cs.clone(), domain)?;
 
-        // Step 6: Run the combined gadget
-        let proof_point =
-            rs_shuffle_with_bayer_groth_proof::<ark_bn254::Fq, G1Projective, G1Var, N, LEVELS>(
-                cs.clone(),
-                &alpha,
-                &c_perm_var,
-                &c_power_var,
-                &generator_var,
-                &permutation_vars,
-                &witness_data_var,
-                &indices_init,
-                &indices_after_shuffle,
-                &mut transcript_gadget,
-            )?;
+        // Step 6: Compute expected proof point using native function
+        let expected_proof_point = compute_expected_proof_point_native(
+            native_params.c_perm,
+            native_params.c_power,
+            generator,
+            native_params.perm_mixing_challenge_y,
+            native_params.perm_offset_challenge_z,
+            blinding_r,
+            blinding_s,
+        );
 
-        // Step 7: Verify constraint system is satisfied
+        tracing::debug!(target: TEST_TARGET, "Expected proof point computed natively");
+
+        // Step 7: Run the combined gadget
+        let (proof_point, _bg_params) = rs_shuffle_with_bayer_groth_proof(
+            cs.clone(),
+            &alpha,
+            &c_perm_var,
+            &c_power_var,
+            &generator_var,
+            &permutation_vars,
+            &witness_data_var,
+            &indices_init,
+            &indices_after_shuffle,
+            &blinding_factors,
+            &mut transcript_gadget,
+        )?;
+
+        // Step 8: Verify constraint system is satisfied
         assert!(cs.is_satisfied()?, "Constraint system should be satisfied");
 
-        // Step 8: Verify the proof point is non-zero
+        // Step 9: Verify the proof point matches expected value
         let proof_point_value = proof_point.value()?;
         assert!(
             !proof_point_value.is_zero(),
             "Proof point should not be zero"
+        );
+
+        // Verify the gadget produces the expected proof point
+        assert_eq!(
+            proof_point_value, expected_proof_point,
+            "Gadget proof point (including randomness factor) should match native computation"
         );
 
         tracing::debug!(
@@ -770,6 +925,46 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_rs_shuffle_with_random_blinding() -> Result<(), SynthesisError> {
+        let _guard = setup_test_tracing();
+        let mut rng = test_rng();
+        
+        // Test with random seed and blinding factors
+        let seed = Fr::rand(&mut rng);
+        let blinding_r = Fr::rand(&mut rng);
+        let blinding_s = Fr::rand(&mut rng);
+        
+        tracing::debug!(
+            target: TEST_TARGET,
+            ?seed,
+            ?blinding_r,
+            ?blinding_s,
+            "Testing RS shuffle with random blinding factors"
+        );
+        
+        test_rs_shuffle_with_params(seed, blinding_r, blinding_s)
+    }
+
+    #[test]
+    fn test_rs_shuffle_with_zero_blinding() -> Result<(), SynthesisError> {
+        let _guard = setup_test_tracing();
+        let mut rng = test_rng();
+        
+        // Test with random seed but zero blinding factors
+        let seed = Fr::rand(&mut rng);
+        let blinding_r = Fr::zero();
+        let blinding_s = Fr::zero();
+        
+        tracing::debug!(
+            target: TEST_TARGET,
+            ?seed,
+            "Testing RS shuffle with zero blinding factors"
+        );
+        
+        test_rs_shuffle_with_params(seed, blinding_r, blinding_s)
     }
 
     #[test]

@@ -77,8 +77,8 @@ mod sponge_ec_test;
 pub use bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 pub use bg_setup_gadget::BayerGrothTranscriptGadget;
 pub use linking_rs_gadgets::{
+    compute_permutation_proof_gadget, compute_perm_power_vector,
     fixed_base_scalar_mul_gadget, left_product_gadget, linear_blend_gadget, right_product_gadget,
-    verify_permutation_equality_gadget,
 };
 pub use linking_rs_native::{
     compute_left_product, compute_linear_blend, compute_permutation_proof, compute_right_product,
