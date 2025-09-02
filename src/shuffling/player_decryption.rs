@@ -407,24 +407,64 @@ where
     C: CurveGroup + 'static,
     C::ScalarField: PrimeField,
 {
+    tracing::debug!(
+        target: LOG_TARGET,
+        blinded_base = ?player_ciphertext.blinded_base,
+        blinded_message = ?player_ciphertext.blinded_message_with_player_key,
+        helper = ?player_ciphertext.player_unblinding_helper,
+        ?player_secret,
+        "=== Native recover_card_value ==="
+    );
+    
     // Step 1: Compute player-specific unblinding using the helper element
     // Only the player can do this as it requires knowing s_u
     let player_unblinding = player_ciphertext.player_unblinding_helper * player_secret;
+    tracing::debug!(
+        target: LOG_TARGET,
+        ?player_unblinding,
+        "Player unblinding (helper * secret)"
+    );
 
     // Step 2: Combine committee unblinding shares
     // This requires ALL n committee members (n-of-n scheme)
     let combined_unblinding = combine_unblinding_shares(&unblinding_shares, expected_members)?;
+    tracing::debug!(
+        target: LOG_TARGET,
+        ?combined_unblinding,
+        expected_members,
+        actual_shares = unblinding_shares.len(),
+        "Combined unblinding"
+    );
 
     // Step 3: Recover the message group element by removing all blinding
     // g^m = blinded_message / (combined_unblinding · player_unblinding)
     let recovered_element =
         player_ciphertext.blinded_message_with_player_key - combined_unblinding - player_unblinding;
+    tracing::debug!(
+        target: LOG_TARGET,
+        ?recovered_element,
+        "Recovered element"
+    );
 
     // Step 4: Map the group element back to a card value using pre-computed table
     let card_map = get_card_value_map::<C>();
+    
+    tracing::debug!(target: LOG_TARGET, "Looking up in card map...");
+    // Check what the expected values should be for our test indices
+    let generator = C::generator();
+    for i in 48u8..52 {
+        let expected = generator * C::ScalarField::from(i);
+        tracing::trace!(target: LOG_TARGET, "g^{} = {:?}", i, expected);
+        if expected == recovered_element {
+            tracing::debug!(target: LOG_TARGET, "Found match at index {}", i);
+        }
+    }
 
     match card_map.lookup(&recovered_element) {
-        Some(card_value) => Ok(card_value),
+        Some(card_value) => {
+            tracing::debug!(target: LOG_TARGET, "Successfully found card value: {}", card_value);
+            Ok(card_value)
+        },
         None => {
             warn!(target: LOG_TARGET,
                 "Failed to find card value for recovered element"

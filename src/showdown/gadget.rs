@@ -11,6 +11,8 @@ use core::ops::Not;
 
 use crate::showdown::{HandCategory, M0, M1, M2, M3, M4, M5};
 
+const LOG_TARGET: &str = "nexus_nova::showdown::gadget";
+
 /// Circuit representation of HandCategory enum
 #[derive(Clone)]
 pub struct HandCategoryVar<F: PrimeField> {
@@ -71,174 +73,6 @@ impl<F: PrimeField> AllocVar<HandCategory, F> for HandCategoryVar<F> {
         let value = UInt8::new_variable(cs, || Ok(cat_value as u8), mode)?;
         Ok(Self { value })
     }
-}
-
-/// Boolean assert helper
-fn assert_true<F: PrimeField>(b: &Boolean<F>) -> Result<(), SynthesisError> {
-    b.enforce_equal(&Boolean::TRUE)
-}
-
-/// Convert UInt8 to FpVar for field arithmetic
-fn uint8_to_fpvar<F: PrimeField>(x: &UInt8<F>) -> Result<FpVar<F>, SynthesisError> {
-    let bits = x.to_bits_le()?;
-    let mut val = FpVar::<F>::zero();
-    let mut pow = FpVar::<F>::one();
-    for bit in bits.iter() {
-        val += &pow * FpVar::<F>::from(bit.clone());
-        pow = pow.double()?;
-    }
-    Ok(val)
-}
-
-/// Pack (cat, c1..c5) into field via base-16 multipliers.
-fn pack_score_field_var<F: PrimeField>(
-    cat: &HandCategoryVar<F>,
-    c: &[UInt8<F>; 5],
-) -> Result<FpVar<F>, SynthesisError> {
-    let mut acc = uint8_to_fpvar(cat.value())? * FpVar::<F>::constant(F::from(M5 as u64));
-    let mul = |x: &UInt8<F>, m: u32| -> Result<FpVar<F>, SynthesisError> {
-        Ok(uint8_to_fpvar(x)? * FpVar::<F>::constant(F::from(m as u64)))
-    };
-    acc += mul(&c[0], M4)?;
-    acc += mul(&c[1], M3)?;
-    acc += mul(&c[2], M2)?;
-    acc += mul(&c[3], M1)?;
-    acc += mul(&c[4], M0)?;
-    Ok(acc)
-}
-
-/// Convert UInt8 to UInt16 via zero-extend.
-fn u8_to_u16<F: PrimeField>(x: &UInt8<F>) -> Result<UInt16<F>, SynthesisError> {
-    let mut bits = x.to_bits_le()?;
-    bits.resize(16, Boolean::FALSE);
-    Ok(UInt16::from_bits_le(&bits))
-}
-
-/// Compute (q << k) as UInt16 by shifting bits (k ≤ 8).
-fn shift_left_u8_to_u16<F: PrimeField>(
-    x: &UInt8<F>,
-    k: usize,
-) -> Result<UInt16<F>, SynthesisError> {
-    let mut bits = vec![Boolean::FALSE; k];
-    bits.extend(x.to_bits_le()?);
-    bits.resize(16, Boolean::FALSE);
-    Ok(UInt16::from_bits_le(&bits))
-}
-
-/// Compute UInt8 + UInt8 -> UInt8 with overflow checking
-fn uint8_add<F: PrimeField>(a: &UInt8<F>, b: &UInt8<F>) -> Result<UInt8<F>, SynthesisError> {
-    let a_bits = a.to_bits_le()?;
-    let b_bits = b.to_bits_le()?;
-
-    let mut result_bits = Vec::new();
-    let mut carry = Boolean::FALSE;
-
-    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
-        // sum = a XOR b XOR carry
-        let sum = a_bit ^ b_bit ^ &carry;
-        // new_carry = (a AND b) OR (carry AND (a XOR b))
-        let a_and_b = a_bit & b_bit;
-        let a_xor_b = a_bit ^ b_bit;
-        let carry_and_xor = &carry & &a_xor_b;
-        carry = &a_and_b | &carry_and_xor;
-        result_bits.push(sum);
-    }
-
-    Ok(UInt8::from_bits_le(&result_bits))
-}
-
-/// UInt16 addition
-fn uint16_add<F: PrimeField>(a: &UInt16<F>, b: &UInt16<F>) -> Result<UInt16<F>, SynthesisError> {
-    let a_bits = a.to_bits_le()?;
-    let b_bits = b.to_bits_le()?;
-
-    let mut result_bits = Vec::new();
-    let mut carry = Boolean::FALSE;
-
-    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
-        let sum = a_bit ^ b_bit ^ &carry;
-        let a_and_b = a_bit & b_bit;
-        let a_xor_b = a_bit ^ b_bit;
-        let carry_and_xor = &carry & &a_xor_b;
-        carry = &a_and_b | &carry_and_xor;
-        result_bits.push(sum);
-    }
-
-    Ok(UInt16::from_bits_le(&result_bits))
-}
-
-/// Compute UInt8 - UInt8 -> UInt8
-fn uint8_sub<F: PrimeField>(a: &UInt8<F>, b: &UInt8<F>) -> Result<UInt8<F>, SynthesisError> {
-    let a_bits = a.to_bits_le()?;
-    let b_bits = b.to_bits_le()?;
-
-    let mut result_bits = Vec::new();
-    let mut borrow = Boolean::FALSE;
-
-    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
-        // diff = a XOR b XOR borrow
-        let diff = a_bit ^ b_bit ^ &borrow;
-        // new_borrow = (!a AND b) OR (borrow AND !(a XOR b))
-        let not_a = a_bit.not();
-        let not_a_and_b = &not_a & b_bit;
-        let a_xor_b = a_bit ^ b_bit;
-        let not_xor = a_xor_b.not();
-        let borrow_and_not_xor = &borrow & &not_xor;
-        borrow = &not_a_and_b | &borrow_and_not_xor;
-        result_bits.push(diff);
-    }
-
-    Ok(UInt8::from_bits_le(&result_bits))
-}
-
-/// Compare UInt8 values (emulating is_cmp for greater/less)
-fn uint8_is_less_than<F: PrimeField>(
-    a: &UInt8<F>,
-    b: &UInt8<F>,
-) -> Result<Boolean<F>, SynthesisError> {
-    let a_bits = a.to_bits_le()?;
-    let b_bits = b.to_bits_le()?;
-
-    let mut less = Boolean::FALSE;
-    let mut equal = Boolean::TRUE;
-
-    // Compare from MSB to LSB
-    for (a_bit, b_bit) in a_bits.iter().rev().zip(b_bits.iter().rev()) {
-        // less = (equal AND !a AND b) OR less
-        let not_a = a_bit.not();
-        let not_a_and_b = &not_a & b_bit;
-        let equal_and_condition = &equal & &not_a_and_b;
-        less = &less | &equal_and_condition;
-
-        // equal = equal AND (a == b)
-        let bits_equal = (a_bit ^ b_bit).not();
-        equal = &equal & &bits_equal;
-    }
-
-    Ok(less)
-}
-
-fn uint8_is_less_or_equal<F: PrimeField>(
-    a: &UInt8<F>,
-    b: &UInt8<F>,
-) -> Result<Boolean<F>, SynthesisError> {
-    let less = uint8_is_less_than(a, b)?;
-    let equal = a.is_eq(b)?;
-    Ok(&less | &equal)
-}
-
-fn uint8_is_greater_or_equal<F: PrimeField>(
-    a: &UInt8<F>,
-    b: &UInt8<F>,
-) -> Result<Boolean<F>, SynthesisError> {
-    uint8_is_less_or_equal(b, a)
-}
-
-fn uint8_is_greater_than<F: PrimeField>(
-    a: &UInt8<F>,
-    b: &UInt8<F>,
-) -> Result<Boolean<F>, SynthesisError> {
-    uint8_is_less_than(b, a)
 }
 
 /// Decode index (1..52) -> (rank 2..14, suit 0..3) using divmod by 13 with constraints:
@@ -464,6 +298,174 @@ pub fn verify_and_score_from_indices<F: PrimeField>(
     let score = pack_score_field_var::<F>(&claimed_cat, &c)?;
 
     Ok((score, c))
+}
+
+/// Boolean assert helper
+fn assert_true<F: PrimeField>(b: &Boolean<F>) -> Result<(), SynthesisError> {
+    b.enforce_equal(&Boolean::TRUE)
+}
+
+/// Convert UInt8 to FpVar for field arithmetic
+fn uint8_to_fpvar<F: PrimeField>(x: &UInt8<F>) -> Result<FpVar<F>, SynthesisError> {
+    let bits = x.to_bits_le()?;
+    let mut val = FpVar::<F>::zero();
+    let mut pow = FpVar::<F>::one();
+    for bit in bits.iter() {
+        val += &pow * FpVar::<F>::from(bit.clone());
+        pow = pow.double()?;
+    }
+    Ok(val)
+}
+
+/// Pack (cat, c1..c5) into field via base-16 multipliers.
+fn pack_score_field_var<F: PrimeField>(
+    cat: &HandCategoryVar<F>,
+    c: &[UInt8<F>; 5],
+) -> Result<FpVar<F>, SynthesisError> {
+    let mut acc = uint8_to_fpvar(cat.value())? * FpVar::<F>::constant(F::from(M5 as u64));
+    let mul = |x: &UInt8<F>, m: u32| -> Result<FpVar<F>, SynthesisError> {
+        Ok(uint8_to_fpvar(x)? * FpVar::<F>::constant(F::from(m as u64)))
+    };
+    acc += mul(&c[0], M4)?;
+    acc += mul(&c[1], M3)?;
+    acc += mul(&c[2], M2)?;
+    acc += mul(&c[3], M1)?;
+    acc += mul(&c[4], M0)?;
+    Ok(acc)
+}
+
+/// Convert UInt8 to UInt16 via zero-extend.
+fn u8_to_u16<F: PrimeField>(x: &UInt8<F>) -> Result<UInt16<F>, SynthesisError> {
+    let mut bits = x.to_bits_le()?;
+    bits.resize(16, Boolean::FALSE);
+    Ok(UInt16::from_bits_le(&bits))
+}
+
+/// Compute (q << k) as UInt16 by shifting bits (k ≤ 8).
+fn shift_left_u8_to_u16<F: PrimeField>(
+    x: &UInt8<F>,
+    k: usize,
+) -> Result<UInt16<F>, SynthesisError> {
+    let mut bits = vec![Boolean::FALSE; k];
+    bits.extend(x.to_bits_le()?);
+    bits.resize(16, Boolean::FALSE);
+    Ok(UInt16::from_bits_le(&bits))
+}
+
+/// Compute UInt8 + UInt8 -> UInt8 with overflow checking
+fn uint8_add<F: PrimeField>(a: &UInt8<F>, b: &UInt8<F>) -> Result<UInt8<F>, SynthesisError> {
+    let a_bits = a.to_bits_le()?;
+    let b_bits = b.to_bits_le()?;
+
+    let mut result_bits = Vec::new();
+    let mut carry = Boolean::FALSE;
+
+    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
+        // sum = a XOR b XOR carry
+        let sum = a_bit ^ b_bit ^ &carry;
+        // new_carry = (a AND b) OR (carry AND (a XOR b))
+        let a_and_b = a_bit & b_bit;
+        let a_xor_b = a_bit ^ b_bit;
+        let carry_and_xor = &carry & &a_xor_b;
+        carry = &a_and_b | &carry_and_xor;
+        result_bits.push(sum);
+    }
+
+    Ok(UInt8::from_bits_le(&result_bits))
+}
+
+/// UInt16 addition
+fn uint16_add<F: PrimeField>(a: &UInt16<F>, b: &UInt16<F>) -> Result<UInt16<F>, SynthesisError> {
+    let a_bits = a.to_bits_le()?;
+    let b_bits = b.to_bits_le()?;
+
+    let mut result_bits = Vec::new();
+    let mut carry = Boolean::FALSE;
+
+    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
+        let sum = a_bit ^ b_bit ^ &carry;
+        let a_and_b = a_bit & b_bit;
+        let a_xor_b = a_bit ^ b_bit;
+        let carry_and_xor = &carry & &a_xor_b;
+        carry = &a_and_b | &carry_and_xor;
+        result_bits.push(sum);
+    }
+
+    Ok(UInt16::from_bits_le(&result_bits))
+}
+
+/// Compute UInt8 - UInt8 -> UInt8
+pub fn uint8_sub<F: PrimeField>(a: &UInt8<F>, b: &UInt8<F>) -> Result<UInt8<F>, SynthesisError> {
+    let a_bits = a.to_bits_le()?;
+    let b_bits = b.to_bits_le()?;
+
+    let mut result_bits = Vec::new();
+    let mut borrow = Boolean::FALSE;
+
+    for (a_bit, b_bit) in a_bits.iter().zip(b_bits.iter()) {
+        // diff = a XOR b XOR borrow
+        let diff = a_bit ^ b_bit ^ &borrow;
+        // new_borrow = (!a AND b) OR (borrow AND !(a XOR b))
+        let not_a = a_bit.not();
+        let not_a_and_b = &not_a & b_bit;
+        let a_xor_b = a_bit ^ b_bit;
+        let not_xor = a_xor_b.not();
+        let borrow_and_not_xor = &borrow & &not_xor;
+        borrow = &not_a_and_b | &borrow_and_not_xor;
+        result_bits.push(diff);
+    }
+
+    Ok(UInt8::from_bits_le(&result_bits))
+}
+
+/// Compare UInt8 values (emulating is_cmp for greater/less)
+fn uint8_is_less_than<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let a_bits = a.to_bits_le()?;
+    let b_bits = b.to_bits_le()?;
+
+    let mut less = Boolean::FALSE;
+    let mut equal = Boolean::TRUE;
+
+    // Compare from MSB to LSB
+    for (a_bit, b_bit) in a_bits.iter().rev().zip(b_bits.iter().rev()) {
+        // less = (equal AND !a AND b) OR less
+        let not_a = a_bit.not();
+        let not_a_and_b = &not_a & b_bit;
+        let equal_and_condition = &equal & &not_a_and_b;
+        less = &less | &equal_and_condition;
+
+        // equal = equal AND (a == b)
+        let bits_equal = (a_bit ^ b_bit).not();
+        equal = &equal & &bits_equal;
+    }
+
+    Ok(less)
+}
+
+fn uint8_is_less_or_equal<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    let less = uint8_is_less_than(a, b)?;
+    let equal = a.is_eq(b)?;
+    Ok(&less | &equal)
+}
+
+fn uint8_is_greater_or_equal<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    uint8_is_less_or_equal(b, a)
+}
+
+fn uint8_is_greater_than<F: PrimeField>(
+    a: &UInt8<F>,
+    b: &UInt8<F>,
+) -> Result<Boolean<F>, SynthesisError> {
+    uint8_is_less_than(b, a)
 }
 
 #[cfg(test)]

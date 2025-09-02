@@ -101,6 +101,7 @@ pub fn is_run_desc_ranks(r: &[Rank; 5]) -> bool {
 }
 
 pub mod gadget;
+pub mod hand_reveal_showdown_gadget;
 pub mod native;
 
 #[cfg(test)]

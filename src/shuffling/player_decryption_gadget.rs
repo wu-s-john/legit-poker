@@ -161,9 +161,17 @@ where
         let cs = ns.cs();
         let ciphertext = f()?.borrow().clone();
 
-        trace!(target: LOG_TARGET, "Allocating PlayerAccessibleCiphertextVar");
+        // Allocate curve points directly without normalization
+        // The circuit will handle the points correctly even with different Z coordinates
+        tracing::trace!(
+            target: LOG_TARGET,
+            blinded_base = ?ciphertext.blinded_base,
+            blinded_message = ?ciphertext.blinded_message_with_player_key,
+            helper = ?ciphertext.player_unblinding_helper,
+            "Allocating PlayerAccessibleCiphertextVar with original projective values"
+        );
 
-        // Allocate curve points
+        // Allocate curve points using original projective representation
         let blinded_base = CV::new_variable(cs.clone(), || Ok(ciphertext.blinded_base), mode)?;
 
         let blinded_message_with_player_key = CV::new_variable(
@@ -178,9 +186,9 @@ where
         // Allocate all Chaum-Pedersen proofs
         let shuffler_proofs = ciphertext
             .shuffler_proofs
-            .iter()
+            .into_iter()
             .map(|proof| {
-                ChaumPedersenProofVar::<C, CV>::new_variable(cs.clone(), || Ok(proof.clone()), mode)
+                ChaumPedersenProofVar::<C, CV>::new_variable(cs.clone(), || Ok(proof), mode)
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -391,6 +399,7 @@ where
     CV: CurveVar<C, C::BaseField>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
+    tracing::debug!(target: LOG_TARGET, "=== combine_unblinding_shares_gadget ===");
     tracing::debug!(target: LOG_TARGET, "Combining {} unblinding shares in-circuit", shares.len());
 
     // Verify we have exactly n shares (n-of-n requirement)
@@ -401,9 +410,13 @@ where
     // Aggregate by adding all shares: μ_u = Σ(μ_u,j)
     // This gives us A_u^(Σx_j) = A_u^x = g^((r+Δ) * x) = pk^(r+Δ)
     let mut mu = CV::zero();
-    for share in shares {
+    for (i, share) in shares.iter().enumerate() {
+        tracing::debug!(target: LOG_TARGET, "  Share[{}]: {:?}", i, share.share.value());
         mu = &mu + &share.share;
     }
+
+    tracing::debug!(target: LOG_TARGET, "Combined unblinding result: {:?}", mu.value());
+    tracing::debug!(target: LOG_TARGET, "=== End combine_unblinding_shares_gadget ===");
 
     Ok(mu)
 }
@@ -432,7 +445,22 @@ where
     CV: CurveVar<C, C::BaseField>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
-    tracing::debug!(target: LOG_TARGET, "Recovering card point in-circuit");
+    tracing::debug!(
+        target: LOG_TARGET,
+        blinded_base = ?player_ciphertext.blinded_base.value(),
+        blinded_message = ?player_ciphertext.blinded_message_with_player_key.value(),
+        player_unblinding_helper = ?player_ciphertext.player_unblinding_helper.value(),
+        "=== Circuit recover_card_point_gadget ==="
+    );
+
+    // Log player secret bits (be careful with this in production!)
+    let secret_bits: Vec<bool> = player_secret_bits
+        .iter()
+        .map(|b| b.value().unwrap_or(false))
+        .collect();
+    tracing::debug!(target: LOG_TARGET, "Player secret bits (length {}): first 8 bits: {:?}",
+        secret_bits.len(),
+        &secret_bits[..8.min(secret_bits.len())]);
 
     // Step 1: Compute player-specific unblinding using the helper element
     // Mathematical equation: player_unblinding = player_unblinding_helper^s_u
@@ -441,15 +469,35 @@ where
         .clone()
         .scalar_mul_le(player_secret_bits.iter())?;
 
+    println!(
+        "Step 1 - Player unblinding (helper^secret): {:?}",
+        player_unblinding.value()
+    );
+    tracing::debug!(target: LOG_TARGET, "Step 1 - Player unblinding (helper^secret): {:?}", player_unblinding.value());
+
     // Step 2: Combine committee unblinding shares
     let combined_unblinding =
         combine_unblinding_shares_gadget(cs.clone(), unblinding_shares, expected_members)?;
+
+    println!(
+        "Step 2 - Combined unblinding from shares: {:?}",
+        combined_unblinding.value()
+    );
+    tracing::debug!(target: LOG_TARGET, "Step 2 - Combined unblinding from shares: {:?}", combined_unblinding.value());
 
     // Step 3: Recover the message group element by removing all blinding
     // Mathematical equation: g^m = blinded_message / (combined_unblinding · player_unblinding)
     let recovered_element = &player_ciphertext.blinded_message_with_player_key
         - &combined_unblinding
         - &player_unblinding;
+
+    println!(
+        "Step 3 - Recovered element (g^m): {:?}",
+        recovered_element.value()
+    );
+    println!("=== End Circuit recover_card_point_gadget ===");
+    tracing::debug!(target: LOG_TARGET, "Step 3 - Recovered element (g^m): {:?}", recovered_element.value());
+    tracing::debug!(target: LOG_TARGET, "=== End Circuit recover_card_point_gadget ===");
 
     Ok(recovered_element)
 }
