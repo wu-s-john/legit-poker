@@ -833,7 +833,10 @@ mod tests {
             &mut verifier_transcript2,
         ));
 
-        tracing::debug!(target = LOG_TARGET, "✓ Determinism test passed (both proofs verify)");
+        tracing::debug!(
+            target = LOG_TARGET,
+            "✓ Determinism test passed (both proofs verify)"
+        );
     }
 
     /// Test with zero rerandomization (pure permutation)
@@ -956,7 +959,8 @@ mod tests {
             );
         }
 
-        tracing::debug!(target = LOG_TARGET, 
+        tracing::debug!(
+            target = LOG_TARGET,
             "✓ Randomized property test passed ({} instances)",
             NUM_TESTS
         );
@@ -1068,7 +1072,10 @@ mod tests {
             &mut verifier_transcript,
         ));
 
-        tracing::debug!(target = LOG_TARGET, "✓ Serialization round-trip test passed");
+        tracing::debug!(
+            target = LOG_TARGET,
+            "✓ Serialization round-trip test passed"
+        );
         tracing::debug!(target = LOG_TARGET, "  Proof size: {} bytes", bytes.len());
     }
 
