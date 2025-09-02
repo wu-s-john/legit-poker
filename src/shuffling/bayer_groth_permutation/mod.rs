@@ -64,7 +64,8 @@
 //! );
 //! ```
 
-pub mod fiat_shamir;
+pub mod bg_setup;
+pub mod bg_setup_gadget;
 pub mod linking_rs_gadgets;
 pub mod linking_rs_native;
 pub mod sigma_gadgets;
@@ -73,7 +74,8 @@ pub mod sigma_protocol;
 #[cfg(test)]
 mod sponge_ec_test;
 
-pub use fiat_shamir::BayerGrothTranscript;
+pub use bg_setup::{BayerGrothProtocolOutput, BayerGrothTranscript};
+pub use bg_setup_gadget::BayerGrothTranscriptGadget;
 pub use linking_rs_gadgets::{
     fixed_base_scalar_mul_gadget, left_product_gadget, linear_blend_gadget, right_product_gadget,
     verify_permutation_equality_gadget,

@@ -13,75 +13,75 @@ use ark_std::vec::Vec;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
-/// Gadget for computing linear blend: d_i = y * a_i + b_i
+/// Gadget for computing linear blend: d_i = perm_mixing_challenge_y * perm_vector_i + perm_power_vector_i
 pub fn linear_blend_gadget<F: PrimeField>(
     _cs: ConstraintSystemRef<F>,
-    a: &[FpVar<F>],
-    b: &[FpVar<F>],
-    y: &FpVar<F>,
+    perm_vector: &[FpVar<F>],
+    perm_power_vector: &[FpVar<F>],
+    perm_mixing_challenge_y: &FpVar<F>,
 ) -> Result<Vec<FpVar<F>>, SynthesisError> {
-    assert_eq!(a.len(), b.len(), "Vectors a and b must have same length");
+    assert_eq!(perm_vector.len(), perm_power_vector.len(), "Permutation vector and power vector must have same length");
 
-    let mut d = Vec::with_capacity(a.len());
+    let mut d = Vec::with_capacity(perm_vector.len());
 
-    for (i, (a_i, b_i)) in a.iter().zip(b.iter()).enumerate() {
-        // d_i = y * a_i + b_i
-        let term = y * a_i + b_i;
+    for (i, (perm_i, power_i)) in perm_vector.iter().zip(perm_power_vector.iter()).enumerate() {
+        // d_i = perm_mixing_challenge_y * perm_vector_i + perm_power_vector_i
+        let term = perm_mixing_challenge_y * perm_i + power_i;
         d.push(term);
 
-        tracing::trace!(target: LOG_TARGET, "d[{}] = y * a[{}] + b[{}]", i, i, i);
+        tracing::trace!(target: LOG_TARGET, "d[{}] = perm_mixing_challenge_y * perm_vector[{}] + perm_power_vector[{}]", i, i, i);
     }
 
     Ok(d)
 }
 
-/// Gadget for computing left product: L = ∏_{i=1}^N (d_i - z)
+/// Gadget for computing left product: L = ∏_{i=1}^N (d_i - perm_offset_challenge_z)
 pub fn left_product_gadget<F: PrimeField>(
     _cs: ConstraintSystemRef<F>,
     d: &[FpVar<F>],
-    z: &FpVar<F>,
+    perm_offset_challenge_z: &FpVar<F>,
 ) -> Result<FpVar<F>, SynthesisError> {
     let mut product = FpVar::<F>::one();
 
     for (i, d_i) in d.iter().enumerate() {
-        // Compute d_i - z
-        let diff = d_i - z;
+        // Compute d_i - perm_offset_challenge_z
+        let diff = d_i - perm_offset_challenge_z;
 
-        // Update product: product *= (d_i - z)
+        // Update product: product *= (d_i - perm_offset_challenge_z)
         product *= &diff;
 
-        tracing::trace!(target: LOG_TARGET, "L partial product at {}: (d[{}] - z)", i, i);
+        tracing::trace!(target: LOG_TARGET, "L partial product at {}: (d[{}] - perm_offset_challenge_z)", i, i);
     }
 
     Ok(product)
 }
 
-/// Gadget for computing right product: R = ∏_{i=1}^N (y*i + x^i - z)
+/// Gadget for computing right product: R = ∏_{i=1}^N (perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z)
 /// Uses running power computation for efficiency
 pub fn right_product_gadget<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    y: &FpVar<F>,
-    x: &FpVar<F>,
-    z: &FpVar<F>,
+    perm_mixing_challenge_y: &FpVar<F>,
+    perm_power_challenge: &FpVar<F>,
+    perm_offset_challenge_z: &FpVar<F>,
     n: usize,
 ) -> Result<FpVar<F>, SynthesisError> {
     let mut product = FpVar::<F>::one();
-    let mut x_power = FpVar::<F>::one(); // x^0 = 1
+    let mut power_of_challenge = FpVar::<F>::one(); // perm_power_challenge^0 = 1
 
     for i in 1..=n {
-        // Update running power: x^i = x^(i-1) * x
-        x_power *= x;
+        // Update running power: perm_power_challenge^i = perm_power_challenge^(i-1) * perm_power_challenge
+        power_of_challenge *= perm_power_challenge;
 
         // Compute i as field element
         let i_const = FpVar::<F>::new_constant(cs.clone(), F::from(i as u64))?;
 
-        // Compute term: y*i + x^i - z
-        let term = y * &i_const + &x_power - z;
+        // Compute term: perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z
+        let term = perm_mixing_challenge_y * &i_const + &power_of_challenge - perm_offset_challenge_z;
 
         // Update product
         product *= &term;
 
-        tracing::trace!(target: LOG_TARGET, "R partial at {}: y*{} + x^{} - z", i, i, i);
+        tracing::trace!(target: LOG_TARGET, "R partial at {}: perm_mixing_challenge_y*{} + perm_power_challenge^{} - perm_offset_challenge_z", i, i, i);
     }
 
     Ok(product)
@@ -148,11 +148,11 @@ where
 /// Computes and verifies the permutation proof in-circuit
 pub fn compute_permutation_proof_gadget<F, C, CV>(
     cs: ConstraintSystemRef<F>,
-    a: &[FpVar<F>],
-    b: &[FpVar<F>],
-    y: &FpVar<F>,
-    z: &FpVar<F>,
-    x: &FpVar<F>,
+    perm_vector: &[FpVar<F>],
+    perm_power_vector: &[FpVar<F>],
+    perm_mixing_challenge_y: &FpVar<F>,
+    perm_offset_challenge_z: &FpVar<F>,
+    perm_power_challenge: &FpVar<F>,
     generator: &CV,
 ) -> Result<(FpVar<F>, FpVar<F>, CV), SynthesisError>
 where
@@ -161,17 +161,17 @@ where
     CV: CurveVar<C, F>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
-    let n = a.len();
-    assert_eq!(b.len(), n, "Vectors a and b must have same length");
+    let n = perm_vector.len();
+    assert_eq!(perm_power_vector.len(), n, "Permutation vector and power vector must have same length");
 
     // Step 1: Linear blend
-    let d = linear_blend_gadget(cs.clone(), a, b, y)?;
+    let d = linear_blend_gadget(cs.clone(), perm_vector, perm_power_vector, perm_mixing_challenge_y)?;
 
     // Step 2: Left product
-    let left = left_product_gadget(cs.clone(), &d, z)?;
+    let left = left_product_gadget(cs.clone(), &d, perm_offset_challenge_z)?;
 
     // Step 3: Right product
-    let right = right_product_gadget(cs.clone(), y, x, z, n)?;
+    let right = right_product_gadget(cs.clone(), perm_mixing_challenge_y, perm_power_challenge, perm_offset_challenge_z, n)?;
 
     // Step 4: Verify equality
     verify_permutation_equality_gadget(cs.clone(), &left, &right)?;
