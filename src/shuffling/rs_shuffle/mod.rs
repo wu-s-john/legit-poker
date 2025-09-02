@@ -16,10 +16,11 @@ pub mod bit_generation;
 pub mod circuit;
 pub mod data_structures;
 pub mod permutation;
+pub mod rs_shuffle_gadget;
 pub mod witness_preparation;
 
-// Main verification function
-pub use circuit::{rs_shuffle, rs_shuffle_indices, verify_row_constraints, verify_shuffle_level};
+// Main verification functions (re-exported from rs_shuffle_gadget)
+pub use rs_shuffle_gadget::{rs_shuffle, rs_shuffle_indices, rs_shuffle_with_reencryption};
 
 // Data structures
 pub use data_structures::{

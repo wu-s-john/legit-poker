@@ -1,15 +1,16 @@
-//! RS shuffle verification functions for SNARK circuits
+//! RS shuffle verification circuits for SNARK
 
-use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessData, WitnessDataVar};
-use super::permutation::{IndexPositionPair, PermutationProduct};
+use super::data_structures::WitnessData;
+use super::rs_shuffle_gadget::{rs_shuffle_indices, rs_shuffle_with_reencryption};
 use super::{LEVELS, N};
-use crate::rs_shuffle::permutation::{check_grand_product, IndexedElGamalCiphertext};
+use crate::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
+use crate::rs_shuffle::{SortedRowVar, UnsortedRowVar};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
 use crate::track_constraints;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::FieldVar};
+use ark_r1cs_std::{alloc::AllocVar, fields::FieldVar};
 use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use std::marker::PhantomData;
@@ -17,272 +18,9 @@ use std::ops::Not;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::circuit";
 
-/// Simple indexed value for permutation checks with just an index
-#[derive(Clone)]
-pub struct IndexedValue<F: PrimeField> {
-    pub idx: FpVar<F>,
-}
-
-impl<F: PrimeField> IndexedValue<F> {
-    pub fn new(idx: FpVar<F>) -> Self {
-        Self { idx }
-    }
-}
-
-impl<F: PrimeField> PermutationProduct<F, 1> for IndexedValue<F> {
-    fn product(&self, challenges: &[FpVar<F>; 1]) -> FpVar<F> {
-        // Simply multiply the index by the challenge
-        &challenges[0] * &self.idx
-    }
-}
-
-/// Verify RS shuffle constraints for indices only (without ElGamal ciphertexts)
-///
-/// This function verifies that a shuffle was performed correctly on indices by:
-/// 1. Checking row-local constraints at each level
-/// 2. Verifying permutation consistency at each level
-/// 3. Ensuring indices are preserved through the shuffle
-///
-/// # Type Parameters
-/// - `F`: The prime field type
-/// - `N`: The number of elements being shuffled
-/// - `LEVELS`: The number of levels in the shuffle
-///
-/// # Parameters
-/// - `cs`: The constraint system reference
-/// - `indices_init`: Initial indices (as SNARK variables)
-/// - `indices_after_shuffle`: Final shuffled indices (as SNARK variables)
-/// - `witness`: The witness data containing the shuffle permutation (as SNARK variable)
-/// - `alpha`: Fiat-Shamir challenge for permutation check (as SNARK variable)
-///
-/// # Returns
-/// - `Ok(())` if all shuffle constraints are satisfied
-/// - `Err(SynthesisError)` if any constraint fails
-pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<F>,
-    indices_init: &[FpVar<F>],
-    indices_after_shuffle: &[FpVar<F>],
-    witness: &WitnessDataVar<F, N, LEVELS>,
-    alpha: &FpVar<F>,
-) -> Result<(), SynthesisError>
-where
-    F: PrimeField,
-{
-    track_constraints!(&cs, "rs shuffle indices", LOG_TARGET, {
-        // 1. Create indexed values by zipping witness indices with input indices
-        // Initial: Use indices from first level unsorted array
-        let values_initial: Vec<IndexedValue<F>> = witness.uns_levels[0]
-            .iter()
-            .zip(indices_init.iter())
-            .map(|(row, idx)| {
-                // Verify that the index matches
-                row.idx.enforce_equal(idx)?;
-                Ok(IndexedValue::new(row.idx.clone()))
-            })
-            .collect::<Result<Vec<_>, SynthesisError>>()?;
-
-        // Final: Use indices from last level sorted array
-        let values_final: Vec<IndexedValue<F>> = witness.sorted_levels[LEVELS - 1]
-            .iter()
-            .zip(indices_after_shuffle.iter())
-            .map(|(row, idx)| {
-                // Verify that the index matches
-                row.idx.enforce_equal(idx)?;
-                Ok(IndexedValue::new(row.idx.clone()))
-            })
-            .collect::<Result<Vec<_>, SynthesisError>>()?;
-
-        // 2. Create beta challenge for level verification (using alpha as base)
-        let beta = alpha * alpha; // beta = alpha^2
-
-        // 3. Level-by-level verification
-        for level in 0..LEVELS {
-            let unsorted = &witness.uns_levels[level];
-            let sorted_arr = &witness.sorted_levels[level];
-
-            // Verify this shuffle level (row constraints + permutation check)
-            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, &beta)?;
-        }
-
-        // 4. Final permutation check using just indices (1 challenge)
-        // This verifies that initial and final indices form the same multiset
-        check_grand_product::<F, IndexedValue<F>, 1>(
-            cs.clone(),
-            &values_initial,
-            &values_final,
-            &[alpha.clone()],
-        )?;
-
-        Ok(())
-    })
-}
-
-/// Verify RS shuffle constraints in a SNARK circuit
-///
-/// This function verifies that a shuffle was performed correctly by:
-/// 1. Checking row-local constraints at each level
-/// 2. Verifying permutation consistency at each level
-/// 3. Ensuring ElGamal ciphertexts are preserved through the shuffle
-///
-/// # Type Parameters
-/// - `G`: The elliptic curve configuration
-/// - `N`: The number of elements being shuffled
-/// - `LEVELS`: The number of levels in the shuffle
-///
-/// # Parameters
-/// - `cs`: The constraint system reference
-/// - `ct_init_pub`: Initial ElGamal ciphertexts (as SNARK variables)
-/// - `ct_after_shuffle`: Final shuffled ElGamal ciphertexts (as SNARK variables)
-/// - `witness`: The witness data containing the shuffle permutation (as SNARK variable)
-/// - `alpha`: First Fiat-Shamir challenge (as SNARK variable)
-/// - `beta`: Second Fiat-Shamir challenge (as SNARK variable)
-///
-/// # Returns
-/// - `Ok(())` if all shuffle constraints are satisfied
-/// - `Err(SynthesisError)` if any constraint fails
-pub fn rs_shuffle<C, CV, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<C::BaseField>,
-    ct_init_pub: &[ElGamalCiphertextVar<C, CV>],
-    ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>],
-    witness: &WitnessDataVar<C::BaseField, N, LEVELS>,
-    alpha: &FpVar<C::BaseField>,
-    beta: &FpVar<C::BaseField>,
-) -> Result<(), SynthesisError>
-where
-    C: CurveGroup,
-    C::BaseField: PrimeField,
-    CV: CurveVar<C, C::BaseField>,
-{
-    track_constraints!(&cs, "rs shuffle", LOG_TARGET, {
-        // 1. Create indexed ciphertexts by zipping witness indices with ciphertexts
-        // Initial: Use indices from first level unsorted array
-        let ciphertexts_initial: Vec<IndexedElGamalCiphertext<C, CV>> = witness.uns_levels[0]
-            .iter()
-            .zip(ct_init_pub.iter())
-            .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
-            .collect();
-
-        // Final: Use indices from last level sorted array
-        let ciphertexts_final: Vec<IndexedElGamalCiphertext<C, CV>> = witness.sorted_levels
-            [LEVELS - 1]
-            .iter()
-            .zip(ct_after_shuffle.iter())
-            .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
-            .collect();
-
-        // 2. Compute other challenges as powers of beta
-        let beta_2 = beta * beta; // beta^2 (for c1.x)
-        let beta_3 = &beta_2 * beta; // beta^3 (for c1.y)
-        let beta_4 = &beta_3 * beta; // beta^4 (for c1.z)
-        let beta_5 = &beta_4 * beta; // beta^5 (for c2.x)
-        let beta_6 = &beta_5 * beta; // beta^6 (for c2.y)
-
-        // 3. Level-by-level verification
-        for level in 0..LEVELS {
-            let unsorted = &witness.uns_levels[level];
-            let sorted_arr = &witness.sorted_levels[level];
-
-            // Verify this shuffle level (row constraints + permutation check)
-            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
-        }
-
-        // 4. Final permutation check using ElGamal ciphertexts (7 challenges)
-        // This verifies that initial and final ciphertexts form the same multiset
-        // The 7 challenges are: 1 for index + 6 for ElGamal components (c1.x, c1.y, c1.z, c2.x, c2.y, c2.z)
-        check_grand_product::<C::BaseField, IndexedElGamalCiphertext<C, CV>, 7>(
-            cs.clone(),
-            &ciphertexts_initial,
-            &ciphertexts_final,
-            &[
-                alpha.clone(), // For index
-                beta.clone(),  // For c1.x
-                beta_2,        // For c1.y
-                beta_3,        // For c1.z
-                beta_4,        // For c2.x
-                beta_5,        // For c2.y
-                beta_6,        // For c2.z
-            ],
-        )?;
-
-        Ok(())
-    })
-}
-
-/// Verify RS shuffle with re-encryption in a SNARK circuit
-///
-/// This function verifies that a shuffle was performed correctly followed by re-encryption:
-/// 1. Verifies the shuffle from initial to intermediate ciphertexts
-/// 2. Applies re-encryption to the shuffled ciphertexts
-/// 3. Returns the re-encrypted ciphertexts
-///
-/// # Type Parameters
-/// - `G`: The elliptic curve configuration
-/// - `N`: The number of elements being shuffled
-/// - `LEVELS`: The number of levels in the shuffle
-///
-/// # Parameters
-/// - `cs`: The constraint system reference
-/// - `ct_init_pub`: Initial ElGamal ciphertexts before shuffle
-/// - `ct_after_shuffle`: Intermediate ciphertexts after shuffle, before re-encryption
-/// - `witness`: The witness data containing the shuffle permutation
-/// - `encryption_randomizations`: Randomness values for re-encryption
-/// - `shuffler_pk`: Public key for re-encryption
-/// - `alpha`: First Fiat-Shamir challenge
-/// - `beta`: Second Fiat-Shamir challenge
-///
-/// # Returns
-/// - `Ok(Vec<ElGamalCiphertextVar<G>>)` containing the re-encrypted ciphertexts if successful
-/// - `Err(SynthesisError)` if any constraint fails
-pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<C::BaseField>,
-    ct_init_pub: &[ElGamalCiphertextVar<C, CV>; N],
-    ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>; N],
-    witness_table: &WitnessDataVar<C::BaseField, N, LEVELS>,
-    encryption_randomizations: &[FpVar<C::BaseField>; N],
-    shuffler_pk: &CV,
-    alpha: &FpVar<C::BaseField>,
-    beta: &FpVar<C::BaseField>,
-    generator_powers: &[C],
-) -> Result<Vec<ElGamalCiphertextVar<C, CV>>, SynthesisError>
-where
-    C: CurveGroup,
-    C::BaseField: PrimeField,
-    CV: CurveVar<C, C::BaseField>,
-{
-    track_constraints!(&cs, "rs shuffle with reencryption", LOG_TARGET, {
-        // Step 1: Verify the shuffle from initial to intermediate ciphertexts
-        tracing::debug!(target: LOG_TARGET, "Verifying RS shuffle");
-        rs_shuffle::<C, _, N, LEVELS>(
-            cs.clone(),
-            ct_init_pub,
-            ct_after_shuffle,
-            witness_table,
-            alpha,
-            beta,
-        )?;
-
-        // Step 2: Apply re-encryption to the shuffled ciphertexts
-        tracing::debug!(target: LOG_TARGET, "Applying re-encryption to shuffled ciphertexts");
-
-        // Convert array to Vec for the re-encryption function
-        let ct_after_shuffle_vec = ct_after_shuffle.to_vec();
-        let encryption_randomizations_vec = encryption_randomizations.to_vec();
-
-        // Create ElGamalEncryption instance with precomputed powers
-        let elgamal_enc =
-            crate::shuffling::encryption::ElGamalEncryption::<C>::new(generator_powers.to_vec());
-
-        let reencrypted_deck = elgamal_enc.reencrypt_cards_with_new_randomization(
-            cs.clone(),
-            &ct_after_shuffle_vec,
-            &encryption_randomizations_vec,
-            shuffler_pk,
-        )?;
-
-        tracing::debug!(target: LOG_TARGET, "RS shuffle with re-encryption completed successfully");
-        Ok(reencrypted_deck)
-    })
-}
+// Note: RS shuffle gadget functions (rs_shuffle_indices, rs_shuffle, rs_shuffle_with_reencryption)
+// have been moved to the rs_shuffle_gadget module for better organization.
+// They are now imported and re-exported from this module for backward compatibility.
 
 /// RS Shuffle Circuit - Main circuit for verifying RS shuffle
 pub struct RSShuffleCircuit<F, C>
@@ -791,6 +529,7 @@ mod tests {
         SortedRow, SortedRowVar, UnsortedRow, UnsortedRowVar,
     };
     use crate::shuffling::rs_shuffle::prepare_witness_data_circuit;
+    use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle;
     use crate::shuffling::rs_shuffle::witness_preparation::build_level;
     use ark_bls12_381::Fr as TestField;
     use ark_ec::short_weierstrass::Projective;

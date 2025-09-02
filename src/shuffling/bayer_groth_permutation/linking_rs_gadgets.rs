@@ -159,7 +159,7 @@ pub fn compute_permutation_proof_gadget<F, C, CV>(
     perm_offset_challenge_z: &FpVar<F>,
     perm_power_challenge: &FpVar<F>,
     generator: &CV,
-) -> Result<(FpVar<F>, FpVar<F>, CV), SynthesisError>
+) -> Result<CV, SynthesisError>
 where
     F: PrimeField,
     C: ark_ec::CurveGroup<ScalarField = F>,
@@ -199,7 +199,8 @@ where
     // Step 5: Fixed-base scalar multiplication
     let point = fixed_base_scalar_mul_gadget::<C, CV>(cs, &left, generator)?;
 
-    Ok((left, right, point))
+    // Return the computed point
+    Ok(point)
 }
 
 /// Allocate a vector of field elements as circuit variables
