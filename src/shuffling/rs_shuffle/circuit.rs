@@ -1,15 +1,23 @@
 //! RS shuffle verification circuits for SNARK
 
-use super::data_structures::WitnessData;
-use super::rs_shuffle_gadget::{rs_shuffle_indices, rs_shuffle_with_reencryption};
+use super::data_structures::{WitnessData, WitnessDataVar};
+use super::rs_shuffle_gadget::{
+    rs_shuffle_indices, rs_shuffle_with_bayer_groth_linking_proof, rs_shuffle_with_reencryption,
+};
 use super::{LEVELS, N};
+use crate::bayer_groth_permutation::bg_setup_gadget::{
+    BayerGrothSetupParametersGadget, BayerGrothTranscriptGadget,
+};
 use crate::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::rs_shuffle::{SortedRowVar, UnsortedRowVar};
+use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
 use crate::track_constraints;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
+use ark_r1cs_std::groups::GroupOpsBounds;
 use ark_r1cs_std::{alloc::AllocVar, fields::FieldVar};
 use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
@@ -125,6 +133,83 @@ where
     pub witness: WitnessData<N, LEVELS>,
     /// Number of samples used in bit generation
     pub num_samples: usize,
+}
+
+/// RS Shuffle with Bayer-Groth Linking Circuit
+///
+/// This circuit verifies:
+/// 1. RS shuffle correctness (indices are properly shuffled)
+/// 2. Bayer-Groth permutation equality proof
+/// 3. Linking between the shuffle and permutation proof
+pub struct RSShuffleWithBayerGrothLinkCircuit<F, C, CV, const N: usize, const LEVELS: usize>
+where
+    F: PrimeField,
+    C: CurveGroup<BaseField = F>,
+    CV: CurveVar<C, F>,
+{
+    // ============ Public Inputs ============
+    /// RS shuffle challenge alpha
+    pub alpha: F,
+    /// Commitment to the permutation vector
+    pub c_perm: C,
+    /// Commitment to the power vector
+    pub c_power: C,
+
+    // ============ Private Inputs ============
+    /// The actual permutation values (1-indexed)
+    pub permutation: [C::ScalarField; N],
+    /// RS shuffle witness data
+    pub witness: WitnessData<N, LEVELS>,
+    /// Initial indices (0..N-1)
+    pub indices_init: [F; N],
+    /// Shuffled indices
+    pub indices_after_shuffle: [F; N],
+    /// Blinding factors (r, s) for zero-knowledge
+    pub blinding_factors: (C::ScalarField, C::ScalarField),
+
+    // ============ Constants ============
+    /// Generator point for commitments
+    pub generator: C,
+    /// Domain for transcript (Fiat-Shamir)
+    pub domain: Vec<u8>,
+
+    _phantom: PhantomData<CV>,
+}
+
+impl<F, C, CV, const N: usize, const LEVELS: usize>
+    RSShuffleWithBayerGrothLinkCircuit<F, C, CV, N, LEVELS>
+where
+    F: PrimeField,
+    C: CurveGroup<BaseField = F>,
+    CV: CurveVar<C, F>,
+{
+    /// Create a new RSShuffleWithBayerGrothLinkCircuit instance
+    pub fn new(
+        alpha: F,
+        c_perm: C,
+        c_power: C,
+        permutation: [C::ScalarField; N],
+        witness: WitnessData<N, LEVELS>,
+        indices_init: [F; N],
+        indices_after_shuffle: [F; N],
+        blinding_factors: (C::ScalarField, C::ScalarField),
+        generator: C,
+        domain: Vec<u8>,
+    ) -> Self {
+        Self {
+            alpha,
+            c_perm,
+            c_power,
+            permutation,
+            witness,
+            indices_init,
+            indices_after_shuffle,
+            blinding_factors,
+            generator,
+            domain,
+            _phantom: PhantomData,
+        }
+    }
 }
 
 impl<C, CV, const N: usize, const LEVELS: usize> ConstraintSynthesizer<C::BaseField>
@@ -302,6 +387,142 @@ where
                     &witness_var,
                     &alpha_var,
                 )
+            }
+        )
+    }
+}
+
+impl<C, CV, const N: usize, const LEVELS: usize> ConstraintSynthesizer<C::BaseField>
+    for RSShuffleWithBayerGrothLinkCircuit<C::BaseField, C, CV, N, LEVELS>
+where
+    C: CurveGroup,
+    C::BaseField: PrimeField + Absorb,
+    C::ScalarField: PrimeField,
+    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField> + Clone,
+    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+{
+    fn generate_constraints(
+        self,
+        cs: ConstraintSystemRef<C::BaseField>,
+    ) -> Result<(), SynthesisError> {
+        track_constraints!(
+            &cs,
+            "rs shuffle with bayer groth linking proof",
+            LOG_TARGET,
+            {
+                // ============ Step 1: Allocate Public Inputs ============
+                tracing::debug!(target: LOG_TARGET, "Allocating public inputs");
+
+                // Allocate alpha challenge as public input
+                let alpha_var =
+                    FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
+
+                // Allocate commitment to permutation vector as public input
+                let c_perm_var =
+                    CV::new_variable(cs.clone(), || Ok(self.c_perm), AllocationMode::Input)?;
+
+                // Allocate commitment to power vector as public input
+                let c_power_var =
+                    CV::new_variable(cs.clone(), || Ok(self.c_power), AllocationMode::Input)?;
+
+                // ============ Step 2: Allocate Private Inputs ============
+                tracing::debug!(target: LOG_TARGET, "Allocating private inputs");
+
+                // Allocate permutation as EmulatedFpVar (scalar field in base field circuit)
+                let permutation_vars: [EmulatedFpVar<C::ScalarField, C::BaseField>; N] =
+                    std::array::from_fn(|i| {
+                        EmulatedFpVar::new_variable(
+                            cs.clone(),
+                            || Ok(self.permutation[i]),
+                            AllocationMode::Witness,
+                        )
+                        .expect("Failed to allocate permutation element")
+                    });
+
+                // Allocate witness data
+                let witness_var = WitnessDataVar::new_variable(
+                    cs.clone(),
+                    || Ok(&self.witness),
+                    AllocationMode::Witness,
+                )?;
+
+                // Allocate initial indices
+                let indices_init_vars: [FpVar<C::BaseField>; N] = std::array::from_fn(|i| {
+                    FpVar::new_variable(
+                        cs.clone(),
+                        || Ok(self.indices_init[i]),
+                        AllocationMode::Witness,
+                    )
+                    .expect("Failed to allocate initial index")
+                });
+
+                // Allocate shuffled indices
+                let indices_after_shuffle_vars: [FpVar<C::BaseField>; N] =
+                    std::array::from_fn(|i| {
+                        FpVar::new_variable(
+                            cs.clone(),
+                            || Ok(self.indices_after_shuffle[i]),
+                            AllocationMode::Witness,
+                        )
+                        .expect("Failed to allocate shuffled index")
+                    });
+
+                // Allocate blinding factors as EmulatedFpVar
+                let blinding_r_var = EmulatedFpVar::new_variable(
+                    cs.clone(),
+                    || Ok(self.blinding_factors.0),
+                    AllocationMode::Witness,
+                )?;
+                let blinding_s_var = EmulatedFpVar::new_variable(
+                    cs.clone(),
+                    || Ok(self.blinding_factors.1),
+                    AllocationMode::Witness,
+                )?;
+                let blinding_factors_var = (blinding_r_var, blinding_s_var);
+
+                // ============ Step 3: Allocate Constants ============
+                tracing::debug!(target: LOG_TARGET, "Allocating constants");
+
+                // Allocate generator as constant
+                let generator_var = CV::new_constant(cs.clone(), self.generator)?;
+
+                // ============ Step 4: Create Transcript Gadget ============
+                tracing::debug!(target: LOG_TARGET, "Creating transcript gadget");
+
+                let mut transcript_gadget =
+                    BayerGrothTranscriptGadget::new(cs.clone(), &self.domain)?;
+
+                // ============ Step 5: Run Combined Protocol ============
+                tracing::debug!(target: LOG_TARGET, "Running RS shuffle + Bayer-Groth protocol");
+
+                let (proof_point, bg_params) =
+                    rs_shuffle_with_bayer_groth_linking_proof::<C::BaseField, C, CV, N, LEVELS>(
+                        cs.clone(),
+                        &alpha_var,
+                        &c_perm_var,
+                        &c_power_var,
+                        &generator_var,
+                        &permutation_vars,
+                        &witness_var,
+                        &indices_init_vars,
+                        &indices_after_shuffle_vars,
+                        &blinding_factors_var,
+                        &mut transcript_gadget,
+                    )?;
+
+                // The proof_point and bg_params are now constrained by the gadget
+                // No additional constraints needed as the gadget handles all verification
+
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    "Successfully generated constraints for RS shuffle + Bayer-Groth proof"
+                );
+
+                // Optionally, we could expose the proof_point as a public output
+                // by allocating it as an Input variable and enforcing equality
+                // For now, the verification is complete within the circuit
+
+                Ok(())
             }
         )
     }

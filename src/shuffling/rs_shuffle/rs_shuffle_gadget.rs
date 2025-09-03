@@ -565,7 +565,7 @@ where
 /// # Returns
 /// - `Ok((CV, BayerGrothSetupParametersGadget<F, CV>))`: A tuple containing the complete proof point (including randomness factor) and the Bayer-Groth parameters
 /// - `Err(SynthesisError)`: If any constraint fails
-pub fn rs_shuffle_with_bayer_groth_proof<F, C, CV, const N: usize, const LEVELS: usize>(
+pub fn rs_shuffle_with_bayer_groth_linking_proof<F, C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     // Public inputs
     alpha: &FpVar<F>,
@@ -911,7 +911,7 @@ mod tests {
             "Verified permutation equality: L = R");
 
         // Step 7: Run the combined gadget
-        let (proof_point, bg_params) = rs_shuffle_with_bayer_groth_proof(
+        let (proof_point, bg_params) = rs_shuffle_with_bayer_groth_linking_proof(
             cs.clone(),
             &alpha,
             &c_perm_var,
