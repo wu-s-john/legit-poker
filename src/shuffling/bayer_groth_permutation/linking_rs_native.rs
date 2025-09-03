@@ -98,6 +98,52 @@ pub fn verify_permutation_equality<F: Field>(left_product: F, right_product: F) 
     left_product == right_product
 }
 
+/// Compute the left product for permutation equality check: ∏(y*π(i) + x^π(i) - z) for i=1..N
+/// This is the product over the permuted values
+/// 
+/// # Parameters
+/// - `permutation`: The permutation vector [π(1), ..., π(N)]
+/// - `perm_power_vector`: The power vector [x^π(1), ..., x^π(N)]
+/// - `perm_mixing_challenge_y`: The mixing challenge y
+/// - `perm_offset_challenge_z`: The offset challenge z
+pub fn compute_left_product_for_permutation_check<F: PrimeField, const N: usize>(
+    permutation: &[F; N],
+    perm_power_vector: &[F; N],
+    perm_mixing_challenge_y: F,
+    perm_offset_challenge_z: F,
+) -> F {
+    let mut product = F::one();
+    for i in 0..N {
+        // Compute y*π(i) + x^π(i) - z
+        let term = perm_mixing_challenge_y * permutation[i] + perm_power_vector[i] - perm_offset_challenge_z;
+        product *= term;
+    }
+    product
+}
+
+/// Compute the right product for permutation equality check: ∏(y*i + x^i - z) for i=1..N
+/// This is the product over the natural order
+/// 
+/// # Parameters
+/// - `perm_mixing_challenge_y`: The mixing challenge y
+/// - `perm_power_challenge`: The power challenge x
+/// - `perm_offset_challenge_z`: The offset challenge z
+pub fn compute_right_product_for_permutation_check<F: PrimeField, const N: usize>(
+    perm_mixing_challenge_y: F,
+    perm_power_challenge: F,
+    perm_offset_challenge_z: F,
+) -> F {
+    let mut product = F::one();
+    for i in 1..=N {
+        // Compute y*i + x^i - z
+        let i_scalar = F::from(i as u64);
+        let x_pow_i = perm_power_challenge.pow(&[i as u64]);
+        let term = perm_mixing_challenge_y * i_scalar + x_pow_i - perm_offset_challenge_z;
+        product *= term;
+    }
+    product
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

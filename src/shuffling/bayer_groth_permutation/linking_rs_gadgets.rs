@@ -10,6 +10,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
+use std::ops::Mul;
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
@@ -96,6 +97,63 @@ where
     }
 
     Ok(product)
+}
+
+/// Compute the blinded Pedersen commitment to the vector (d - z)
+/// where:
+/// - d_i = y*a_i + b_i (linear blend of permutation and power vectors)
+/// - Each element becomes d_i - z
+/// - Blinding factor: t = y*r + s
+///
+/// Returns: C_d = Com(d - z; t) = ∑(d_i - z)*G_i + t*G_blinding
+pub fn compute_blinded_commitment_to_d_minus_z_gadget<F, C, CV, FV, const N: usize>(
+    generator: &CV,
+    permutation: &[FV; N],        // a vector (π(1), ..., π(N))
+    perm_power_vector: &[FV; N],  // b vector (x^π(1), ..., x^π(N))
+    perm_mixing_challenge_y: &FV, // y challenge
+    perm_offset_challenge_z: &FV, // z challenge
+    blinding_r: &FV,              // blinding factor r for permutation
+    blinding_s: &FV,              // blinding factor s for power vector
+) -> Result<CV, SynthesisError>
+where
+    F: PrimeField,
+    C: CurveGroup,
+    CV: CurveVar<C, F> + for<'a> Mul<&'a FV, Output = CV>,
+    FV: FieldVar<C::ScalarField, F>,
+    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    for<'a> &'a FV: FieldOpsBounds<'a, C::ScalarField, FV>,
+{
+    // Step 1: Compute d vector: d_i = y*a_i + b_i
+    let d_vector = linear_blend_gadget(
+        &permutation[..],
+        &perm_power_vector[..],
+        perm_mixing_challenge_y,
+    )?;
+
+    // Step 2: Compute d - z vector: (d_1 - z, ..., d_N - z)
+    let d_minus_z_vector: Vec<FV> = d_vector
+        .iter()
+        .map(|d_i| d_i - perm_offset_challenge_z)
+        .collect();
+
+    // Step 3: Compute blinding factor t = y*r + s
+    let blinding_factor_t: FV = perm_mixing_challenge_y * blinding_r + blinding_s;
+
+    // Step 4: Compute the Pedersen commitment
+    // Since we're using a single generator, we compute:
+    // C = (∑(d_i - z)) * G + t * G = (∑(d_i - z) + t) * G
+    // First accumulate the scalar, then do one scalar multiplication
+    let mut sum = blinding_factor_t.clone();
+    for elem in d_minus_z_vector.iter() {
+        sum = sum + elem;
+    }
+
+    // Now do scalar multiplication using the Mul trait
+    let commitment = generator.clone() * &sum;
+
+    tracing::debug!(target: LOG_TARGET, "Computed blinded commitment to (d - z) with blinding factor t = y*r + s");
+
+    Ok(commitment)
 }
 
 /// Fixed-base scalar multiplication gadget: P = [scalar]G

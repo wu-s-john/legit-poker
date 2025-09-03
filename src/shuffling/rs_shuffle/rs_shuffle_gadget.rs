@@ -656,7 +656,10 @@ mod tests {
     use super::*;
     use crate::shuffling::bayer_groth_permutation::{
         bg_setup::BayerGrothTranscript,
-        linking_rs_native::{compute_left_product, compute_linear_blend, compute_right_product},
+        linking_rs_native::{
+            compute_left_product, compute_left_product_for_permutation_check, compute_linear_blend,
+            compute_right_product, compute_right_product_for_permutation_check,
+        },
     };
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
     use ark_bn254::{Fr, G1Projective};
@@ -676,34 +679,33 @@ mod tests {
     const TEST_TARGET: &str = "nexus_nova";
 
     /// Compute the expected proof point using the commitment formula:
-    /// c_D * c_{-z} * randomness_factor
+    /// c_D * c_{-z}
     /// where:
     /// - c_D = c_perm^y * c_power (also written as c_A^y * c_B)
-    /// - c_{-z} = generator * (-z)
-    /// - randomness_factor = generator^(y*r + s)
-    fn compute_expected_proof_point_native<G: CurveGroup>(
+    /// - c_{-z} = generator * (-z * N)
+    fn compute_expected_proof_point_native<G: CurveGroup, const N: usize>(
         c_perm: G,  // c_A: commitment to permutation vector
         c_power: G, // c_B: commitment to power vector
         generator: G,
-        y: G::ScalarField,          // mixing challenge
-        z: G::ScalarField,          // offset challenge
-        blinding_r: G::ScalarField, // blinding factor for c_perm
-        blinding_s: G::ScalarField, // blinding factor for c_power
+        y: G::ScalarField, // mixing challenge
+        z: G::ScalarField, // offset challenge
     ) -> G {
         // Compute c_D = c_perm^y * c_power (in additive notation: y*c_perm + c_power)
         let c_d = c_perm.mul(y) + c_power;
 
-        // Compute c_{-z} = generator * (-z)
+        // Compute g^(-z) and add it N times
         let neg_z = -z;
-        let c_minus_z = generator.mul(neg_z);
+        let g_neg_z = generator.mul(neg_z);
 
-        // Compute randomness_factor = generator^(y*r + s)
-        let exponent = y * blinding_r + blinding_s;
-        let randomness_factor = generator.mul(exponent);
+        // Add g^(-z) N times to get N * g^(-z)
+        let mut c_minus_z = G::zero();
+        for _ in 0..N {
+            c_minus_z = c_minus_z + g_neg_z;
+        }
 
-        // Final result: c_D + c_{-z} + randomness_factor
-        // This is equivalent to c_D * c_{-z} * randomness_factor in multiplicative notation
-        c_d + c_minus_z + randomness_factor
+        // Final result: c_D + c_{-z}
+        // This is equivalent to c_D * c_{-z} in multiplicative notation
+        c_d + c_minus_z
     }
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
@@ -713,6 +715,7 @@ mod tests {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
+                    .with_line_number(true) // Add line numbers to trace output
                     .with_test_writer(), // This ensures output goes to test stdout
             )
             .with(filter)
@@ -738,14 +741,12 @@ mod tests {
         // Step 1: Generate RS shuffle witness data by applying permutation
         // Create a simple input array (0..N) with 1-based indexing for permutation
         let input_array: [usize; N] = std::array::from_fn(|i| i + 1);
-        let (witness_data, _num_samples, output_array) =
+        let (witness_data, _num_samples, perm_array) =
             apply_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &input_array);
 
         // Step 2: The output_array contains the permuted values (already 1-based)
-        let permutation_values: Vec<Fr> = output_array
-            .iter()
-            .map(|&val| Fr::from(val as u64))
-            .collect();
+        let permutation_values: Vec<Fr> =
+            perm_array.iter().map(|&val| Fr::from(val as u64)).collect();
 
         // Step 3: Setup generator and run native Bayer-Groth protocol
         let generator = G1Projective::generator();
@@ -861,18 +862,53 @@ mod tests {
         // Create transcript gadget
         let mut transcript_gadget = BayerGrothTranscriptGadget::new(cs.clone(), domain)?;
 
-        // Step 6: Compute expected proof point using native function
-        let expected_proof_point = compute_expected_proof_point_native(
+        // Step 6: Compute expected proof point using native function (without blinding)
+        let expected_proof_point = compute_expected_proof_point_native::<G1Projective, N>(
             native_params.c_perm,
             native_params.c_power,
             generator,
             native_params.perm_mixing_challenge_y,
             native_params.perm_offset_challenge_z,
-            blinding_r,
-            blinding_s,
         );
 
         tracing::debug!(target: TEST_TARGET, "Expected proof point computed natively");
+
+        // Additional verification: Check that the permutation equality holds
+        // Extract the permutation as Fr values
+        let permutation_fr: [Fr; N] = std::array::from_fn(|i| Fr::from(perm_array[i] as u64));
+
+        // Compute power vector: x^π(i) for each element in the permutation
+        let perm_power_vector_fr: [Fr; N] = std::array::from_fn(|i| {
+            native_params
+                .perm_power_challenge
+                .pow(&[perm_array[i] as u64])
+        });
+
+        // Compute left product using the permutation: ∏(y*π(i) + x^π(i) - z)
+        let left_product_check = compute_left_product_for_permutation_check::<Fr, N>(
+            &permutation_fr,
+            &perm_power_vector_fr,
+            native_params.perm_mixing_challenge_y,
+            native_params.perm_offset_challenge_z,
+        );
+
+        // Compute right product using natural order: ∏(y*i + x^i - z)
+        let right_product_check = compute_right_product_for_permutation_check::<Fr, N>(
+            native_params.perm_mixing_challenge_y,
+            native_params.perm_power_challenge,
+            native_params.perm_offset_challenge_z,
+        );
+
+        // Verify the permutation equality
+        assert_eq!(
+            left_product_check, right_product_check,
+            "Permutation equality check failed: left_product != right_product"
+        );
+
+        tracing::debug!(target: TEST_TARGET,
+            ?left_product_check,
+            ?right_product_check,
+            "Verified permutation equality: L = R");
 
         // Step 7: Run the combined gadget
         let (proof_point, bg_params) = rs_shuffle_with_bayer_groth_proof(
@@ -888,6 +924,8 @@ mod tests {
             &blinding_factors,
             &mut transcript_gadget,
         )?;
+
+        tracing::debug!(target: TEST_TARGET, proof_point = ?proof_point.value()?, "Computed the bayer groth proof");
 
         tracing::debug!(target: TEST_TARGET,
             perm_power_challenge = ?bg_params.perm_power_challenge.value()?,
@@ -923,6 +961,59 @@ mod tests {
             native_params.perm_offset_challenge_z,
             "Circuit perm_offset_challenge_z should match native"
         );
+
+        // Import the function we need
+        use crate::shuffling::bayer_groth_permutation::linking_rs_gadgets::compute_blinded_commitment_to_d_minus_z_gadget;
+
+        // Compute the blinded commitment to (d - z) and verify it matches expected proof point
+        let blinded_commitment = compute_blinded_commitment_to_d_minus_z_gadget::<
+            ark_bn254::Fq,
+            G1Projective,
+            G1Var,
+            EmulatedFpVar<ark_bn254::Fr, ark_bn254::Fq>,
+            N,
+        >(
+            &generator_var,
+            &permutation_vars,
+            &std::array::from_fn(|i| {
+                EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                    Ok(native_params
+                        .perm_power_challenge
+                        .pow(&[perm_array[i] as u64]))
+                })
+                .unwrap()
+            }),
+            &EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                Ok(native_params.perm_mixing_challenge_y)
+            })?,
+            &EmulatedFpVar::<ark_bn254::Fr, ark_bn254::Fq>::new_witness(cs.clone(), || {
+                Ok(native_params.perm_offset_challenge_z)
+            })?,
+            &blinding_factors.0, // blinding_r
+            &blinding_factors.1, // blinding_s
+        )?;
+
+        // Assert that the blinded commitment matches the expected proof point
+        let blinded_commitment_value = blinded_commitment.value()?;
+        tracing::debug!(target: TEST_TARGET, ?blinded_commitment_value, "Computed the blinded commitment");
+
+        let proof_point_value = proof_point.value()?;
+        let values_equal = proof_point_value == blinded_commitment_value;
+        tracing::debug!(target: TEST_TARGET,
+            ?blinded_commitment_value,
+            ?proof_point_value,
+            ?values_equal,
+            "Is the blinded commitment value equal to the computed value?");
+
+        assert_eq!(
+            blinded_commitment_value, expected_proof_point,
+            "Blinded commitment should match expected proof point"
+        );
+
+        tracing::debug!(target: TEST_TARGET,
+            ?blinded_commitment_value,
+            ?expected_proof_point,
+            "Verified blinded commitment matches expected proof point");
 
         // Step 9: Verify constraint system is satisfied
         assert!(cs.is_satisfied()?, "Constraint system should be satisfied");

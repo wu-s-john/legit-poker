@@ -226,7 +226,7 @@ fn compute_perm_power_vector<F: PrimeField, const N: usize>(
 
 /// Simple single-generator commitment: g^(r + sum(i * v[i]))
 /// This replaces the multi-generator Pedersen commitment for simplicity
-fn simple_commit_vector<G: CurveGroup, const N: usize>(
+pub fn simple_commit_vector<G: CurveGroup, const N: usize>(
     generator: G,
     values: &[G::ScalarField; N],
     randomness: G::ScalarField,
