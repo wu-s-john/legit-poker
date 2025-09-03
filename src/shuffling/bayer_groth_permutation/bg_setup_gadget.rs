@@ -4,35 +4,35 @@ use crate::{shuffling::curve_absorb::CurveAbsorbGadget, track_constraints};
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
 };
-use ark_ff::PrimeField;
+use ark_ec::CurveGroup;
+use ark_ff::{BigInteger, PrimeField};
 use ark_r1cs_std::{
     alloc::AllocVar,
-    fields::{fp::FpVar, FieldVar},
+    fields::{emulated_fp::EmulatedFpVar, fp::FpVar, FieldVar},
     prelude::*,
     uint8::UInt8,
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 
-const LOG_TARGET: &str = "bayer_groth::fiat_shamir_gadget";
+const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth::bg_setup_gadget";
 
 /// Output parameters from the Bayer-Groth setup protocol (gadget version)
-/// 
-/// Note: The challenges are now stored as FpVar<F> (base field) since they are
-/// derived from the Poseidon sponge which operates over the base field.
-/// When these challenges need to be used as scalar field elements (e.g., for
-/// scalar multiplication), they should be converted to EmulatedFpVar at the usage site.
-pub struct BayerGrothSetupParametersGadget<F: PrimeField, CG> {
-    /// The power challenge x used to compute the power vector (base field representation)
-    pub perm_power_challenge: FpVar<F>,
+///
+/// Note: The challenges are now stored as EmulatedFpVar<ScalarField, F> (scalar field)
+/// to match the native implementation. The conversion from base field happens
+/// in the run_protocol function.
+pub struct BayerGrothSetupParametersGadget<ScalarField: PrimeField, F: PrimeField, CG> {
+    /// The power challenge x used to compute the power vector (scalar field representation)
+    pub perm_power_challenge: EmulatedFpVar<ScalarField, F>,
     /// Commitment to the permutation vector
     pub c_perm: CG,
     /// Commitment to the power vector
     pub c_power: CG,
-    /// The mixing challenge y (base field representation)
-    pub perm_mixing_challenge_y: FpVar<F>,
-    /// The offset challenge z (base field representation)
-    pub perm_offset_challenge_z: FpVar<F>,
+    /// The mixing challenge y (scalar field representation)
+    pub perm_mixing_challenge_y: EmulatedFpVar<ScalarField, F>,
+    /// The offset challenge z (scalar field representation)
+    pub perm_offset_challenge_z: EmulatedFpVar<ScalarField, F>,
 }
 
 /// SNARK gadget version of Bayer-Groth transcript for in-circuit Fiat-Shamir
@@ -134,46 +134,100 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
     /// 4. Absorb commitment to power vector
     /// 5. Derive mixing and offset challenges
     ///
+    /// Type Parameters:
+    /// - C: The curve group type
+    /// - CG: The curve gadget type
+    ///
     /// Parameters:
     /// - cs: Constraint system reference
     /// - c_perm: Commitment to permutation vector (curve point)
     /// - c_power: Commitment to power vector (curve point)
-    /// - permutation: The permutation values for computing power vector
     ///
     /// Returns: BayerGrothSetupParametersGadget containing all protocol parameters
-    pub fn run_protocol<CG>(
+    pub fn run_protocol<C, CG>(
         &mut self,
         cs: ConstraintSystemRef<F>,
         c_perm: &CG,
         c_power: &CG,
-    ) -> Result<BayerGrothSetupParametersGadget<F, CG>, SynthesisError>
+    ) -> Result<BayerGrothSetupParametersGadget<C::ScalarField, F, CG>, SynthesisError>
     where
-        CG: CurveAbsorbGadget<F> + Clone,
+        C: CurveGroup,
+        C::BaseField: PrimeField,
+        CG: CurveAbsorbGadget<F> + Clone + ToBitsGadget<F> + GR1CSVar<F, Value = C>,
+        for<'a> &'a CG: GroupOpsBounds<'a, C, CG>,
     {
-        track_constraints!(cs, "bg_setup_protocol", LOG_TARGET, {
+        // Log the commitment values if available
+        if let (Ok(c_perm_value), Ok(c_power_value)) = (c_perm.value(), c_power.value()) {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?c_perm_value,
+                ?c_power_value,
+                "Gadget run_protocol called with commitments"
+            );
+        }
+
+        let cs_clone = cs.clone();
+        track_constraints!(cs_clone, "bg_setup_protocol", LOG_TARGET, {
             // Step 1: Absorb commitment to permutation vector
             self.absorb_perm_vector_commitment(c_perm)?;
-            tracing::debug!(target: LOG_TARGET, "Step 1: Absorbed permutation vector commitment");
+            tracing::debug!(target: LOG_TARGET, c_perm = ?c_perm.value()?, "Step 1: Absorbed permutation vector commitment");
 
             // Step 2: Derive power challenge
             let perm_power_challenge = self.derive_perm_power_challenge()?;
-            tracing::debug!(target: LOG_TARGET, "Step 2: Derived power challenge");
+
+            let perm_power_challenge_scalar =
+                EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                    let power_base = perm_power_challenge.value()?;
+                    let power_scalar = C::ScalarField::from_le_bytes_mod_order(
+                        &power_base.into_bigint().to_bytes_le(),
+                    );
+                    Ok(power_scalar)
+                })?;
+
+            tracing::debug!(target: LOG_TARGET,
+                perm_power_challenge = ?perm_power_challenge_scalar.value()?, "Step 2: Derived power challenge");
 
             // Step 3: Absorb commitment to power vector
             self.absorb_perm_power_vector_commitment(c_power)?;
-            tracing::debug!(target: LOG_TARGET, "Step 3: Absorbed power vector commitment");
+            tracing::debug!(target: LOG_TARGET,
+                c_power = ?c_power.value()?,
+                "Step 3: Absorbed power vector commitment");
 
             // Step 4: Derive mixing and offset challenges
-            let (perm_mixing_challenge_y, perm_offset_challenge_z) =
+            let (perm_mixing_challenge_y_base, perm_offset_challenge_z_base) =
                 self.derive_perm_challenges_y_z()?;
-            tracing::debug!(target: LOG_TARGET, "Step 4: Derived mixing and offset challenges");
+
+            // Convert challenges from base field to scalar field
+
+            let perm_mixing_challenge_y_scalar =
+                EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                    let y_base = perm_mixing_challenge_y_base.value()?;
+                    let y_scalar = C::ScalarField::from_le_bytes_mod_order(
+                        &y_base.into_bigint().to_bytes_le(),
+                    );
+                    Ok(y_scalar)
+                })?;
+
+            let perm_offset_challenge_z_scalar =
+                EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
+                    let z_base = perm_offset_challenge_z_base.value()?;
+                    let z_scalar = C::ScalarField::from_le_bytes_mod_order(
+                        &z_base.into_bigint().to_bytes_le(),
+                    );
+                    Ok(z_scalar)
+                })?;
+
+            tracing::debug!(target: LOG_TARGET,
+                perm_mixing_challenge_y_base = ?perm_mixing_challenge_y_scalar.value()?,
+                perm_offset_challenge_z_base = ?perm_offset_challenge_z_scalar.value()?,
+                "Step 4: Derived mixing and offset challenges");
 
             Ok(BayerGrothSetupParametersGadget {
-                perm_power_challenge,
+                perm_power_challenge: perm_power_challenge_scalar,
                 c_perm: c_perm.clone(),
                 c_power: c_power.clone(),
-                perm_mixing_challenge_y,
-                perm_offset_challenge_z,
+                perm_mixing_challenge_y: perm_mixing_challenge_y_scalar,
+                perm_offset_challenge_z: perm_offset_challenge_z_scalar,
             })
         })
     }

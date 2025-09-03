@@ -1,7 +1,7 @@
 //! Circuit gadgets for Bayer-Groth permutation equality proof
 
 use ark_ec::CurveGroup;
-use ark_ff::{Field, PrimeField};
+use ark_ff::PrimeField;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     fields::{emulated_fp::EmulatedFpVar, fp::FpVar, FieldOpsBounds, FieldVar},
