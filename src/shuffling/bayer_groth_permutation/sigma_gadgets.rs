@@ -442,7 +442,6 @@ mod tests {
     use crate::shuffling::test_utils::{
         generate_random_ciphertexts, shuffle_and_rerandomize_random,
     };
-    use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::{
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
@@ -498,13 +497,12 @@ mod tests {
 
     fn run_sigma_circuit_test<const N: usize>() -> Result<(), SynthesisError> {
         let mut rng = test_rng();
-        // Keys and parameters
-        let sk = Fr::rand(&mut rng);
-        let keys = ElGamalKeys::new(sk);
+        // Generate a random public key (random elliptic curve point)
+        let public_key = G1Projective::rand(&mut rng);
         let pedersen_params = Pedersen::<G1Projective>::setup(&mut rng).unwrap();
 
         // Inputs: N ciphertexts
-        let (c_in, _) = generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+        let (c_in, _) = generate_random_ciphertexts::<G1Projective, N>(&public_key, &mut rng);
 
         // Permute + rerandomize
         let pi: [usize; N] = core::array::from_fn(|i| (i * 7 + 3) % N); // simple pseudorandom permutation
@@ -515,7 +513,7 @@ mod tests {
         let (c_out, rerand) = shuffle_and_rerandomize_random::<G1Projective, N>(
             &c_in,
             &pi,
-            keys.public_key,
+            public_key,
             &mut rng,
         );
 
@@ -543,7 +541,7 @@ mod tests {
         let config_fr = crate::config::poseidon_config::<Fq>();
         let mut prover_sponge = PoseidonSponge::new(&config_fr);
         let proof = super::super::sigma_protocol::prove_sigma_linkage_ni(
-            &keys,
+            &public_key,
             &pedersen_params,
             &c_in,
             &c_out,
@@ -560,7 +558,7 @@ mod tests {
         tracing::info!(target: TEST_TARGET, "Starting native verification of proof");
         let mut verifier_sponge = PoseidonSponge::new(&config_fr);
         let native_valid = super::super::sigma_protocol::verify_sigma_linkage_ni(
-            &keys,
+            &public_key,
             &pedersen_params,
             &c_in,
             &c_out,
@@ -581,7 +579,7 @@ mod tests {
 
         // Generator and PK as constants
         let gen_var = G1Var::constant(G1Projective::generator());
-        let pk_var = G1Var::constant(keys.public_key);
+        let pk_var = G1Var::constant(public_key);
 
         // Allocate ciphertexts as constants
         let mut cin_vars = Vec::with_capacity(N);

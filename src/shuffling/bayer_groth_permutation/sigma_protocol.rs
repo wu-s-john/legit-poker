@@ -43,7 +43,7 @@
 //! - The Pedersen commitment here is a *scalar-vector* Pedersen over N coordinates.
 
 use crate::shuffling::curve_absorb::CurveAbsorb;
-use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalKeys};
+use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_crypto_primitives::{
     commitment::pedersen::{Commitment as PedersenCommitment, Parameters, Window},
@@ -115,7 +115,7 @@ pub struct SigmaProof<G: CurveGroup, const N: usize> {
 /// **Returns:** `SigmaProof`.
 #[allow(non_snake_case)]
 pub fn prove_sigma_linkage_ni<G, const N: usize>(
-    keys: &ElGamalKeys<G>,
+    public_key: &G,
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
     output_ciphertexts: &[ElGamalCiphertext<G>; N],
@@ -186,7 +186,7 @@ where
     // sigma_ciphertext_T = E_pk(1; ciphertext_masking_rerand) · ∏ C_j^{t_j}
     // This is also T_grp = E_pk(1;t_ρ) · ∏_{j=1}^N C_j^{t_j}
     let blinding_rerandomization_commitment: G = encrypt_one_and_combine(
-        keys,
+        public_key,
         ciphertext_masking_rerand,
         input_ciphertexts,
         &blinding_factors,
@@ -246,7 +246,7 @@ where
 ///
 /// **Returns:** true iff both hold.
 pub fn verify_sigma_linkage_ni<G: CurveGroup, const N: usize>(
-    keys: &ElGamalKeys<G>,
+    public_key: &G,
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
     output_ciphertexts: &[ElGamalCiphertext<G>; N],
@@ -332,7 +332,7 @@ where
     // 2) Group-side equality
     // E_pk(1; sigma_response_rerand) · ∏ C_j^{sigma_response_b[j]}
     let lhs_grp = encrypt_one_and_combine(
-        keys,
+        public_key,
         proof.sigma_response_rerand, // Now a single scalar
         input_ciphertexts,
         &proof.sigma_response_b,
@@ -396,7 +396,7 @@ where
 ///
 /// Returns: c1 + c2 where (c1, c2) = E_pk(1; randomness) · ∏ C_j^{scalar_factors[j]}
 pub fn encrypt_one_and_combine<G: CurveGroup, const N: usize>(
-    keys: &ElGamalKeys<G>,
+    public_key: &G,
     randomness: G::ScalarField,
     ciphertexts: &[ElGamalCiphertext<G>; N],
     scalar_factors: &[G::ScalarField; N],
@@ -409,7 +409,7 @@ where
 
     // E_pk(1; randomness) = (g^randomness, pk^randomness · g)
     let rerand_c1 = curve_generator * randomness;
-    let rerand_c2 = keys.public_key * randomness + curve_generator;
+    let rerand_c2 = *public_key * randomness + curve_generator;
 
     // ∏ C_j^{scalar_factors[j]}
     let msm = msm_ciphertexts(ciphertexts, scalar_factors);
@@ -498,6 +498,7 @@ mod tests {
         apply_permutation, generate_random_ciphertexts, generate_random_permutation,
         invert_permutation, shuffle_and_rerandomize_random,
     };
+    use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::CommitmentScheme;
     use ark_ec::PrimeGroup;
@@ -532,7 +533,7 @@ mod tests {
     /// Test instance with all necessary data for a complete test
     #[allow(non_snake_case)]
     struct SigmaTestInstance<const N: usize> {
-        keys: ElGamalKeys<G1Projective>,
+        public_key: G1Projective,
         pedersen_params: Parameters<G1Projective>,
         C_in: [ElGamalCiphertext<G1Projective>; N],
         C_out: [ElGamalCiphertext<G1Projective>; N],
@@ -565,9 +566,8 @@ mod tests {
             rng.next_u32();
         }
 
-        // Setup keys
-        let sk = Fr::rand(&mut rng);
-        let keys = ElGamalKeys::new(sk);
+        // Generate a random public key (random elliptic curve point)
+        let public_key = G1Projective::rand(&mut rng);
 
         // Setup Pedersen parameters
         let pedersen_params = Pedersen::setup(&mut rng).unwrap();
@@ -577,12 +577,13 @@ mod tests {
         let pi_inv = invert_permutation(&pi);
 
         // Generate input deck
-        let (c_in, _randomness) = generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+        let (c_in, _randomness) =
+            generate_random_ciphertexts::<G1Projective, N>(&public_key, &mut rng);
 
         // Shuffle and rerandomize to get output deck
         // rerandomizations_output[i] contains the randomness for output position i
         let (c_out, rerandomizations_output) =
-            shuffle_and_rerandomize_random(&c_in, &pi, keys.public_key, &mut rng);
+            shuffle_and_rerandomize_random(&c_in, &pi, public_key, &mut rng);
 
         // Derive challenge x (would come from earlier Fiat-Shamir steps)
         let x = Fr::from(2u64); // Fixed for testing
@@ -615,7 +616,7 @@ mod tests {
         tracing::trace!("Computed aggregate rerandomization rho");
 
         SigmaTestInstance {
-            keys,
+            public_key,
             pedersen_params,
             C_in: c_in,
             C_out: c_out,
@@ -645,7 +646,7 @@ mod tests {
 
         // Generate proof with compile-time size checking
         let proof = prove_sigma_linkage_ni::<G1Projective, DECK_SIZE>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -662,7 +663,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, DECK_SIZE>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -689,7 +690,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         let proof = prove_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -705,7 +706,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -732,7 +733,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         let proof = prove_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -748,7 +749,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -779,7 +780,7 @@ mod tests {
         // Use fixed randomness for determinism
         let mut fixed_rng = test_rng();
         let proof1 = prove_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -797,7 +798,7 @@ mod tests {
 
         let mut fixed_rng2 = test_rng();
         let proof2 = prove_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -816,7 +817,7 @@ mod tests {
         let mut verifier_transcript1 = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -829,7 +830,7 @@ mod tests {
         let mut verifier_transcript2 = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -867,7 +868,8 @@ mod tests {
 
         // Generate input deck
         #[allow(non_snake_case)]
-        let (C_in, _randomness) = generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+        let (C_in, _randomness) =
+            generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
 
         // Shuffle WITHOUT rerandomization (rho = 0)
         #[allow(non_snake_case)]
@@ -889,7 +891,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         let proof = prove_sigma_linkage_ni::<G1Projective, N>(
-            &keys,
+            &keys.public_key,
             &pedersen_params,
             &C_in,
             &C_out,
@@ -905,7 +907,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &keys,
+            &keys.public_key,
             &pedersen_params,
             &C_in,
             &C_out,
@@ -934,7 +936,7 @@ mod tests {
             let mut prover_transcript = PoseidonSponge::new(&config);
 
             let proof = prove_sigma_linkage_ni::<G1Projective, N>(
-                &inst.keys,
+                &inst.public_key,
                 &inst.pedersen_params,
                 &inst.C_in,
                 &inst.C_out,
@@ -951,7 +953,7 @@ mod tests {
 
             assert!(
                 verify_sigma_linkage_ni::<G1Projective, N>(
-                    &inst.keys,
+                    &inst.public_key,
                     &inst.pedersen_params,
                     &inst.C_in,
                     &inst.C_out,
@@ -1043,7 +1045,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         let proof = prove_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -1068,7 +1070,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         assert!(verify_sigma_linkage_ni::<G1Projective, N>(
-            &inst.keys,
+            &inst.public_key,
             &inst.pedersen_params,
             &inst.C_in,
             &inst.C_out,
@@ -1102,7 +1104,7 @@ mod tests {
 
         // Inputs
         let (input_ciphertexts, _) =
-            generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+            generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
 
         // Permutation: reverse
         let pi: [usize; N] = core::array::from_fn(|i| N - 1 - i);
@@ -1138,7 +1140,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
         let mut prover_transcript = PoseidonSponge::new(&config);
         let proof = prove_sigma_linkage_ni(
-            &keys,
+            &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
             &output_ciphertexts,
@@ -1154,7 +1156,7 @@ mod tests {
         // Verify
         let mut verifier_transcript = PoseidonSponge::new(&config);
         let ok = verify_sigma_linkage_ni(
-            &keys,
+            &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
             &output_ciphertexts,

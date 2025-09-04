@@ -17,7 +17,6 @@ use super::rs_shuffle::{
 };
 use crate::{
     curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
-    shuffling::data_structures::ElGamalKeys,
 };
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::{
@@ -234,12 +233,6 @@ where
     // Generate new blinding factor for sigma protocol (different from BG blinding)
     let sigma_blinding = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
-    // Create ElGamal keys structure (using dummy private key for verification)
-    let keys = ElGamalKeys {
-        private_key: <G::Config as CurveConfig>::ScalarField::from(1u64),
-        public_key: config.public_key,
-    };
-
     // Create dummy Pedersen parameters - in practice these would be properly initialized
     let mut randomness_generator = Vec::with_capacity(N + 1);
     for _ in 0..=N {
@@ -258,7 +251,7 @@ where
     transcript.absorb(&config.domain);
 
     let sigma_proof = prove_sigma_linkage_ni(
-        &keys,
+        &config.public_key,
         &pedersen_params,
         ct_input,
         &ct_output,
@@ -326,12 +319,6 @@ where
     // Step 2: Verify sigma protocol proof
     tracing::debug!(target: LOG_TARGET, "Step 2: Verifying sigma protocol proof");
 
-    // Create ElGamal keys structure (using dummy private key for verification)
-    let keys = ElGamalKeys {
-        private_key: <G::Config as CurveConfig>::ScalarField::from(1u64),
-        public_key: config.public_key,
-    };
-
     // Create dummy Pedersen parameters - in practice these would be properly initialized
     let mut randomness_generator = Vec::with_capacity(N + 1);
     for _ in 0..=N {
@@ -350,7 +337,7 @@ where
     transcript.absorb(&config.domain);
 
     if !verify_sigma_linkage_ni(
-        &keys,
+        &config.public_key,
         &pedersen_params,
         ct_input,
         ct_output,

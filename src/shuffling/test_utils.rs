@@ -24,7 +24,7 @@ use ark_std::rand::Rng;
 /// let (ciphertexts, randomness) = generate_random_ciphertexts::<G1Projective, 52>(&keys, &mut rng);
 /// ```
 pub fn generate_random_ciphertexts<C: CurveGroup, const N: usize>(
-    keys: &ElGamalKeys<C>,
+    public_key: &C,
     rng: &mut impl Rng,
 ) -> ([ElGamalCiphertext<C>; N], [C::ScalarField; N])
 where
@@ -40,7 +40,7 @@ where
         let message = g * C::ScalarField::from((i + 1) as u64); // Card value i+1
         ElGamalCiphertext {
             c1: g * r,
-            c2: message + keys.public_key * r,
+            c2: message + *public_key * r,
         }
     });
 
@@ -184,7 +184,7 @@ mod tests {
 
         const N: usize = 5;
         let (ciphertexts, randomness) =
-            generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+            generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
 
         assert_eq!(ciphertexts.len(), N);
         assert_eq!(randomness.len(), N);
@@ -229,7 +229,8 @@ mod tests {
         let keys = ElGamalKeys::new(sk);
 
         const N: usize = 4;
-        let (input_deck, _) = generate_random_ciphertexts::<G1Projective, N>(&keys, &mut rng);
+        let (input_deck, _) =
+            generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
         let perm = generate_random_permutation::<N>(&mut rng);
 
         // Test with random rerandomization
