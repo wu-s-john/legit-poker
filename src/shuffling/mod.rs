@@ -15,6 +15,7 @@ pub mod prove;
 pub mod public_key_setup;
 pub mod rs_shuffle;
 pub mod setup;
+pub mod shuffling_proof;
 pub mod unified_shuffler;
 pub mod utils;
 

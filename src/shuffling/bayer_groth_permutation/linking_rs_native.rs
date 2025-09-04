@@ -5,10 +5,19 @@ use ark_ff::{Field, PrimeField};
 use ark_std::vec::Vec;
 
 /// Compute linear blend: d_i = perm_mixing_challenge_y * perm_vector_i + perm_power_vector_i for i = 1, ..., N
-pub fn compute_linear_blend<F: Field>(perm_vector: &[F], perm_power_vector: &[F], perm_mixing_challenge_y: F) -> Vec<F> {
-    assert_eq!(perm_vector.len(), perm_power_vector.len(), "Permutation vector and power vector must have same length");
+pub fn compute_linear_blend<F: Field>(
+    perm_vector: &[F],
+    perm_power_vector: &[F],
+    perm_mixing_challenge_y: F,
+) -> Vec<F> {
+    assert_eq!(
+        perm_vector.len(),
+        perm_power_vector.len(),
+        "Permutation vector and power vector must have same length"
+    );
 
-    perm_vector.iter()
+    perm_vector
+        .iter()
         .zip(perm_power_vector.iter())
         .map(|(perm_i, power_i)| perm_mixing_challenge_y * perm_i + power_i)
         .collect()
@@ -16,19 +25,26 @@ pub fn compute_linear_blend<F: Field>(perm_vector: &[F], perm_power_vector: &[F]
 
 /// Compute left product: L = ∏_{i=1}^N (d_i - perm_offset_challenge_z)
 pub fn compute_left_product<F: Field>(d: &[F], perm_offset_challenge_z: F) -> F {
-    d.iter().fold(F::one(), |acc, d_i| acc * (*d_i - perm_offset_challenge_z))
+    d.iter()
+        .fold(F::one(), |acc, d_i| acc * (*d_i - perm_offset_challenge_z))
 }
 
 /// Compute right product: R = ∏_{i=1}^N (perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z)
 /// Uses running power computation for efficiency
-pub fn compute_right_product<F: Field>(perm_mixing_challenge_y: F, perm_power_challenge: F, perm_offset_challenge_z: F, n: usize) -> F {
+pub fn compute_right_product<F: Field>(
+    perm_mixing_challenge_y: F,
+    perm_power_challenge: F,
+    perm_offset_challenge_z: F,
+    n: usize,
+) -> F {
     let mut result = F::one();
     let mut power_of_challenge = F::one(); // perm_power_challenge^0 = 1
 
     for i in 1..=n {
         power_of_challenge *= perm_power_challenge; // perm_power_challenge^i
         let i_scalar = F::from(i as u64);
-        let term = perm_mixing_challenge_y * i_scalar + power_of_challenge - perm_offset_challenge_z;
+        let term =
+            perm_mixing_challenge_y * i_scalar + power_of_challenge - perm_offset_challenge_z;
         result *= term;
     }
 
@@ -69,7 +85,11 @@ where
     G: CurveGroup<ScalarField = F>,
 {
     let n = perm_vector.len();
-    assert_eq!(perm_power_vector.len(), n, "Permutation vector and power vector must have same length");
+    assert_eq!(
+        perm_power_vector.len(),
+        n,
+        "Permutation vector and power vector must have same length"
+    );
 
     // Step 1: Linear blend
     let d = compute_linear_blend(perm_vector, perm_power_vector, perm_mixing_challenge_y);
@@ -78,7 +98,12 @@ where
     let left = compute_left_product(&d, perm_offset_challenge_z);
 
     // Step 3: Right product
-    let right = compute_right_product(perm_mixing_challenge_y, perm_power_challenge, perm_offset_challenge_z, n);
+    let right = compute_right_product(
+        perm_mixing_challenge_y,
+        perm_power_challenge,
+        perm_offset_challenge_z,
+        n,
+    );
 
     // Step 4: Fixed-base scalar multiplication
     let point = fixed_base_scalar_mul::<G>(left, generator);
@@ -88,9 +113,15 @@ where
 
 /// Compute the permutation power vector = (perm_power_challenge^π(1), ..., perm_power_challenge^π(N))
 /// given a permutation and power challenge
-pub fn compute_perm_power_vector<F: Field>(permutation: &[usize], perm_power_challenge: F) -> Vec<F> {
+pub fn compute_perm_power_vector<F: Field>(
+    permutation: &[usize],
+    perm_power_challenge: F,
+) -> Vec<F> {
     // power_vector[i] = perm_power_challenge^π(i+1) since permutation is 1-indexed
-    permutation.iter().map(|&pi| perm_power_challenge.pow(&[pi as u64])).collect()
+    permutation
+        .iter()
+        .map(|&pi| perm_power_challenge.pow(&[pi as u64]))
+        .collect()
 }
 
 /// Verify that a permutation proof is correct (native)
@@ -100,7 +131,7 @@ pub fn verify_permutation_equality<F: Field>(left_product: F, right_product: F) 
 
 /// Compute the left product for permutation equality check: ∏(y*π(i) + x^π(i) - z) for i=1..N
 /// This is the product over the permuted values
-/// 
+///
 /// # Parameters
 /// - `permutation`: The permutation vector [π(1), ..., π(N)]
 /// - `perm_power_vector`: The power vector [x^π(1), ..., x^π(N)]
@@ -115,7 +146,8 @@ pub fn compute_left_product_for_permutation_check<F: PrimeField, const N: usize>
     let mut product = F::one();
     for i in 0..N {
         // Compute y*π(i) + x^π(i) - z
-        let term = perm_mixing_challenge_y * permutation[i] + perm_power_vector[i] - perm_offset_challenge_z;
+        let term = perm_mixing_challenge_y * permutation[i] + perm_power_vector[i]
+            - perm_offset_challenge_z;
         product *= term;
     }
     product
@@ -123,7 +155,7 @@ pub fn compute_left_product_for_permutation_check<F: PrimeField, const N: usize>
 
 /// Compute the right product for permutation equality check: ∏(y*i + x^i - z) for i=1..N
 /// This is the product over the natural order
-/// 
+///
 /// # Parameters
 /// - `perm_mixing_challenge_y`: The mixing challenge y
 /// - `perm_power_challenge`: The power challenge x
@@ -163,7 +195,10 @@ mod tests {
 
         // Verify each element
         for i in 0..n {
-            assert_eq!(d[i], perm_mixing_challenge_y * perm_vector[i] + perm_power_vector[i]);
+            assert_eq!(
+                d[i],
+                perm_mixing_challenge_y * perm_vector[i] + perm_power_vector[i]
+            );
         }
     }
 
@@ -185,7 +220,12 @@ mod tests {
         let perm_offset_challenge_z = Fr::from(1u64);
         let n = 3;
 
-        let result = compute_right_product(perm_mixing_challenge_y, perm_power_challenge, perm_offset_challenge_z, n);
+        let result = compute_right_product(
+            perm_mixing_challenge_y,
+            perm_power_challenge,
+            perm_offset_challenge_z,
+            n,
+        );
 
         // (2*1 + 3^1 - 1) * (2*2 + 3^2 - 1) * (2*3 + 3^3 - 1)
         // = (2 + 3 - 1) * (4 + 9 - 1) * (6 + 27 - 1)
@@ -209,14 +249,22 @@ mod tests {
         let perm_offset_challenge_z = Fr::rand(&mut rng);
 
         // Compute power vector = (perm_power_challenge^3, perm_power_challenge^1, perm_power_challenge^4, perm_power_challenge^2, perm_power_challenge^5)
-        let perm_power_vector: Vec<Fr> = perm.iter().map(|&i| perm_power_challenge.pow(&[i as u64])).collect();
+        let perm_power_vector: Vec<Fr> = perm
+            .iter()
+            .map(|&i| perm_power_challenge.pow(&[i as u64]))
+            .collect();
 
         // Compute linear blend
         let d = compute_linear_blend(&perm_vector, &perm_power_vector, perm_mixing_challenge_y);
 
         // Compute products
         let left = compute_left_product(&d, perm_offset_challenge_z);
-        let right = compute_right_product(perm_mixing_challenge_y, perm_power_challenge, perm_offset_challenge_z, n);
+        let right = compute_right_product(
+            perm_mixing_challenge_y,
+            perm_power_challenge,
+            perm_offset_challenge_z,
+            n,
+        );
 
         // They should be equal for a valid permutation
         assert_eq!(left, right);

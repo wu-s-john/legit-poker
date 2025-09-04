@@ -762,7 +762,7 @@ mod tests {
         });
 
         // Run native protocol with provided blinding factors
-        let native_params = native_transcript.run_protocol::<G1Projective, N>(
+        let (native_params, native_perm_power_vector) = native_transcript.run_protocol::<G1Projective, N>(
             generator,
             &perm_usize,
             blinding_r,
@@ -775,6 +775,7 @@ mod tests {
             c_power = ?native_params.c_power,
             perm_mixing_challenge_y = ?native_params.perm_mixing_challenge_y,
             perm_offset_challenge_z = ?native_params.perm_offset_challenge_z,
+            perm_power_vector_len = native_perm_power_vector.len(),
             "Native protocol completed");
 
         // Use the actual commitments from native protocol
@@ -877,12 +878,8 @@ mod tests {
         // Extract the permutation as Fr values
         let permutation_fr: [Fr; N] = std::array::from_fn(|i| Fr::from(perm_array[i] as u64));
 
-        // Compute power vector: x^π(i) for each element in the permutation
-        let perm_power_vector_fr: [Fr; N] = std::array::from_fn(|i| {
-            native_params
-                .perm_power_challenge
-                .pow(&[perm_array[i] as u64])
-        });
+        // Use the power vector from the native protocol
+        let perm_power_vector_fr: [Fr; N] = native_perm_power_vector;
 
         // Compute left product using the permutation: ∏(y*π(i) + x^π(i) - z)
         let left_product_check = compute_left_product_for_permutation_check::<Fr, N>(

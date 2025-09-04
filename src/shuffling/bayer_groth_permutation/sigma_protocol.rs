@@ -119,10 +119,10 @@ pub fn prove_sigma_linkage_ni<G, const N: usize>(
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
     output_ciphertexts: &[ElGamalCiphertext<G>; N],
-    x: G::ScalarField,
-    b_vector_commitment: &G,
-    b: &[G::ScalarField; N],
-    b_commitment_blinding_factor: G::ScalarField,
+    perm_power_challenge: G::ScalarField,
+    power_perm_vector: &G,
+    perm_power_vector: &[G::ScalarField; N],
+    power_perm_blinding_factor: G::ScalarField, // We need this blinding factor for commitments
     rerandomization_scalars: &[G::ScalarField; N], // These are the rerandomization scalars
     transcript: &mut PoseidonSponge<G::BaseField>,
     rng: &mut impl Rng,
@@ -135,15 +135,17 @@ where
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive proof generation");
 
     // Compute aggregators C^a and C'^a where a_i = x^(i+1) (zero-based loop)
-    let input_ciphertext_aggregator = compute_output_aggregator(input_ciphertexts, x);
-    let output_ciphertext_aggregator = compute_output_aggregator(output_ciphertexts, x);
+    let input_ciphertext_aggregator =
+        compute_output_aggregator(input_ciphertexts, perm_power_challenge);
+    let output_ciphertext_aggregator =
+        compute_output_aggregator(output_ciphertexts, perm_power_challenge);
 
     // Absorb public inputs into transcript
     absorb_public_inputs(
         transcript,
         &input_ciphertext_aggregator,
         &output_ciphertext_aggregator,
-        b_vector_commitment,
+        power_perm_vector,
     );
 
     // Log the aggregator for debugging
@@ -159,8 +161,8 @@ where
     );
     tracing::debug!(
         target: LOG_TARGET,
-        "Computed b_vector_commitment: {:?}",
-        b_vector_commitment
+        "Computed power_perm_vector: {:?}",
+        power_perm_vector
     );
 
     // --- Commit phase: pick random blinds ---
@@ -200,10 +202,10 @@ where
     absorb_point(transcript, &blinding_factor_commitment);
     absorb_point(transcript, &blinding_rerandomization_commitment);
 
-    let c: G::ScalarField = transcript.squeeze_field_elements(1)[0];
+    let challenge: G::ScalarField = transcript.squeeze_field_elements(1)[0];
     tracing::debug!(
         target: LOG_TARGET,
-        challenge = ?c,
+        challenge = ?challenge,
         output_ciphertext_aggregator = ?output_ciphertext_aggregator,
         blinding_factor_commitment = ?blinding_factor_commitment,
         blinding_rerandomization_commitment = ?blinding_rerandomization_commitment,
@@ -212,17 +214,19 @@ where
 
     // --- Responses ---
     // Compute aggregate rerandomizer ρ = Σ(b_j * r_j^in)
-    let rho: G::ScalarField = (0..N).map(|j| b[j] * rerandomization_scalars[j]).sum();
+    let rho: G::ScalarField = (0..N)
+        .map(|j| perm_power_vector[j] * rerandomization_scalars[j])
+        .sum();
 
     let sigma_response_b: [G::ScalarField; N] = (0..N)
-        .map(|j| blinding_factors[j] + c * b[j])
+        .map(|j| blinding_factors[j] + challenge * perm_power_vector[j])
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
     let sigma_response_blinding =
-        blinding_factor_for_blinding_factor_commitment + c * b_commitment_blinding_factor;
+        blinding_factor_for_blinding_factor_commitment + challenge * power_perm_blinding_factor;
     // z_ρ = t_ρ + c·ρ where ρ is the aggregate rerandomizer
-    let sigma_response_rerand = ciphertext_masking_rerand + c * rho;
+    let sigma_response_rerand = ciphertext_masking_rerand + challenge * rho;
 
     SigmaProof {
         blinding_factor_commitment,
@@ -246,8 +250,8 @@ pub fn verify_sigma_linkage_ni<G: CurveGroup, const N: usize>(
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
     output_ciphertexts: &[ElGamalCiphertext<G>; N],
-    x: G::ScalarField,
-    b_vector_commitment: &G,
+    perm_power_challenge: G::ScalarField,
+    power_perm_commitment: &G,
     proof: &SigmaProof<G, N>,
     transcript: &mut PoseidonSponge<G::BaseField>,
 ) -> bool
@@ -265,15 +269,17 @@ where
     );
 
     // Recompute aggregators C^a and C'^a where a_i = x^(i+1)
-    let input_ciphertext_aggregator = compute_output_aggregator(input_ciphertexts, x);
-    let output_ciphertext_aggregator = compute_output_aggregator(output_ciphertexts, x);
+    let input_ciphertext_aggregator =
+        compute_output_aggregator(input_ciphertexts, perm_power_challenge);
+    let output_ciphertext_aggregator =
+        compute_output_aggregator(output_ciphertexts, perm_power_challenge);
 
     // Rebuild transcript
     absorb_public_inputs(
         transcript,
         &input_ciphertext_aggregator,
         &output_ciphertext_aggregator,
-        b_vector_commitment,
+        power_perm_commitment,
     );
 
     tracing::debug!(
@@ -289,7 +295,7 @@ where
     tracing::debug!(
         target: LOG_TARGET,
         "Computed b_vector_commitment: {:?}",
-        b_vector_commitment
+        power_perm_commitment
     );
 
     // Absorb aggregator and proof commitments
@@ -314,7 +320,7 @@ where
         &proof.sigma_response_b,
         proof.sigma_response_blinding,
     );
-    let rhs_com = proof.blinding_factor_commitment + *b_vector_commitment * challenge;
+    let rhs_com = proof.blinding_factor_commitment + *power_perm_commitment * challenge;
 
     if lhs_com != rhs_com {
         tracing::error!(target: LOG_TARGET, "Commitment equality check failed");

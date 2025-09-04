@@ -5,9 +5,7 @@ use super::rs_shuffle_gadget::{
     rs_shuffle_indices, rs_shuffle_with_bayer_groth_linking_proof, rs_shuffle_with_reencryption,
 };
 use super::{LEVELS, N};
-use crate::bayer_groth_permutation::bg_setup_gadget::{
-    BayerGrothSetupParametersGadget, BayerGrothTranscriptGadget,
-};
+use crate::bayer_groth_permutation::bg_setup_gadget::BayerGrothTranscriptGadget;
 use crate::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::rs_shuffle::{SortedRowVar, UnsortedRowVar};
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
@@ -495,7 +493,7 @@ where
                 // ============ Step 5: Run Combined Protocol ============
                 tracing::debug!(target: LOG_TARGET, "Running RS shuffle + Bayer-Groth protocol");
 
-                let (proof_point, bg_params) =
+                let (_proof_point, _bg_params) =
                     rs_shuffle_with_bayer_groth_linking_proof::<C::BaseField, C, CV, N, LEVELS>(
                         cs.clone(),
                         &alpha_var,

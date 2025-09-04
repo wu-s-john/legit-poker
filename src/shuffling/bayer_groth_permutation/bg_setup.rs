@@ -9,14 +9,11 @@ use ark_std::{fmt::Debug, vec::Vec};
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
 /// Output structure for the Bayer-Groth protocol execution
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BayerGrothSetupParameters<F: PrimeField, G: CurveGroup, const N: usize> {
     /// The Fiat-Shamir challenge x ∈ F_q* used to compute powers x^π(i)
     /// This challenge is derived from the commitment to the permutation vector
     pub perm_power_challenge: F,
-    /// Vector of powers (x^π(1), ..., x^π(N)) where π is the permutation
-    /// Each element is the challenge raised to the power of the corresponding permutation value
-    pub perm_power_vector: [F; N],
     /// Commitment to the permutation vector (computed internally)
     pub c_perm: G,
     /// Commitment to the power vector (computed internally)
@@ -117,7 +114,8 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// - prover_blinding_r: Prover-provided blinding factor for c_perm (scalar field)
     /// - prover_blinding_s: Prover-provided blinding factor for c_power (scalar field)
     ///
-    /// Returns: BayerGrothProtocolOutput containing all protocol values including commitments
+    /// Returns: Tuple of (BayerGrothSetupParameters, perm_power_vector)
+    /// where perm_power_vector is the private witness
     #[tracing::instrument(
         target = LOG_TARGET,
         skip(self),
@@ -135,7 +133,10 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         permutation: &[usize; N],
         prover_blinding_r: G::ScalarField,
         prover_blinding_s: G::ScalarField,
-    ) -> BayerGrothSetupParameters<G::ScalarField, G, N>
+    ) -> (
+        BayerGrothSetupParameters<G::ScalarField, G, N>,
+        [G::ScalarField; N],
+    )
     where
         G: CurveGroup<BaseField = F> + CurveAbsorb<F>,
         G::ScalarField: PrimeField,
@@ -187,15 +188,16 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         );
         tracing::debug!(target: LOG_TARGET, ?perm_mixing_challenge_y, ?perm_offset_challenge_z, "Derived permutation mixing and offset challenges");
 
-        BayerGrothSetupParameters {
+        let params = BayerGrothSetupParameters {
             perm_power_challenge,
-            perm_power_vector,
             c_perm,
             c_power: c_power_perm,
             blinding_s: prover_blinding_s,
             perm_mixing_challenge_y,
             perm_offset_challenge_z,
-        }
+        };
+
+        (params, perm_power_vector)
     }
 }
 
@@ -276,7 +278,7 @@ mod tests {
 
         let generator = G1Projective::generator();
 
-        let output1 = transcript1.run_protocol::<G1Projective, 5>(
+        let (output1, perm_power_vector1) = transcript1.run_protocol::<G1Projective, 5>(
             generator,
             &perm,
             prover_blinding_r,
@@ -284,7 +286,7 @@ mod tests {
         );
 
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let output2 = transcript2.run_protocol::<G1Projective, 5>(
+        let (output2, perm_power_vector2) = transcript2.run_protocol::<G1Projective, 5>(
             generator,
             &perm,
             prover_blinding_r,
@@ -293,7 +295,7 @@ mod tests {
 
         // Should get identical outputs
         assert_eq!(output1.perm_power_challenge, output2.perm_power_challenge);
-        assert_eq!(output1.perm_power_vector, output2.perm_power_vector);
+        assert_eq!(perm_power_vector1, perm_power_vector2);
         assert_eq!(output1.blinding_s, output2.blinding_s);
         assert_eq!(
             output1.perm_mixing_challenge_y,
@@ -318,7 +320,7 @@ mod tests {
 
         // Run with different permutations
         let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let output1 = transcript1.run_protocol::<G1Projective, 3>(
+        let (output1, _) = transcript1.run_protocol::<G1Projective, 3>(
             generator,
             &perm1,
             prover_blinding_r,
@@ -326,7 +328,7 @@ mod tests {
         );
 
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let output2 = transcript2.run_protocol::<G1Projective, 3>(
+        let (output2, _) = transcript2.run_protocol::<G1Projective, 3>(
             generator,
             &perm2,
             prover_blinding_r,
@@ -394,14 +396,14 @@ mod tests {
         let blinding_r1 = Fr::rand(&mut rng);
         let blinding_s1 = Fr::rand(&mut rng);
         let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let output1 =
+        let (output1, _) =
             transcript1.run_protocol::<G1Projective, 5>(generator, &perm, blinding_r1, blinding_s1);
 
         // Run with different blinding factors but same permutation
         let blinding_r2 = Fr::rand(&mut rng);
         let blinding_s2 = Fr::rand(&mut rng);
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let output2 =
+        let (output2, _) =
             transcript2.run_protocol::<G1Projective, 5>(generator, &perm, blinding_r2, blinding_s2);
 
         // Commitments should be different due to different blinding
