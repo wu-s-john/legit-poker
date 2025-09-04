@@ -3,6 +3,7 @@ pub mod bayer_groth_permutation;
 pub mod chaum_pedersen;
 pub mod chaum_pedersen_gadget;
 pub mod circuit;
+pub mod community_decryption;
 pub mod curve_absorb;
 pub mod data_structures;
 pub mod encryption;
@@ -32,6 +33,7 @@ pub mod scalar_multiplication_tests;
 
 pub use chaum_pedersen::*;
 pub use circuit::*;
+pub use community_decryption::*;
 pub use data_structures::*;
 pub use encryption::*;
 pub use error::*;
