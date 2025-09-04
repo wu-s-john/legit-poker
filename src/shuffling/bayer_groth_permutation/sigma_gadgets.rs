@@ -156,13 +156,28 @@ where
 {
     // Absorb aggregated input ciphertexts (already computed)
     let input_aggregator_sum = &input_ciphertext_aggregator.c1 + &input_ciphertext_aggregator.c2;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs_gadget: input_aggregator_sum = {:?}",
+        input_aggregator_sum.value()
+    );
     input_aggregator_sum.curve_absorb_gadget(transcript)?;
 
     // Absorb aggregated output ciphertexts (already computed)
     let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs_gadget: output_aggregator_sum = {:?}",
+        output_aggregator_sum.value()
+    );
     output_aggregator_sum.curve_absorb_gadget(transcript)?;
 
     // Absorb b_vector_commitment
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs_gadget: b_vector_commitment = {:?}",
+        b_vector_commitment.value()
+    );
     b_vector_commitment.curve_absorb_gadget(transcript)?;
 
     Ok(())
@@ -184,6 +199,11 @@ where
     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
+    tracing::debug!(
+        target: LOG_TARGET,
+        "compute_challenge_gadget: Starting challenge computation"
+    );
+
     // Absorb public inputs
     absorb_public_inputs_gadget(
         transcript,
@@ -209,15 +229,32 @@ where
     );
 
     // Absorb proof commitments
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Absorbing blinding_factor_commitment: {:?}",
+        proof.blinding_factor_commitment.value()
+    );
     proof
         .blinding_factor_commitment
         .curve_absorb_gadget(transcript)?;
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Absorbing blinding_rerandomization_commitment: {:?}",
+        proof.blinding_rerandomization_commitment.value()
+    );
     proof
         .blinding_rerandomization_commitment
         .curve_absorb_gadget(transcript)?;
 
     // Squeeze the challenge
-    Ok(transcript.squeeze_field_elements(1)?[0].clone())
+    let challenge = transcript.squeeze_field_elements(1)?[0].clone();
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Squeezed challenge from transcript: {:?}",
+        challenge.value()
+    );
+    Ok(challenge)
 }
 
 /// Verifies the Σ-protocol inside a SNARK circuit, ensuring the same witness is used
@@ -468,8 +505,8 @@ mod tests {
 
     fn setup_test_tracing() {
         let filter = filter::Targets::new()
-            .with_target(TEST_TARGET, tracing::Level::DEBUG)
-            .with_target(LOG_TARGET, tracing::Level::DEBUG);
+            .with_target(TEST_TARGET, tracing::Level::TRACE)
+            .with_target(LOG_TARGET, tracing::Level::TRACE);
 
         let _ = tracing_subscriber::registry()
             .with(
@@ -497,8 +534,9 @@ mod tests {
 
     fn run_sigma_circuit_test<const N: usize>() -> Result<(), SynthesisError> {
         let mut rng = test_rng();
-        // Generate a random public key (random elliptic curve point)
-        let public_key = G1Projective::rand(&mut rng);
+        // Generate a valid ElGamal public key (sk * G, not a random point)
+        let sk = Fr::rand(&mut rng);
+        let public_key = G1Projective::generator() * sk;
         let pedersen_params = Pedersen::<G1Projective>::setup(&mut rng).unwrap();
 
         // Inputs: N ciphertexts
@@ -510,12 +548,8 @@ mod tests {
         for i in 0..N {
             pi_inv[pi[i]] = i;
         }
-        let (c_out, rerand) = shuffle_and_rerandomize_random::<G1Projective, N>(
-            &c_in,
-            &pi,
-            public_key,
-            &mut rng,
-        );
+        let (c_out, rerand) =
+            shuffle_and_rerandomize_random::<G1Projective, N>(&c_in, &pi, public_key, &mut rng);
 
         // FS exponent x and vectors a,b (we only need b and rho here)
         let x = Fr::from(2u64);
@@ -639,10 +673,22 @@ mod tests {
         if !cs.is_satisfied()? {
             tracing::debug!(target = LOG_TARGET, "Circuit is not satisfied!");
             if let Some(unsatisfied_path) = cs.which_is_unsatisfied()? {
-                tracing::debug!(target = LOG_TARGET, "First unsatisfied constraint: {}", unsatisfied_path);
+                tracing::debug!(
+                    target = LOG_TARGET,
+                    "First unsatisfied constraint: {}",
+                    unsatisfied_path
+                );
             }
-            tracing::debug!(target = LOG_TARGET, "Total constraints: {}", cs.num_constraints());
-            tracing::debug!(target = LOG_TARGET, "Total witness variables: {}", cs.num_witness_variables());
+            tracing::debug!(
+                target = LOG_TARGET,
+                "Total constraints: {}",
+                cs.num_constraints()
+            );
+            tracing::debug!(
+                target = LOG_TARGET,
+                "Total witness variables: {}",
+                cs.num_witness_variables()
+            );
         }
 
         assert!(cs.is_satisfied()?, "Circuit verification failed");

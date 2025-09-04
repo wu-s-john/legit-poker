@@ -141,11 +141,21 @@ where
         compute_output_aggregator(output_ciphertexts, perm_power_challenge);
 
     // Absorb public inputs into transcript
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state before absorbing public inputs: {:?}",
+        transcript.state
+    );
     absorb_public_inputs(
         transcript,
         &input_ciphertext_aggregator,
         &output_ciphertext_aggregator,
         power_perm_vector,
+    );
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state after absorbing public inputs: {:?}",
+        transcript.state
     );
 
     // Log the aggregator for debugging
@@ -199,13 +209,37 @@ where
     );
 
     // Absorb commitments and derive challenge
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state before absorbing blinding_factor_commitment: {:?}",
+        transcript.state
+    );
     absorb_point(transcript, &blinding_factor_commitment);
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state after absorbing blinding_factor_commitment: {:?}",
+        transcript.state
+    );
     absorb_point(transcript, &blinding_rerandomization_commitment);
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state after absorbing blinding_rerandomization_commitment: {:?}",
+        transcript.state
+    );
 
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Transcript state before squeezing challenge: {:?}",
+        transcript.state
+    );
     let challenge: G::ScalarField = transcript.squeeze_field_elements(1)[0];
     tracing::debug!(
         target: LOG_TARGET,
         challenge = ?challenge,
+        "Squeezed challenge from transcript"
+    );
+    tracing::debug!(
+        target: LOG_TARGET,
         output_ciphertext_aggregator = ?output_ciphertext_aggregator,
         blinding_factor_commitment = ?blinding_factor_commitment,
         blinding_rerandomization_commitment = ?blinding_rerandomization_commitment,
@@ -217,6 +251,11 @@ where
     let rho: G::ScalarField = (0..N)
         .map(|j| perm_power_vector[j] * rerandomization_scalars[j])
         .sum();
+    tracing::debug!(
+        target: LOG_TARGET,
+        rho = ?rho,
+        "Computed aggregate rerandomizer rho"
+    );
 
     let sigma_response_b: [G::ScalarField; N] = (0..N)
         .map(|j| blinding_factors[j] + challenge * perm_power_vector[j])
@@ -406,16 +445,40 @@ where
     G::ScalarField: PrimeField,
 {
     let curve_generator = G::generator();
+    tracing::trace!(
+        target: LOG_TARGET,
+        "encrypt_one_and_combine: public_key = {:?}, randomness = {:?}",
+        public_key,
+        randomness
+    );
 
     // E_pk(1; randomness) = (g^randomness, pk^randomness · g)
     let rerand_c1 = curve_generator * randomness;
     let rerand_c2 = *public_key * randomness + curve_generator;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "encrypt_one_and_combine: rerand_c1 = {:?}, rerand_c2 = {:?}",
+        rerand_c1,
+        rerand_c2
+    );
 
     // ∏ C_j^{scalar_factors[j]}
     let msm = msm_ciphertexts(ciphertexts, scalar_factors);
+    tracing::trace!(
+        target: LOG_TARGET,
+        "encrypt_one_and_combine: msm.c1 = {:?}, msm.c2 = {:?}",
+        msm.c1,
+        msm.c2
+    );
 
     // Combine and return as single point
-    rerand_c1 + msm.c1 + rerand_c2 + msm.c2
+    let result = rerand_c1 + msm.c1 + rerand_c2 + msm.c2;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "encrypt_one_and_combine: final result = {:?}",
+        result
+    );
+    result
 }
 
 /// Extract N bases for a linear (scalar-vector) Pedersen commitment from the Pedersen parameters.
@@ -471,13 +534,28 @@ fn absorb_public_inputs<G: CurveGroup>(
 {
     // Absorb aggregated input ciphertexts (c1 + c2)
     let c_in_aggregate = c_in_aggregator.c1 + c_in_aggregator.c2;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs: c_in_aggregate = {:?}",
+        c_in_aggregate
+    );
     c_in_aggregate.curve_absorb(transcript);
 
     // Absorb aggregated output ciphertexts (c1 + c2)
     let c_out_aggregate = c_out_aggregator.c1 + c_out_aggregator.c2;
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs: c_out_aggregate = {:?}",
+        c_out_aggregate
+    );
     c_out_aggregate.curve_absorb(transcript);
 
     // Absorb the commitment
+    tracing::trace!(
+        target: LOG_TARGET,
+        "absorb_public_inputs: c_b = {:?}",
+        c_b
+    );
     absorb_point(transcript, c_b);
 }
 
@@ -511,14 +589,11 @@ mod tests {
     };
 
     // Test tracing target
-    const TEST_TARGET: &str = "sigma_test";
+    const TEST_TARGET: &str = "nexus_nova";
 
     /// Setup test tracing for debugging
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new()
-            .with_target(TEST_TARGET, tracing::Level::DEBUG)
-            .with_target("sigma_protocol", tracing::Level::DEBUG)
-            .with_target("sigma_gadget", tracing::Level::DEBUG);
+        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
 
         tracing_subscriber::registry()
             .with(
@@ -566,8 +641,9 @@ mod tests {
             rng.next_u32();
         }
 
-        // Generate a random public key (random elliptic curve point)
-        let public_key = G1Projective::rand(&mut rng);
+        // Generate a valid ElGamal public key (sk * G, not a random point)
+        let sk = Fr::rand(&mut rng);
+        let public_key = G1Projective::generator() * sk;
 
         // Setup Pedersen parameters
         let pedersen_params = Pedersen::setup(&mut rng).unwrap();
