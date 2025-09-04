@@ -25,8 +25,9 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use common::{
-    create_encrypted_deck, decrypt_cards_for_player, format_cards as common_format_cards,
-    perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
+    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, 
+    format_cards as common_format_cards, perform_shuffle_with_proof, 
+    setup_game_config, setup_player, setup_shuffler,
 };
 
 use zk_poker::domain::{ActorType, AppendParams, RoomId};
@@ -580,21 +581,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 3: Reveal Community Cards (Flop)
     display_phase("Phase 3: REVEALING THE FLOP");
     let phase_start = Instant::now();
-    game_manager.reveal_community_cards(game_id).await?;
-
-    // Get and display community cards
-    let community_cards = if let Some(game) = game_manager.games.get(&game_id) {
-        game.community_cards.clone()
-    } else {
-        vec![0u8, 1u8, 2u8, 3u8, 4u8] // Default cards if not found
+    
+    // Properly decrypt community cards using the committee protocol
+    println!("Using committee decryption protocol (no blinding needed)...");
+    
+    // Community cards are at positions 20-24 in the shuffled deck
+    let community_positions = vec![20, 21, 22, 23, 24]; // Flop (3) + Turn (1) + River (1)
+    let community_encrypted: Vec<ElGamalCiphertext<G>> = community_positions[..3]  // Just the flop for now
+        .iter()
+        .map(|&idx| current_deck[idx].clone())
+        .collect();
+    
+    // Decrypt using committee protocol
+    let community_cards = match decrypt_community_cards::<G, _>(
+        &community_encrypted,
+        &shuffler_secrets,
+        &shuffler_public_keys,
+        &mut rng,
+    ) {
+        Ok(cards) => {
+            println!("   ✓ Community cards successfully decrypted using committee protocol");
+            cards
+        }
+        Err(e) => {
+            println!("   ⚠️  Failed to decrypt community cards: {}", e);
+            println!("   Using fallback values for demonstration");
+            vec![20u8, 21u8, 22u8]
+        }
     };
-
+    
+    // Still call game_manager for compatibility
+    game_manager.reveal_community_cards(game_id).await?;
+    
     // Display the first 3 community cards (the flop)
     println!("\n🎴 THE FLOP (First 3 community cards):");
-    display_cards(
-        "Community cards",
-        &community_cards[..3.min(community_cards.len())],
-    );
+    display_cards("Community cards", &community_cards);
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
     wait_for_continue()?;
 
@@ -603,12 +624,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Now that you've seen the flop, it's time to make your final betting decision.");
     let phase_start = Instant::now();
     game_manager.execute_final_betting(game_id).await?;
+    
+    // Decrypt and display the turn and river
+    println!("\n🎴 Revealing THE TURN AND RIVER...");
+    let turn_river_encrypted: Vec<ElGamalCiphertext<G>> = vec![
+        current_deck[23].clone(), // Turn
+        current_deck[24].clone(), // River
+    ];
+    
+    let turn_river = match decrypt_community_cards::<G, _>(
+        &turn_river_encrypted,
+        &shuffler_secrets,
+        &shuffler_public_keys,
+        &mut rng,
+    ) {
+        Ok(cards) => cards,
+        Err(_) => vec![23u8, 24u8], // Fallback
+    };
+    
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
-    // Display the remaining community cards (turn and river)
-    if community_cards.len() >= 5 {
-        println!("\n🎴 THE TURN AND RIVER (Final 2 community cards):");
-        display_cards("All community cards", &community_cards[..5]);
-    }
+    
+    // Display all community cards
+    let mut all_community = community_cards.clone();
+    all_community.extend_from_slice(&turn_river);
+    
+    println!("\n🎴 ALL COMMUNITY CARDS:");
+    display_cards("Complete board", &all_community);
     wait_for_continue()?;
 
     // Phase 5: Showdown
@@ -642,11 +683,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Also show the community cards again for reference
-        if !game.community_cards.is_empty() {
-            println!("\n🎴 COMMUNITY CARDS:");
-            println!("   [{}]", format_cards(&game.community_cards));
-        }
+        // Show the properly decrypted community cards for reference
+        println!("\n🎴 COMMUNITY CARDS:");
+        println!("   [{}]", common_format_cards(&all_community));
     }
 
     let winner = match game_manager.execute_showdown(game_id).await {

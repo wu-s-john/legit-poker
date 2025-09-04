@@ -15,8 +15,8 @@ use ark_std::rand::{rngs::StdRng, SeedableRng};
 use std::time::Instant;
 
 use common::{
-    create_encrypted_deck, decrypt_cards_for_player, format_cards, perform_shuffle_with_proof,
-    setup_game_config, setup_player, setup_shuffler,
+    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, format_cards, 
+    perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
 };
 
 use zk_poker::shuffling::{
@@ -222,8 +222,43 @@ fn main() {
         total_decrypt_time / NUM_PLAYERS as u32
     );
 
-    // Step 7: Verify deck integrity (optional demo)
-    println!("7. Verifying deck integrity...");
+    // Step 7: Deal Community Cards (using community decryption protocol)
+    println!("7. Dealing community cards (Flop, Turn, River)...");
+    println!("   Using committee decryption protocol (no blinding needed)\n");
+
+    let community_start = Instant::now();
+
+    // Community cards are at positions 14-18 (after hole cards)
+    let community_positions = vec![14, 15, 16, 17, 18]; // Flop (3) + Turn (1) + River (1)
+    let community_encrypted: Vec<ElGamalCiphertext<G>> = community_positions
+        .iter()
+        .map(|&idx| current_deck[idx].clone())
+        .collect();
+
+    // Decrypt community cards using the simpler protocol
+    match decrypt_community_cards::<G, _>(
+        &community_encrypted,
+        &shuffler_secrets,
+        &shuffler_public_keys,
+        &mut rng,
+    ) {
+        Ok(community_values) => {
+            println!("   ✓ Community Cards Revealed:");
+            println!("     • Flop:  [{}]", format_cards(&community_values[..3]));
+            println!("     • Turn:  [{}]", format_cards(&community_values[3..4]));
+            println!("     • River: [{}]", format_cards(&community_values[4..5]));
+            println!("     • All:   [{}]", format_cards(&community_values));
+        }
+        Err(e) => {
+            println!("   ⚠ Failed to decrypt community cards: {}", e);
+        }
+    }
+
+    println!("\n   ✓ Community cards dealt in {:?}", community_start.elapsed());
+    println!("   Note: Community cards use direct committee decryption (no player blinding)");
+
+    // Step 8: Verify deck integrity (optional demo)
+    println!("8. Verifying deck integrity...");
 
     // Check that all dealt cards are unique
     let mut all_cards: Vec<u8> = all_player_cards.iter().flatten().copied().collect();
@@ -238,7 +273,7 @@ fn main() {
         println!("   ⚠ Some cards may be duplicated (expected in demo with decryption fallback)");
     }
 
-    // Step 8: Final summary
+    // Step 9: Final summary
     let total_time = total_start.elapsed();
 
     println!("\n=== Performance Summary ===");

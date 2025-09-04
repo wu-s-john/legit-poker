@@ -10,6 +10,7 @@ use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::rand::{CryptoRng, Rng, RngCore};
 
 use zk_poker::shuffling::{
+    community_decryption::{decrypt_community_card, CommunityDecryptionShare},
     curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
     data_structures::ElGamalCiphertext,
     player_decryption::{
@@ -271,6 +272,64 @@ where
                 rng,
             )
             .map_err(|e| format!("Failed to decrypt card {} for player: {}", idx, e).into())
+        })
+        .collect::<Result<Vec<u8>, Box<dyn std::error::Error>>>()
+}
+
+/// Decrypt a community card using committee protocol (no blinding needed)
+/// Community cards are public, so we don't need player-specific blinding
+pub fn decrypt_community_card_simple<G, R>(
+    encrypted_card: &ElGamalCiphertext<G>,
+    shuffler_secrets: &[G::ScalarField],
+    shuffler_public_keys: &[G],
+    rng: &mut R,
+) -> Result<u8, Box<dyn std::error::Error>>
+where
+    G: CurveGroup + CurveAbsorb<G::BaseField> + 'static,
+    G::BaseField: PrimeField,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    R: Rng,
+{
+    // Generate decryption shares from all committee members
+    let shares: Vec<CommunityDecryptionShare<G>> = shuffler_secrets
+        .iter()
+        .enumerate()
+        .map(|(idx, &secret)| {
+            CommunityDecryptionShare::generate(encrypted_card, secret, idx, rng)
+        })
+        .collect();
+    
+    // Verify shares (optional but recommended for security)
+    for (share, &pk) in shares.iter().zip(shuffler_public_keys.iter()) {
+        if !share.verify(encrypted_card, pk) {
+            return Err("Invalid decryption share".into());
+        }
+    }
+    
+    // Decrypt the card value
+    decrypt_community_card(encrypted_card, shares, shuffler_secrets.len())
+        .map_err(|e| e.into())
+}
+
+/// Decrypt multiple community cards
+pub fn decrypt_community_cards<G, R>(
+    encrypted_cards: &[ElGamalCiphertext<G>],
+    shuffler_secrets: &[G::ScalarField],
+    shuffler_public_keys: &[G],
+    rng: &mut R,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>>
+where
+    G: CurveGroup + CurveAbsorb<G::BaseField> + 'static,
+    G::BaseField: PrimeField,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    R: Rng,
+{
+    encrypted_cards
+        .iter()
+        .enumerate()
+        .map(|(idx, card)| {
+            decrypt_community_card_simple(card, shuffler_secrets, shuffler_public_keys, rng)
+                .map_err(|e| format!("Failed to decrypt community card {}: {}", idx, e).into())
         })
         .collect::<Result<Vec<u8>, Box<dyn std::error::Error>>>()
 }
