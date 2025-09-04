@@ -199,7 +199,7 @@ fn generate_test_data<E, C, const N: usize, const LEVELS: usize>(
     [E::ScalarField; N],
     E::ScalarField,
     E::ScalarField,
-    zk_poker::shuffling::rs_shuffle::data_structures::WitnessData<N, LEVELS>,
+    zk_poker::shuffling::rs_shuffle::data_structures::PermutationWitnessData<N, LEVELS>,
     usize,
 )
 where

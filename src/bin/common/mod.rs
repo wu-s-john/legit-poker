@@ -19,7 +19,7 @@ use zk_poker::shuffling::{
     },
     proof_system::{
         create_dummy_proof_system, create_reencryption_proof_system, DummyProofSystem,
-        IndicesPublicInput, IndicesWitness, ProofSystem, ReencryptionProofSystem,
+        PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionProofSystem,
         ReencryptionPublicInput, ReencryptionWitness,
     },
     shuffling_proof::{prove_shuffling, verify_shuffling, ShufflingConfig, ShufflingProof},
@@ -90,7 +90,7 @@ pub fn setup_game_config<G, GV, const N: usize, const LEVELS: usize>(
     shuffler_public_keys: &[G],
     domain: Vec<u8>,
 ) -> ShufflingConfig<
-    DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>,
+    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>,
     ReencryptionProofSystem<G, N>,
     G,
 >
@@ -106,14 +106,14 @@ where
         .fold(G::zero(), |acc, pk| acc + pk);
 
     // Create proof systems
-    let indices_proof_system = create_dummy_proof_system();
+    let permutation_proof_system = create_dummy_proof_system();
     let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
 
     ShufflingConfig {
         domain,
         generator: G::generator(),
         public_key: aggregated_public_key,
-        indices_proof_system,
+        permutation_proof_system,
         reencryption_proof_system,
     }
 }
@@ -154,8 +154,8 @@ where
     GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     IP: ProofSystem<
-        PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
-        Witness = IndicesWitness<G, GV, N, LEVELS>,
+        PublicInput = PermutationPublicInput<G, GV, N, LEVELS>,
+        Witness = PermutationWitness<G, GV, N, LEVELS>,
     >,
     SP: ProofSystem<
         PublicInput = ReencryptionPublicInput<G, N>,

@@ -1,7 +1,7 @@
 //! Fiat-Shamir challenge derivation for Bayer-Groth permutation proof
 
-use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::bayer_groth_permutation::reencryption_protocol::commit_vector;
+use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;
@@ -120,7 +120,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// where perm_power_vector is the private witness
     #[tracing::instrument(
         target = LOG_TARGET,
-        skip(self),
+        skip(self, generator),
         fields(
             permutation = ?permutation,
             prover_blinding_r = ?prover_blinding_r,
@@ -256,7 +256,8 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         let perm_power_vector = compute_perm_power_vector(permutation, perm_power_challenge);
 
         // Step 5: Compute commitment to power vector using Pedersen commitment
-        let c_power_perm = commit_vector::<G, N>(pedersen_params, &perm_power_vector, prover_blinding_s);
+        let c_power_perm =
+            commit_vector::<G, N>(pedersen_params, &perm_power_vector, prover_blinding_s);
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);
@@ -667,7 +668,11 @@ mod tests {
 
         // Compute the linear blend d = y * perm_vector + perm_power_vector
         // All operations are in the scalar field Fr
-        let d = linear_blend_gadget_dynamic(&perm_vector, &perm_power_vector, &perm_mixing_challenge_y)?;
+        let d = linear_blend_gadget_dynamic(
+            &perm_vector,
+            &perm_power_vector,
+            &perm_mixing_challenge_y,
+        )?;
         let left_circuit = left_product_gadget(&d, &perm_offset_challenge_z)?;
         let right_circuit = right_product_gadget(
             cs.clone(),

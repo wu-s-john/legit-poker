@@ -264,6 +264,35 @@ where
     FV::new_witness(cs, result_value)
 }
 
+/// Compute the randomness factor gadget: generator^(y*r + s)
+/// This represents the blinding component of the proof in-circuit
+pub fn compute_randomness_factor_gadget<F, C, CV, FV>(
+    _cs: ConstraintSystemRef<F>,
+    generator: &CV,
+    y: &FV,
+    blinding_r: &FV,
+    blinding_s: &FV,
+) -> Result<CV, SynthesisError>
+where
+    F: PrimeField,
+    C: CurveGroup,
+    CV: CurveVar<C, F>,
+    FV: FieldVar<C::ScalarField, F>,
+    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    for<'a> &'a FV: FieldOpsBounds<'a, C::ScalarField, FV>,
+{
+    // Compute exponent: y * r + s (in scalar field)
+    let exponent = y * blinding_r + blinding_s;
+
+    // Convert to bits for scalar multiplication
+    let exponent_bits = exponent.to_bits_le()?;
+
+    // Compute generator^exponent using scalar multiplication
+    let randomness_factor = generator.scalar_mul_le(exponent_bits.iter())?;
+
+    Ok(randomness_factor)
+}
+
 /// Compute the permutation power vector = (x^π(1), ..., x^π(N)) in-circuit
 ///
 /// Parameters:

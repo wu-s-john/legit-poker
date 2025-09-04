@@ -1,6 +1,6 @@
 //! RS shuffle verification circuits for SNARK
 
-use super::data_structures::{WitnessData, WitnessDataVar};
+use super::data_structures::{PermutationWitnessData, PermutationWitnessDataVar};
 use super::rs_shuffle_gadget::{
     rs_shuffle_indices, rs_shuffle_with_bayer_groth_linking_proof, rs_shuffle_with_reencryption,
 };
@@ -39,7 +39,7 @@ where
     pub seed: F,
     pub alpha: F,
     pub beta: F,
-    pub witness: WitnessData<N, LEVELS>,
+    pub witness: PermutationWitnessData<N, LEVELS>,
     pub num_samples: usize,
 }
 
@@ -67,7 +67,7 @@ where
     /// Second Fiat-Shamir challenge
     pub beta: F,
     /// Witness data for the shuffle
-    pub witness: WitnessData<N, LEVELS>,
+    pub witness: PermutationWitnessData<N, LEVELS>,
     /// Number of samples used in bit generation
     pub num_samples: usize,
     /// Precomputed powers of the generator for efficient fixed-base scalar multiplication
@@ -92,7 +92,7 @@ where
         encryption_randomizations: [F; N],
         alpha: F,
         beta: F,
-        witness: WitnessData<N, LEVELS>,
+        witness: PermutationWitnessData<N, LEVELS>,
         num_samples: usize,
         generator_powers: Vec<C>,
     ) -> Self {
@@ -113,9 +113,9 @@ where
     }
 }
 
-/// RS Shuffle Indices Circuit - Circuit for verifying shuffle of indices only
+/// RS Shuffle Permutation Circuit - Circuit for verifying shuffle of indices only
 #[derive(Clone)]
-pub struct RSShuffleIndicesCircuit<F, const N: usize, const LEVELS: usize>
+pub struct RSShufflePermutationCircuit<F, const N: usize, const LEVELS: usize>
 where
     F: PrimeField,
 {
@@ -128,7 +128,7 @@ where
     /// Fiat-Shamir challenge (public input)
     pub alpha: F,
     /// Witness data for the shuffle
-    pub witness: WitnessData<N, LEVELS>,
+    pub witness: PermutationWitnessData<N, LEVELS>,
     /// Number of samples used in bit generation
     pub num_samples: usize,
 }
@@ -157,7 +157,7 @@ where
     /// The actual permutation values (1-indexed)
     pub permutation: [C::ScalarField; N],
     /// RS shuffle witness data
-    pub witness: WitnessData<N, LEVELS>,
+    pub witness: PermutationWitnessData<N, LEVELS>,
     /// Initial indices (0..N-1)
     pub indices_init: [F; N],
     /// Shuffled indices
@@ -187,7 +187,7 @@ where
         c_perm: C,
         c_power: C,
         permutation: [C::ScalarField; N],
-        witness: WitnessData<N, LEVELS>,
+        witness: PermutationWitnessData<N, LEVELS>,
         indices_init: [F; N],
         indices_after_shuffle: [F; N],
         blinding_factors: (C::ScalarField, C::ScalarField),
@@ -336,7 +336,7 @@ where
 }
 
 impl<F, const N: usize, const LEVELS: usize> ConstraintSynthesizer<F>
-    for RSShuffleIndicesCircuit<F, N, LEVELS>
+    for RSShufflePermutationCircuit<F, N, LEVELS>
 where
     F: PrimeField + Absorb,
 {
@@ -438,7 +438,7 @@ where
                     });
 
                 // Allocate witness data
-                let witness_var = WitnessDataVar::new_variable(
+                let witness_var = PermutationWitnessDataVar::new_variable(
                     cs.clone(),
                     || Ok(&self.witness),
                     AllocationMode::Witness,

@@ -4,7 +4,7 @@ use super::{
     bayer_groth::{self, BgParams, BgProof, ShuffleInstance, ShuffleWitness},
     data_structures::ElGamalCiphertext,
     rs_shuffle::{
-        circuit::RSShuffleIndicesCircuit, witness_preparation::prepare_witness_data, LEVELS, N,
+        circuit::RSShufflePermutationCircuit, witness_preparation::prepare_witness_data, LEVELS, N,
     },
 };
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
@@ -146,7 +146,7 @@ pub fn generate_unified_shuffle_proof<R: Rng + RngCore + CryptoRng>(
     let alpha = Fr::rand(rng);
 
     // Create circuit
-    let circuit = RSShuffleIndicesCircuit::<Fr, N, LEVELS> {
+    let circuit = RSShufflePermutationCircuit::<Fr, N, LEVELS> {
         indices_init: indices_init.clone(),
         indices_after_shuffle: indices_after_shuffle.clone(),
         seed,
@@ -245,7 +245,7 @@ pub fn setup_unified_shuffler<R: Rng + RngCore + CryptoRng>(
     let indices_after_shuffle = indices_init.clone(); // Dummy values for setup
     let alpha = Fr::rand(rng);
 
-    let setup_circuit = RSShuffleIndicesCircuit::<Fr, N, LEVELS> {
+    let setup_circuit = RSShufflePermutationCircuit::<Fr, N, LEVELS> {
         indices_init,
         indices_after_shuffle,
         seed,

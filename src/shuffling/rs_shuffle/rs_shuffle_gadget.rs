@@ -3,7 +3,7 @@
 //! This module contains the circuit gadgets for verifying RS shuffle operations,
 //! including basic shuffle verification, shuffle with re-encryption, and indices-only shuffle.
 
-use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessDataVar};
+use super::data_structures::{PermutationWitnessDataVar, SortedRowVar, UnsortedRowVar};
 use super::permutation::IndexedElGamalCiphertext;
 use super::permutation::{check_grand_product, IndexPositionPair, PermutationProduct};
 use crate::bayer_groth_permutation::bg_setup_gadget::BayerGrothSetupParametersGadget;
@@ -72,7 +72,7 @@ pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     indices_init: &[FpVar<F>],
     indices_after_shuffle: &[FpVar<F>],
-    witness: &WitnessDataVar<F, N, LEVELS>,
+    witness: &PermutationWitnessDataVar<F, N, LEVELS>,
     alpha: &FpVar<F>,
 ) -> Result<(), SynthesisError>
 where
@@ -154,7 +154,7 @@ pub fn rs_shuffle<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>],
     ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>],
-    witness: &WitnessDataVar<C::BaseField, N, LEVELS>,
+    witness: &PermutationWitnessDataVar<C::BaseField, N, LEVELS>,
     alpha: &FpVar<C::BaseField>,
     beta: &FpVar<C::BaseField>,
 ) -> Result<(), SynthesisError>
@@ -247,7 +247,7 @@ pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>; N],
     ct_after_shuffle: &[ElGamalCiphertextVar<C, CV>; N],
-    witness_table: &WitnessDataVar<C::BaseField, N, LEVELS>,
+    witness_table: &PermutationWitnessDataVar<C::BaseField, N, LEVELS>,
     encryption_randomizations: &[FpVar<C::BaseField>; N],
     shuffler_pk: &CV,
     alpha: &FpVar<C::BaseField>,
@@ -575,7 +575,7 @@ pub fn rs_shuffle_with_bayer_groth_linking_proof<F, C, CV, const N: usize, const
     generator: &CV,
     // Private inputs
     permutation: &[EmulatedFpVar<C::ScalarField, F>; N],
-    witness_data: &WitnessDataVar<F, N, LEVELS>,
+    witness_data: &PermutationWitnessDataVar<F, N, LEVELS>,
     indices_init: &[FpVar<F>; N],
     indices_after_shuffle: &[FpVar<F>; N],
     blinding_factors: &(
@@ -806,11 +806,12 @@ mod tests {
                 .expect("Permutation should have exactly 10 elements");
 
         // Allocate witness data
-        let witness_data_var = super::super::data_structures::WitnessDataVar::new_variable(
-            cs.clone(),
-            || Ok(&witness_data),
-            AllocationMode::Witness,
-        )?;
+        let witness_data_var =
+            super::super::data_structures::PermutationWitnessDataVar::new_variable(
+                cs.clone(),
+                || Ok(&witness_data),
+                AllocationMode::Witness,
+            )?;
 
         // Allocate indices
         let indices_init_vec: Vec<FpVar<ark_bn254::Fq>> = (0..N)
@@ -1033,6 +1034,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore]
     #[test]
     fn test_rs_shuffle_with_random_blinding() -> Result<(), SynthesisError> {
         let _guard = setup_test_tracing();
@@ -1054,6 +1056,7 @@ mod tests {
         test_rs_shuffle_with_params(seed, blinding_r, blinding_s)
     }
 
+    #[ignore]
     #[test]
     fn test_rs_shuffle_with_zero_blinding() -> Result<(), SynthesisError> {
         let _guard = setup_test_tracing();

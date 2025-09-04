@@ -1,7 +1,26 @@
 //! Generic proof system trait and implementations for shuffling proofs
+//!
+//! ## Public Input Structure for RS Shuffle with Bayer-Groth Linkage
+//!
+//! The `RSShuffleWithBayerGrothLinkCircuit` allocates exactly 7 public input field elements:
+//!
+//! 1. **alpha** (1 element): The RS shuffle challenge scalar
+//! 2. **c_perm** (3 elements): Commitment to permutation vector, flattened as (x, y, infinity)
+//! 3. **c_power** (3 elements): Commitment to power vector, flattened as (x, y, infinity)
+//!
+//! ### Important Notes:
+//! - Arkworks internally adds an implicit leading 1 to the public inputs
+//! - Short Weierstrass curves (like BN254) serialize to 3 field elements via `ToConstraintField`
+//! - The order of public inputs must exactly match the circuit's `AllocationMode::Input` order
+//! - We use prepared verifying keys for efficient verification
+//!
+//! ### Verification Constraint:
+//! ```text
+//! assert_eq!(public_inputs.len() + 1, vk.gamma_abc_g1.len())
+//! ```
 
 use super::bayer_groth_permutation::{
-    bg_setup::BayerGrothSetupParameters,
+    bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript},
     reencryption_protocol::{prove, verify},
 };
 
@@ -9,7 +28,8 @@ use super::bayer_groth_permutation::{
 pub use super::bayer_groth_permutation::reencryption_protocol::ReencryptionProof;
 use super::data_structures::ElGamalCiphertext;
 use super::rs_shuffle::{
-    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::WitnessData,
+    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessData,
+    witness_preparation::apply_rs_shuffle_permutation,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use ark_crypto_primitives::{
@@ -18,12 +38,15 @@ use ark_crypto_primitives::{
     sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge},
 };
 use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
-use ark_ff::PrimeField;
-use ark_groth16::{Groth16, Proof as Groth16Proof, ProvingKey, VerifyingKey};
+use ark_ff::{PrimeField, ToConstraintField};
+use ark_groth16::{
+    prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof as Groth16Proof, ProvingKey,
+    VerifyingKey,
+};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::{
     marker::PhantomData,
-    rand::{CryptoRng, RngCore},
+    rand::{CryptoRng, Rng, RngCore},
     vec::Vec,
     UniformRand,
 };
@@ -56,11 +79,71 @@ pub trait ProofSystem {
 }
 
 // ============================================================================
-// Indices Proof System (Groth16-based SNARK)
+// Helper Functions for Public Input Construction
 // ============================================================================
 
-/// Public input for the indices proof system
-pub struct IndicesPublicInput<G, GV, const N: usize, const LEVELS: usize>
+/// Helper function to flatten a curve point into field elements for use as public inputs
+///
+/// For Short Weierstrass curves (like BN254), this returns 3 field elements:
+/// - x coordinate
+/// - y coordinate
+/// - infinity bit (0 for normal points, 1 for point at infinity)
+pub fn flatten_curve_point<G, F>(point: &G) -> Result<Vec<F>, String>
+where
+    G: CurveGroup + ToConstraintField<F>,
+    F: PrimeField,
+{
+    point
+        .to_field_elements()
+        .ok_or_else(|| "Failed to convert curve point to field elements".to_string())
+}
+
+/// Build public inputs for the RS shuffle circuit with Bayer-Groth linkage
+///
+/// The RSShuffleWithBayerGrothLinkCircuit expects exactly these public inputs in order:
+/// 1. alpha (the RS shuffle challenge) - 1 field element
+/// 2. c_perm (commitment to permutation vector) - 3 field elements (x, y, infinity)
+/// 3. c_power (commitment to power vector) - 3 field elements (x, y, infinity)
+///
+/// Total: 7 field elements (plus the implicit leading 1 that arkworks adds internally)
+pub fn build_public_inputs_for_rs_shuffle<G, E>(
+    alpha: E::ScalarField,
+    c_perm: &G,
+    c_power: &G,
+) -> Result<Vec<E::ScalarField>, String>
+where
+    E: Pairing,
+    G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
+{
+    let mut public_inputs = Vec::with_capacity(7);
+
+    // 1. Add alpha challenge
+    public_inputs.push(alpha);
+
+    // 2. Add c_perm (flattens to 3 elements for Short Weierstrass curves)
+    let c_perm_fields = flatten_curve_point::<G, E::ScalarField>(c_perm)?;
+    public_inputs.extend(c_perm_fields);
+
+    // 3. Add c_power (flattens to 3 elements for Short Weierstrass curves)
+    let c_power_fields = flatten_curve_point::<G, E::ScalarField>(c_power)?;
+    public_inputs.extend(c_power_fields);
+
+    // Sanity check: we should have exactly 7 elements
+    debug_assert_eq!(
+        public_inputs.len(),
+        7,
+        "RS shuffle circuit expects exactly 7 public input elements"
+    );
+
+    Ok(public_inputs)
+}
+
+// ============================================================================
+// Permutation Proof System (Groth16-based SNARK)
+// ============================================================================
+
+/// Public input for the permutation proof system
+pub struct PermutationPublicInput<G, GV, const N: usize, const LEVELS: usize>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
@@ -73,13 +156,13 @@ where
     _marker: PhantomData<GV>,
 }
 
-impl<G, GV, const N: usize, const LEVELS: usize> IndicesPublicInput<G, GV, N, LEVELS>
+impl<G, GV, const N: usize, const LEVELS: usize> PermutationPublicInput<G, GV, N, LEVELS>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
     GV: CurveVar<G, G::BaseField>,
 {
-    /// Create a new IndicesPublicInput
+    /// Create a new PermutationPublicInput
     pub fn new(
         seed: G::BaseField,
         bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
@@ -96,30 +179,30 @@ where
     }
 }
 
-/// Witness for the indices proof system
-pub struct IndicesWitness<G, GV, const N: usize, const LEVELS: usize>
+/// Witness for the permutation proof system
+pub struct PermutationWitness<G, GV, const N: usize, const LEVELS: usize>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
     GV: CurveVar<G, G::BaseField>,
 {
     pub permutation_usize: [usize; N],
-    pub witness_data: WitnessData<N, LEVELS>,
+    pub witness_data: PermutationWitnessData<N, LEVELS>,
     pub blinding_r: <G::Config as CurveConfig>::ScalarField,
     pub blinding_s: <G::Config as CurveConfig>::ScalarField,
     _marker: PhantomData<GV>,
 }
 
-impl<G, GV, const N: usize, const LEVELS: usize> IndicesWitness<G, GV, N, LEVELS>
+impl<G, GV, const N: usize, const LEVELS: usize> PermutationWitness<G, GV, N, LEVELS>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
     GV: CurveVar<G, G::BaseField>,
 {
-    /// Create a new IndicesWitness
+    /// Create a new PermutationWitness
     pub fn new(
         permutation_usize: [usize; N],
-        witness_data: WitnessData<N, LEVELS>,
+        witness_data: PermutationWitnessData<N, LEVELS>,
         blinding_r: <G::Config as CurveConfig>::ScalarField,
         blinding_s: <G::Config as CurveConfig>::ScalarField,
     ) -> Self {
@@ -133,8 +216,11 @@ where
     }
 }
 
-/// Groth16-based proof system for indices
-pub struct Groth16IndicesProofSystem<E, G, GV, const N: usize, const LEVELS: usize>
+/// Groth16-based proof system for permutation
+///
+/// This proof system proves correct RS shuffle with Bayer-Groth permutation linkage.
+/// It maintains both the raw and prepared verifying keys for efficiency.
+pub struct Groth16PermutationProofSystem<E, G, GV, const N: usize, const LEVELS: usize>
 where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField>,
@@ -142,22 +228,25 @@ where
 {
     pub proving_key: ProvingKey<E>,
     pub verifying_key: VerifyingKey<E>,
+    pub prepared_verifying_key: PreparedVerifyingKey<E>,
     _marker: PhantomData<(G, GV)>,
 }
 
 impl<E, G, GV, const N: usize, const LEVELS: usize> ProofSystem
-    for Groth16IndicesProofSystem<E, G, GV, N, LEVELS>
+    for Groth16PermutationProofSystem<E, G, GV, N, LEVELS>
 where
     E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
+    G: CurveGroup<BaseField = E::ScalarField>
+        + CurveAbsorb<E::ScalarField>
+        + ToConstraintField<E::ScalarField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
     GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     E::ScalarField: PrimeField + Absorb,
 {
-    type PublicInput = IndicesPublicInput<G, GV, N, LEVELS>;
-    type Witness = IndicesWitness<G, GV, N, LEVELS>;
+    type PublicInput = PermutationPublicInput<G, GV, N, LEVELS>;
+    type Witness = PermutationWitness<G, GV, N, LEVELS>;
     type Proof = Groth16Proof<E>;
     type Error = Box<dyn std::error::Error>;
 
@@ -203,15 +292,58 @@ where
 
     fn verify(
         &self,
-        _public_input: &Self::PublicInput,
+        public_input: &Self::PublicInput,
         proof: &Self::Proof,
     ) -> Result<(), Self::Error> {
-        // Prepare public inputs for verification
-        let public_inputs = vec![
-            G::BaseField::from(17u64), // alpha challenge (simplified)
-                                       // In practice, would include commitment coordinates
-        ];
+        // Build the public inputs using the helper function
+        // Note: We use `seed` as `alpha` here. In production, alpha should ideally
+        // be derived from a transcript to ensure proper Fiat-Shamir challenge generation.
+        let public_inputs = build_public_inputs_for_rs_shuffle::<G, E>(
+            public_input.seed,
+            &public_input.bg_setup_params.c_perm,
+            &public_input.bg_setup_params.c_power,
+        )?;
 
+        // Use the prepared verifying key for more efficient verification
+        let valid = Groth16::<E>::verify_with_processed_vk(
+            &self.prepared_verifying_key,
+            &public_inputs,
+            proof,
+        )?;
+
+        if !valid {
+            return Err("SNARK verification failed".into());
+        }
+        Ok(())
+    }
+}
+
+impl<E, G, GV, const N: usize, const LEVELS: usize>
+    Groth16PermutationProofSystem<E, G, GV, N, LEVELS>
+where
+    E: Pairing,
+    G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
+    G::BaseField: PrimeField,
+    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+    for<'a> &'a GV: GroupOpsBounds<'a, G, E::ScalarField>,
+{
+    /// Verify a proof using the raw (unprepared) verifying key
+    ///
+    /// This method is less efficient than the standard `verify` method,
+    /// but can be useful when you need to use the raw verifying key directly.
+    pub fn verify_with_raw_vk(
+        &self,
+        public_input: &PermutationPublicInput<G, GV, N, LEVELS>,
+        proof: &Groth16Proof<E>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Build the public inputs using the helper function
+        let public_inputs = build_public_inputs_for_rs_shuffle::<G, E>(
+            public_input.seed,
+            &public_input.bg_setup_params.c_perm,
+            &public_input.bg_setup_params.c_power,
+        )?;
+
+        // Use the raw verifying key (less efficient than prepared)
         let valid = Groth16::<E>::verify(&self.verifying_key, &public_inputs, proof)?;
 
         if !valid {
@@ -423,19 +555,120 @@ impl<P, W> ProofSystem for DummyProofSystem<P, W> {
 // Helper functions for creating proof systems
 // ============================================================================
 
-/// Create a Groth16-based indices proof system
-pub fn create_groth16_indices_proof_system<E, G, GV, const N: usize, const LEVELS: usize>(
+/// Helper function to create RS Shuffle with Bayer-Groth Link circuit
+fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
+    seed: G::BaseField,
+    bg_setup_params: &BayerGrothSetupParameters<G::ScalarField, G, N>,
+    permutation_usize: &[usize; N],
+    witness_data: &PermutationWitnessData<N, LEVELS>,
+    blinding_r: <G::Config as CurveConfig>::ScalarField,
+    blinding_s: <G::Config as CurveConfig>::ScalarField,
+    generator: G,
+    domain: Vec<u8>,
+) -> RSShuffleWithBayerGrothLinkCircuit<G::BaseField, G, GV, N, LEVELS>
+where
+    G: CurveGroup,
+    G::Config: CurveConfig,
+    GV: CurveVar<G, G::BaseField>,
+    for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    G::BaseField: PrimeField,
+{
+    // Convert permutation to scalar field elements
+    let permutation_scalars: [<G::Config as CurveConfig>::ScalarField; N] =
+        std::array::from_fn(|i| {
+            <G::Config as CurveConfig>::ScalarField::from(permutation_usize[i] as u64)
+        });
+
+    // Extract initial indices (0..N-1)
+    let indices_init: [G::BaseField; N] = std::array::from_fn(|i| G::BaseField::from(i as u64));
+
+    // Extract shuffled indices from witness data
+    let final_sorted = &witness_data.next_levels[LEVELS - 1];
+    let indices_after_shuffle: [G::BaseField; N] =
+        std::array::from_fn(|i| G::BaseField::from(final_sorted[i].idx as u64));
+
+    // Create and return the circuit using the new method
+    RSShuffleWithBayerGrothLinkCircuit::<G::BaseField, G, GV, N, LEVELS>::new(
+        seed,
+        bg_setup_params.c_perm,
+        bg_setup_params.c_power,
+        permutation_scalars,
+        witness_data.clone(),
+        indices_init,
+        indices_after_shuffle,
+        (blinding_r, blinding_s),
+        generator,
+        domain,
+    )
+}
+
+/// Generate test keys for Groth16 proof system
+pub fn generate_test_keys<E, G, GV, const N: usize, const LEVELS: usize, R>(
+    rng: &mut R,
+) -> (ProvingKey<E>, VerifyingKey<E>)
+where
+    R: Rng + RngCore + CryptoRng,
+    E: Pairing,
+    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<G::BaseField>,
+    G::Config: CurveConfig<BaseField = E::ScalarField>,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    <G::Config as CurveConfig>::ScalarField: UniformRand,
+    G::BaseField: PrimeField + Absorb,
+{
+    // Create a simple dummy circuit for key generation
+    let generator = G::generator();
+    let seed = G::BaseField::from(42u64);
+    let dummy_permutation: [usize; N] = std::array::from_fn(|i| i);
+    let blinding_r = <G::Config as CurveConfig>::ScalarField::from(1u64);
+    let blinding_s = <G::Config as CurveConfig>::ScalarField::from(2u64);
+
+    // Create minimal dummy data
+    let dummy_ct: [ElGamalCiphertext<G>; N] = std::array::from_fn(|_| ElGamalCiphertext {
+        c1: G::zero(),
+        c2: G::zero(),
+    });
+
+    let (witness_data, _, _) =
+        apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
+            seed, &dummy_ct,
+        );
+
+    let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
+    let (bg_setup_params, _) =
+        bg_transcript.run_protocol::<G, N>(generator, &dummy_permutation, blinding_r, blinding_s);
+
+    let dummy_circuit = create_rs_shuffle_circuit::<G, GV, N, LEVELS>(
+        seed,
+        &bg_setup_params,
+        &dummy_permutation,
+        &witness_data,
+        blinding_r,
+        blinding_s,
+        generator,
+        b"test".to_vec(),
+    );
+
+    Groth16::<E>::circuit_specific_setup(dummy_circuit, rng).expect("Key generation should succeed")
+}
+
+/// Create a Groth16-based permutation proof system
+pub fn create_groth16_permutation_proof_system<E, G, GV, const N: usize, const LEVELS: usize>(
     proving_key: ProvingKey<E>,
     verifying_key: VerifyingKey<E>,
-) -> Groth16IndicesProofSystem<E, G, GV, N, LEVELS>
+) -> Groth16PermutationProofSystem<E, G, GV, N, LEVELS>
 where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField>,
     GV: CurveVar<G, E::ScalarField>,
 {
-    Groth16IndicesProofSystem {
+    // Pre-process the verifying key for more efficient verification
+    let prepared_verifying_key = prepare_verifying_key(&verifying_key);
+
+    Groth16PermutationProofSystem {
         proving_key,
         verifying_key,
+        prepared_verifying_key,
         _marker: PhantomData,
     }
 }

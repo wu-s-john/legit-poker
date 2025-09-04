@@ -15,13 +15,15 @@ use ark_std::rand::{rngs::StdRng, SeedableRng};
 use std::time::Instant;
 
 use common::{
-    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, format_cards, 
+    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, format_cards,
     perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
 };
 
 use zk_poker::shuffling::{
     data_structures::ElGamalCiphertext,
-    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, ReencryptionProofSystem},
+    proof_system::{
+        DummyProofSystem, PermutationPublicInput, PermutationWitness, ReencryptionProofSystem,
+    },
 };
 
 // Constants for demo
@@ -34,7 +36,7 @@ const NUM_PLAYERS: usize = 7; // Number of players
 type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
 type DummyIP =
-    DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>;
+    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>;
 type SP = ReencryptionProofSystem<G, N>;
 
 // ============================================================================
@@ -254,7 +256,10 @@ fn main() {
         }
     }
 
-    println!("\n   ✓ Community cards dealt in {:?}", community_start.elapsed());
+    println!(
+        "\n   ✓ Community cards dealt in {:?}",
+        community_start.elapsed()
+    );
     println!("   Note: Community cards use direct committee decryption (no player blinding)");
 
     // Step 8: Verify deck integrity (optional demo)

@@ -120,7 +120,7 @@ pub fn prove<G, const N: usize>(
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
     output_ciphertexts: &[ElGamalCiphertext<G>; N],
     perm_power_challenge: G::ScalarField,
-    power_perm_vector: &G,
+    power_perm_commitment: &G,
     perm_power_vector: &[G::ScalarField; N],
     power_perm_blinding_factor: G::ScalarField, // We need this blinding factor for commitments
     rerandomization_scalars: &[G::ScalarField; N], // These are the rerandomization scalars that is used to reencrypt ciphertexts
@@ -150,7 +150,7 @@ where
         transcript,
         &input_ciphertext_aggregator,
         &output_ciphertext_aggregator,
-        power_perm_vector,
+        power_perm_commitment,
     );
     tracing::debug!(
         target: LOG_TARGET,
@@ -161,18 +161,18 @@ where
     // Log the aggregator for debugging
     tracing::debug!(
         target: LOG_TARGET,
-        "Computed input_ciphertext_aggregator: {:?}",
+        "Absorbed input_ciphertext_aggregator: {:?}",
         input_ciphertext_aggregator
     );
     tracing::debug!(
         target: LOG_TARGET,
-        "Computed output_ciphertext_aggregator: {:?}",
+        "Absorbed output_ciphertext_aggregator: {:?}",
         output_ciphertext_aggregator
     );
     tracing::debug!(
         target: LOG_TARGET,
-        "Computed power_perm_vector: {:?}",
-        power_perm_vector
+        "Absorbed power_perm_commitment: {:?}",
+        power_perm_commitment
     );
 
     // --- Commit phase: pick random blinds ---

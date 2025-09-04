@@ -4,18 +4,19 @@
 //! - RS (Riffle Shuffle) algorithm for the actual permutation
 //! - Bayer-Groth setup for proving permutation correctness
 //! - Reencryption protocol for proving re-encryption correctness
-//! - SNARK proof for verifying shuffled indices
+//! - SNARK proof for verifying shuffled permutation
 
 use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 use super::bayer_groth_permutation::reencryption_protocol::ReencryptionWindow;
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
-    IndicesPublicInput, IndicesWitness, ProofSystem, ReencryptionPublicInput, ReencryptionWitness,
+    PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionPublicInput,
+    ReencryptionWitness,
 };
 use super::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
 #[cfg(test)]
 use super::rs_shuffle::{
-    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::WitnessData,
+    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessData,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
@@ -42,7 +43,7 @@ fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
     seed: G::BaseField,
     bg_setup_params: &BayerGrothSetupParameters<G::ScalarField, G, N>,
     permutation_usize: &[usize; N],
-    witness_data: &WitnessData<N, LEVELS>,
+    witness_data: &PermutationWitnessData<N, LEVELS>,
     blinding_r: <G::Config as CurveConfig>::ScalarField,
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
@@ -85,7 +86,7 @@ where
 }
 
 /// Complete shuffling proof containing all proof components
-/// Generic over IP (Indices Proof system) and SP (Sigma Proof system)
+/// Generic over IP (Permutation Proof system) and SP (Reencryption Proof system)
 pub struct ShufflingProof<IP, SP, G, const N: usize>
 where
     IP: ProofSystem,
@@ -96,8 +97,8 @@ where
     pub bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
     /// Reencryption protocol proof for re-encryption correctness
     pub reencryption_proof: SP::Proof,
-    /// SNARK proof for shuffled indices correctness
-    pub shuffling_indices_snark_proof: IP::Proof,
+    /// SNARK proof for shuffled permutation correctness
+    pub shuffling_permutation_snark_proof: IP::Proof,
     _marker: PhantomData<(IP, SP)>,
 }
 
@@ -111,19 +112,19 @@ where
     pub fn new(
         bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
         reencryption_proof: SP::Proof,
-        shuffling_indices_snark_proof: IP::Proof,
+        shuffling_permutation_snark_proof: IP::Proof,
     ) -> Self {
         Self {
             bg_setup_params,
             reencryption_proof,
-            shuffling_indices_snark_proof,
+            shuffling_permutation_snark_proof,
             _marker: PhantomData,
         }
     }
 }
 
 /// Configuration for the shuffling proof system
-/// Generic over IP (Indices Proof system) and SP (Sigma Proof system)
+/// Generic over IP (Permutation Proof system) and SP (Reencryption Proof system)
 pub struct ShufflingConfig<IP, SP, G>
 where
     IP: ProofSystem,
@@ -136,8 +137,8 @@ where
     pub generator: G,
     /// Public key for ElGamal encryption (aggregated from all shufflers)
     pub public_key: G,
-    /// Indices proof system instance
-    pub indices_proof_system: IP,
+    /// Permutation proof system instance
+    pub permutation_proof_system: IP,
     /// Reencryption protocol proof system instance
     pub reencryption_proof_system: SP,
 }
@@ -172,8 +173,8 @@ where
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<
-        PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
-        Witness = IndicesWitness<G, GV, N, LEVELS>,
+        PublicInput = PermutationPublicInput<G, GV, N, LEVELS>,
+        Witness = PermutationWitness<G, GV, N, LEVELS>,
     >,
     SP: ProofSystem<
         PublicInput = ReencryptionPublicInput<G, N>,
@@ -240,28 +241,28 @@ where
     );
 
     // Step 5: Create and run SNARK circuit for RS shuffle with Bayer-Groth linking
-    tracing::debug!(target: LOG_TARGET, "Step 5: Creating indices proof with generic proof system");
+    tracing::debug!(target: LOG_TARGET, "Step 5: Creating permutation proof with generic proof system");
 
-    // Create IndicesPublicInput
-    let indices_public = IndicesPublicInput::<G, GV, N, LEVELS>::new(
+    // Create PermutationPublicInput
+    let permutation_public = PermutationPublicInput::<G, GV, N, LEVELS>::new(
         seed,
         bg_setup_params.clone(),
         config.generator,
         config.domain.clone(),
     );
 
-    // Create IndicesWitness
-    let indices_witness = IndicesWitness::<G, GV, N, LEVELS>::new(
+    // Create PermutationWitness
+    let permutation_witness = PermutationWitness::<G, GV, N, LEVELS>::new(
         permutation_usize,
         witness_data.clone(),
         blinding_r,
         blinding_s,
     );
 
-    // Generate proof using the generic indices proof system
-    let shuffling_indices_snark_proof = config
-        .indices_proof_system
-        .prove(&indices_public, &indices_witness, rng)
+    // Generate proof using the generic permutation proof system
+    let shuffling_permutation_snark_proof = config
+        .permutation_proof_system
+        .prove(&permutation_public, &permutation_witness, rng)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Step 6: Generate reencryption protocol proof for re-encryption correctness
@@ -299,7 +300,7 @@ where
         ShufflingProof::new(
             bg_setup_params,
             reencryption_proof,
-            shuffling_indices_snark_proof,
+            shuffling_permutation_snark_proof,
         ),
     ))
 }
@@ -335,7 +336,7 @@ where
     GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
-    IP: ProofSystem<PublicInput = IndicesPublicInput<G, GV, N, LEVELS>>,
+    IP: ProofSystem<PublicInput = PermutationPublicInput<G, GV, N, LEVELS>>,
     SP: ProofSystem<PublicInput = ReencryptionPublicInput<G, N>>,
     IP::Error: Into<Box<dyn std::error::Error>>,
     SP::Error: Into<Box<dyn std::error::Error>>,
@@ -388,22 +389,25 @@ where
         })?;
 
     // Step 3: Verify SNARK proof
-    tracing::debug!(target: LOG_TARGET, "Step 3: Verifying indices proof with generic proof system");
+    tracing::debug!(target: LOG_TARGET, "Step 3: Verifying permutation proof with generic proof system");
 
-    // Create IndicesPublicInput for verification
-    let indices_public = IndicesPublicInput::<G, GV, N, LEVELS>::new(
+    // Create PermutationPublicInput for verification
+    let permutation_public = PermutationPublicInput::<G, GV, N, LEVELS>::new(
         seed,
         proof.bg_setup_params.clone(),
         config.generator,
         config.domain.clone(),
     );
 
-    // Verify using the generic indices proof system
+    // Verify using the generic permutation proof system
     config
-        .indices_proof_system
-        .verify(&indices_public, &proof.shuffling_indices_snark_proof)
+        .permutation_proof_system
+        .verify(
+            &permutation_public,
+            &proof.shuffling_permutation_snark_proof,
+        )
         .map_err(|e| -> Box<dyn std::error::Error> {
-            tracing::warn!(target: LOG_TARGET, "Indices proof verification failed");
+            tracing::warn!(target: LOG_TARGET, "Permutation proof verification failed");
             e.into()
         })?;
 
@@ -433,8 +437,8 @@ where
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<
-        PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
-        Witness = IndicesWitness<G, GV, N, LEVELS>,
+        PublicInput = PermutationPublicInput<G, GV, N, LEVELS>,
+        Witness = PermutationWitness<G, GV, N, LEVELS>,
     >,
     SP: ProofSystem<
         PublicInput = ReencryptionPublicInput<G, N>,
@@ -457,7 +461,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::proof_system::{
-        create_dummy_proof_system, create_groth16_indices_proof_system,
+        create_dummy_proof_system, create_groth16_permutation_proof_system,
         create_reencryption_proof_system, DummyProofSystem,
     };
     use super::*;
@@ -485,6 +489,8 @@ mod tests {
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
+                    .with_line_number(true) // Add line numbers
+                    .with_timer(tracing_subscriber::fmt::time::uptime()) // Use elapsed time instead of date
                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
                     .with_test_writer(), // This ensures output goes to test stdout
             )
@@ -494,7 +500,7 @@ mod tests {
 
     /// Helper function to generate proving and verifying keys for testing
     /// These keys can be generated once and reused across tests
-    fn generate_test_keys<E, G, GV, const N: usize, const LEVELS: usize, R>(
+    fn generate_permutation_proving_keys<E, G, GV, const N: usize, const LEVELS: usize, R>(
         rng: &mut R,
     ) -> (ProvingKey<E>, VerifyingKey<E>)
     where
@@ -550,6 +556,7 @@ mod tests {
 
     #[test]
     fn test_shuffling_proof_bn254() {
+        let _gaurd = setup_test_tracing();
         let mut rng = StdRng::seed_from_u64(12345);
 
         // Define types for BN254 with Grumpkin
@@ -565,11 +572,13 @@ mod tests {
         // Generate proving and verifying keys once
         // In production, these would be generated in a trusted setup ceremony
         let (proving_key, verifying_key) =
-            generate_test_keys::<E, G, GV, N, LEVELS, StdRng>(&mut rng);
+            generate_permutation_proving_keys::<E, G, GV, N, LEVELS, StdRng>(&mut rng);
 
         // Create concrete proof system instances
-        let indices_proof_system =
-            create_groth16_indices_proof_system::<E, G, GV, N, LEVELS>(proving_key, verifying_key);
+        let permutation_proof_system = create_groth16_permutation_proof_system::<E, G, GV, N, LEVELS>(
+            proving_key,
+            verifying_key,
+        );
         let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
 
         // Setup configuration
@@ -583,7 +592,7 @@ mod tests {
             domain: domain.clone(),
             generator,
             public_key,
-            indices_proof_system,
+            permutation_proof_system,
             reencryption_proof_system,
         };
 
@@ -598,7 +607,7 @@ mod tests {
         let shuffle_seed = ark_bn254::Fr::rand(&mut rng);
 
         // Call the generic test function
-        type IP = super::super::proof_system::Groth16IndicesProofSystem<E, G, GV, N, LEVELS>;
+        type IP = super::super::proof_system::Groth16PermutationProofSystem<E, G, GV, N, LEVELS>;
         type SP = super::super::proof_system::ReencryptionProofSystem<G, N>;
 
         let result = test_prove_and_verify::<G, GV, IP, SP, N, LEVELS, StdRng>(
@@ -620,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn test_shuffling_proof_with_dummy_indices() {
+    fn test_shuffling_proof_with_dummy_permutation() -> Result<(), Box<dyn std::error::Error>> {
         let _tracing_gaurd = setup_test_tracing();
         let mut rng = StdRng::seed_from_u64(12345);
 
@@ -631,13 +640,13 @@ mod tests {
         type G = GrumpkinProjective;
         type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
 
-        // Create DummyProofSystem for indices (always succeeds)
+        // Create DummyProofSystem for permutation (always succeeds)
         // The DummyProofSystem needs the correct PublicInput and Witness types
         type DummyIP = DummyProofSystem<
-            IndicesPublicInput<G, GV, N, LEVELS>,
-            IndicesWitness<G, GV, N, LEVELS>,
+            PermutationPublicInput<G, GV, N, LEVELS>,
+            PermutationWitness<G, GV, N, LEVELS>,
         >;
-        let indices_proof_system: DummyIP = create_dummy_proof_system();
+        let permutation_proof_system: DummyIP = create_dummy_proof_system();
 
         // Create real ReencryptionProofSystem for reencryption protocol
         type SP = super::super::proof_system::ReencryptionProofSystem<G, N>;
@@ -654,7 +663,7 @@ mod tests {
             domain: domain.clone(),
             generator,
             public_key,
-            indices_proof_system,
+            permutation_proof_system,
             reencryption_proof_system,
         };
 
@@ -668,57 +677,43 @@ mod tests {
         // Test with random seed (Grumpkin's base field which is BN254's scalar field)
         let shuffle_seed = ark_bn254::Fr::rand(&mut rng);
 
-        // Test prove and verify using dummy indices proof system
-        println!("Testing shuffling proof with DummyProofSystem for indices...");
+        // Test prove and verify using dummy permutation proof system
+        println!("Testing shuffling proof with DummyProofSystem for permutation...");
 
-        // Generate the proof
-        let prove_result = prove_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
+        // Generate the proof - using ? operator for clean error handling
+        let (ct_output, proof) = prove_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
             &config,
             &ct_input,
             shuffle_seed,
             &mut rng,
+        )?;
+        println!("✓ Proof generation succeeded with dummy permutation proof system");
+
+        // Verify the proof - using ? operator
+        let is_valid = verify_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
+            &config,
+            &ct_input,
+            &ct_output,
+            &proof,
+            shuffle_seed,
+        )?;
+
+        assert!(is_valid, "Proof verification should succeed");
+        println!("✓ Proof verification succeeded");
+
+        // Verify that the proof components are as expected
+        // DummyProofSystem returns unit type () as proof
+        // So we can't inspect the permutation proof, but we can verify reencryption proof exists
+        assert!(
+            !proof.bg_setup_params.c_perm.is_zero(),
+            "BG commitment should be non-zero"
+        );
+        assert!(
+            !proof.bg_setup_params.c_power.is_zero(),
+            "BG power commitment should be non-zero"
         );
 
-        match prove_result {
-            Ok((ct_output, proof)) => {
-                println!("✓ Proof generation succeeded with dummy indices proof system");
-
-                // Verify the proof
-                let verify_result = verify_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
-                    &config,
-                    &ct_input,
-                    &ct_output,
-                    &proof,
-                    shuffle_seed,
-                );
-
-                match verify_result {
-                    Ok(is_valid) => {
-                        assert!(is_valid, "Proof verification should succeed");
-                        println!("✓ Proof verification succeeded");
-
-                        // Verify that the proof components are as expected
-                        // DummyProofSystem returns unit type () as proof
-                        // So we can't inspect the indices proof, but we can verify reencryption proof exists
-                        assert!(
-                            !proof.bg_setup_params.c_perm.is_zero(),
-                            "BG commitment should be non-zero"
-                        );
-                        assert!(
-                            !proof.bg_setup_params.c_power.is_zero(),
-                            "BG power commitment should be non-zero"
-                        );
-
-                        println!("✅ Shuffling proof test with dummy indices passed!");
-                    }
-                    Err(e) => {
-                        panic!("Proof verification failed: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                panic!("Proof generation failed: {}", e);
-            }
-        }
+        println!("✅ Shuffling proof test with dummy permutation passed!");
+        Ok(())
     }
 }

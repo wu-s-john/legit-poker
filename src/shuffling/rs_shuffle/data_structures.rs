@@ -37,7 +37,7 @@ pub struct SortedRow {
 
 /// Witness data for all levels
 #[derive(Clone, Debug)]
-pub struct WitnessData<const N: usize, const LEVELS: usize> {
+pub struct PermutationWitnessData<const N: usize, const LEVELS: usize> {
     /// Split bits matrix (LEVELS × N)
     pub bits_mat: [[bool; N]; LEVELS],
     /// Unsorted witness rows per level
@@ -178,7 +178,7 @@ impl<F: PrimeField> AllocVar<SortedRow, F> for SortedRowVar<F> {
 
 /// Circuit variable version of WitnessData for use in SNARK constraints
 #[derive(Clone)]
-pub struct WitnessDataVar<F: PrimeField, const N: usize, const LEVELS: usize> {
+pub struct PermutationWitnessDataVar<F: PrimeField, const N: usize, const LEVELS: usize> {
     /// Split bits matrix (LEVELS × N) as witness variables
     pub bits_mat: [[Boolean<F>; N]; LEVELS],
     /// Unsorted witness rows per level
@@ -187,10 +187,10 @@ pub struct WitnessDataVar<F: PrimeField, const N: usize, const LEVELS: usize> {
     pub sorted_levels: [[SortedRowVar<F>; N]; LEVELS],
 }
 
-impl<F: PrimeField, const N: usize, const LEVELS: usize> AllocVar<WitnessData<N, LEVELS>, F>
-    for WitnessDataVar<F, N, LEVELS>
+impl<F: PrimeField, const N: usize, const LEVELS: usize>
+    AllocVar<PermutationWitnessData<N, LEVELS>, F> for PermutationWitnessDataVar<F, N, LEVELS>
 {
-    fn new_variable<T: Borrow<WitnessData<N, LEVELS>>>(
+    fn new_variable<T: Borrow<PermutationWitnessData<N, LEVELS>>>(
         cs: impl Into<gr1cs::Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -277,7 +277,7 @@ impl<F: PrimeField, const N: usize, const LEVELS: usize> AllocVar<WitnessData<N,
     }
 }
 
-impl<F: PrimeField, const N: usize, const LEVELS: usize> WitnessDataVar<F, N, LEVELS> {
+impl<F: PrimeField, const N: usize, const LEVELS: usize> PermutationWitnessDataVar<F, N, LEVELS> {
     /// Get the number of levels in the witness data (always LEVELS)
     pub const fn num_levels(&self) -> usize {
         LEVELS

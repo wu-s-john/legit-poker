@@ -12,7 +12,7 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 /// Main witness preparation function (prover-side)
 pub fn prepare_witness_data<F, const N: usize, const LEVELS: usize>(
     seed: F,
-) -> (WitnessData<N, LEVELS>, usize)
+) -> (PermutationWitnessData<N, LEVELS>, usize)
 where
     F: Field + PrimeField + Absorb,
 {
@@ -51,7 +51,7 @@ where
     let next_levels: [[SortedRow; N]; LEVELS] = std::array::from_fn(|i| level_results[i].1.clone());
 
     (
-        WitnessData {
+        PermutationWitnessData {
             bits_mat,
             uns_levels,
             next_levels,
@@ -77,7 +77,7 @@ where
 pub fn apply_rs_shuffle_permutation<F, T, const N: usize, const LEVELS: usize>(
     seed: F,
     input: &[T; N],
-) -> (WitnessData<N, LEVELS>, usize, [T; N])
+) -> (PermutationWitnessData<N, LEVELS>, usize, [T; N])
 where
     F: Field + PrimeField + Absorb,
     T: Clone + std::fmt::Debug,
@@ -255,9 +255,9 @@ pub fn build_level<const N: usize>(
 pub fn prepare_witness_data_circuit<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     seed: &FpVar<F>,
-    witness_data: &WitnessData<N, LEVELS>,
+    witness_data: &PermutationWitnessData<N, LEVELS>,
     num_samples: usize,
-) -> Result<WitnessDataVar<F, N, LEVELS>, SynthesisError>
+) -> Result<PermutationWitnessDataVar<F, N, LEVELS>, SynthesisError>
 where
     F: PrimeField + Absorb,
 {
@@ -310,7 +310,7 @@ where
         })
     });
 
-    Ok(WitnessDataVar {
+    Ok(PermutationWitnessDataVar {
         bits_mat,
         uns_levels,
         sorted_levels,

@@ -24,11 +24,12 @@ pub use rs_shuffle_gadget::{rs_shuffle, rs_shuffle_indices, rs_shuffle_with_reen
 
 // Data structures
 pub use data_structures::{
-    SortedRow, SortedRowVar, UnsortedRow, UnsortedRowVar, WitnessData, WitnessDataVar,
+    PermutationWitnessData, PermutationWitnessDataVar, SortedRow, SortedRowVar, UnsortedRow,
+    UnsortedRowVar,
 };
 
 // Witness preparation
 pub use witness_preparation::{prepare_witness_data, prepare_witness_data_circuit};
 
 // Main circuit implementation
-pub use circuit::{RSShuffleCircuit, RSShuffleIndicesCircuit};
+pub use circuit::{RSShuffleCircuit, RSShufflePermutationCircuit};

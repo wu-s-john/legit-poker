@@ -41,7 +41,7 @@ use zk_poker::shuffler_service::ShufflerService;
 use zk_poker::shuffling::{
     data_structures::ElGamalCiphertext,
     player_decryption::recover_card_value,
-    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, ReencryptionProofSystem},
+    proof_system::{DummyProofSystem, PermutationPublicInput, PermutationWitness, ReencryptionProofSystem},
     unified_shuffler,
 };
 
@@ -53,7 +53,7 @@ const LEVELS: usize = 5; // RS shuffle levels
 type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
 type DummyIP =
-    DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>;
+    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>;
 type SP = ReencryptionProofSystem<G, N>;
 
 /// Helper function to format a list field, showing only first 2 elements
