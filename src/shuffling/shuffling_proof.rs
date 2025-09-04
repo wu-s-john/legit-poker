@@ -238,11 +238,10 @@ where
     );
 
     // Generate proof using the generic indices proof system
-    let shuffling_indices_snark_proof =
-        config
-            .indices_proof_system
-            .prove(&indices_public, &indices_witness, rng)
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+    let shuffling_indices_snark_proof = config
+        .indices_proof_system
+        .prove(&indices_public, &indices_witness, rng)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Step 5: Generate sigma protocol proof for re-encryption correctness
     tracing::debug!(target: LOG_TARGET, "Step 5: Generating sigma protocol proof with generic proof system");
@@ -275,11 +274,8 @@ where
     );
 
     // Create SigmaWitness
-    let sigma_witness = SigmaWitness::<G, N>::new(
-        perm_power_vector,
-        sigma_blinding,
-        rerandomization_factors,
-    );
+    let sigma_witness =
+        SigmaWitness::<G, N>::new(perm_power_vector, sigma_blinding, rerandomization_factors);
 
     // Generate proof using the generic sigma proof system
     let sigma_proof = config
@@ -291,11 +287,7 @@ where
 
     Ok((
         ct_output,
-        ShufflingProof::new(
-            bg_setup_params,
-            sigma_proof,
-            shuffling_indices_snark_proof,
-        ),
+        ShufflingProof::new(bg_setup_params, sigma_proof, shuffling_indices_snark_proof),
     ))
 }
 
@@ -449,7 +441,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::proof_system::{
-        create_groth16_indices_proof_system, create_sigma_proof_system,
+        create_dummy_proof_system, create_groth16_indices_proof_system, create_sigma_proof_system,
+        DummyProofSystem,
     };
     use super::*;
     use ark_bn254::{Bn254, Fr};
@@ -462,6 +455,26 @@ mod tests {
     use ark_snark::SNARK;
     use ark_std::rand::rngs::StdRng;
     use ark_std::rand::SeedableRng;
+    use ark_std::Zero;
+    use tracing_subscriber::filter;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    const TEST_TARGET: &str = "nexus_nova";
+
+    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
+        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
+                    .with_test_writer(), // This ensures output goes to test stdout
+            )
+            .with(filter)
+            .set_default()
+    }
 
     /// Helper function to generate proving and verifying keys for testing
     /// These keys can be generated once and reused across tests
@@ -586,6 +599,109 @@ mod tests {
             }
             Err(e) => {
                 panic!("Test failed with error: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_shuffling_proof_with_dummy_indices() {
+        let _tracing_gaurd = setup_test_tracing();
+        let mut rng = StdRng::seed_from_u64(12345);
+
+        // Define types for the test
+        const N: usize = 10;
+        const LEVELS: usize = 3;
+
+        type G = GrumpkinProjective;
+        type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
+
+        // Create DummyProofSystem for indices (always succeeds)
+        // The DummyProofSystem needs the correct PublicInput and Witness types
+        type DummyIP = DummyProofSystem<
+            IndicesPublicInput<G, GV, N, LEVELS>,
+            IndicesWitness<G, GV, N, LEVELS>,
+        >;
+        let indices_proof_system: DummyIP = create_dummy_proof_system();
+
+        // Create real SigmaProofSystem for sigma protocol
+        type SP = super::super::proof_system::SigmaProofSystem<G, N>;
+        let sigma_proof_system = create_sigma_proof_system::<G, N>();
+
+        // Setup configuration
+        let generator = G::generator();
+        // Generate a valid ElGamal public key (sk * G)
+        let private_key = ark_grumpkin::Fr::rand(&mut rng);
+        let public_key = generator * private_key;
+        let domain = b"test_dummy_domain".to_vec();
+
+        let config = ShufflingConfig {
+            domain: domain.clone(),
+            generator,
+            public_key,
+            indices_proof_system,
+            sigma_proof_system,
+        };
+
+        // Create actual input ciphertexts with encrypted values
+        let ct_input: [ElGamalCiphertext<G>; N] = std::array::from_fn(|i| {
+            let message = ark_grumpkin::Fr::from(i as u64);
+            let randomness = ark_grumpkin::Fr::rand(&mut rng);
+            ElGamalCiphertext::encrypt_scalar(message, randomness, public_key)
+        });
+
+        // Test with random seed (Grumpkin's base field which is BN254's scalar field)
+        let shuffle_seed = ark_bn254::Fr::rand(&mut rng);
+
+        // Test prove and verify using dummy indices proof system
+        println!("Testing shuffling proof with DummyProofSystem for indices...");
+
+        // Generate the proof
+        let prove_result = prove_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
+            &config,
+            &ct_input,
+            shuffle_seed,
+            &mut rng,
+        );
+
+        match prove_result {
+            Ok((ct_output, proof)) => {
+                println!("✓ Proof generation succeeded with dummy indices proof system");
+
+                // Verify the proof
+                let verify_result = verify_shuffling::<G, GV, DummyIP, SP, N, LEVELS>(
+                    &config,
+                    &ct_input,
+                    &ct_output,
+                    &proof,
+                    shuffle_seed,
+                );
+
+                match verify_result {
+                    Ok(is_valid) => {
+                        assert!(is_valid, "Proof verification should succeed");
+                        println!("✓ Proof verification succeeded");
+
+                        // Verify that the proof components are as expected
+                        // DummyProofSystem returns unit type () as proof
+                        // So we can't inspect the indices proof, but we can verify sigma proof exists
+                        assert!(
+                            !proof.bg_setup_params.c_perm.is_zero(),
+                            "BG commitment should be non-zero"
+                        );
+                        assert!(
+                            !proof.bg_setup_params.c_power.is_zero(),
+                            "BG power commitment should be non-zero"
+                        );
+
+                        println!("✅ Shuffling proof test with dummy indices passed!");
+                    }
+                    Err(e) => {
+                        panic!("Proof verification failed: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                panic!("Proof generation failed: {}", e);
             }
         }
     }
