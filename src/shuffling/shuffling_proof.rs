@@ -7,6 +7,7 @@
 //! - SNARK proof for verifying shuffled indices
 
 use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
+use super::bayer_groth_permutation::sigma_protocol::SigmaWindow;
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
     IndicesPublicInput, IndicesWitness, ProofSystem, SigmaPublicInput, SigmaWitness,
@@ -17,19 +18,23 @@ use super::rs_shuffle::{
     circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::WitnessData,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
-use ark_crypto_primitives::commitment::pedersen::Parameters;
+use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
+use ark_crypto_primitives::commitment::CommitmentScheme;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::PrimeField;
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::{
     marker::PhantomData,
-    rand::{CryptoRng, Rng, RngCore},
+    rand::{rngs::StdRng, CryptoRng, Rng, RngCore, SeedableRng},
     vec::Vec,
     UniformRand,
 };
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::shuffling_proof";
+
+/// Type alias for Pedersen commitment with proper window configuration
+type Pedersen<G> = PedersenCommitment<G, SigmaWindow>;
 
 /// Helper function to create RS Shuffle with Bayer-Groth Link circuit
 #[cfg(test)]
@@ -205,21 +210,34 @@ where
         }
     });
 
-    // Step 3: Run Bayer-Groth setup to generate setup parameters
-    tracing::debug!(target: LOG_TARGET, "Step 3: Running Bayer-Groth setup");
+    // Step 3: Generate Pedersen parameters first (needed for both BG setup and sigma protocol)
+    // NOTE: Using a fixed seed to ensure consistency between prover and verifier.
+    // In production, these would be shared public parameters.
+    let mut pedersen_rng = StdRng::seed_from_u64(42);
+    let pedersen_params =
+        Pedersen::<G>::setup(&mut pedersen_rng).map_err(|e| -> Box<dyn std::error::Error> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to setup Pedersen parameters: {:?}", e),
+            ))
+        })?;
+
+    // Step 4: Run Bayer-Groth setup to generate setup parameters
+    tracing::debug!(target: LOG_TARGET, "Step 4: Running Bayer-Groth setup");
     let blinding_r = <G::Config as CurveConfig>::ScalarField::rand(rng);
     let blinding_s = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
     let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(&config.domain);
-    let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol::<G, N>(
+    let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol_with_pedersen::<G, N>(
         config.generator,
+        &pedersen_params,
         &permutation_usize,
         blinding_r,
         blinding_s,
     );
 
-    // Step 4: Create and run SNARK circuit for RS shuffle with Bayer-Groth linking
-    tracing::debug!(target: LOG_TARGET, "Step 4: Creating indices proof with generic proof system");
+    // Step 5: Create and run SNARK circuit for RS shuffle with Bayer-Groth linking
+    tracing::debug!(target: LOG_TARGET, "Step 5: Creating indices proof with generic proof system");
 
     // Create IndicesPublicInput
     let indices_public = IndicesPublicInput::<G, GV, N, LEVELS>::new(
@@ -243,24 +261,8 @@ where
         .prove(&indices_public, &indices_witness, rng)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    // Step 5: Generate sigma protocol proof for re-encryption correctness
-    tracing::debug!(target: LOG_TARGET, "Step 5: Generating sigma protocol proof with generic proof system");
-
-    // Generate new blinding factor for sigma protocol (different from BG blinding)
-    let sigma_blinding = <G::Config as CurveConfig>::ScalarField::rand(rng);
-
-    // Create dummy Pedersen parameters - in practice these would be properly initialized
-    let mut randomness_generator = Vec::with_capacity(N + 1);
-    for _ in 0..=N {
-        randomness_generator.push(config.generator);
-    }
-    // Create a 2D generator table for Pedersen commitments
-    // For simplicity, using single element rows
-    let generators = vec![vec![config.generator]; N];
-    let pedersen_params = Parameters {
-        generators,
-        randomness_generator,
-    };
+    // Step 6: Generate sigma protocol proof for re-encryption correctness
+    tracing::debug!(target: LOG_TARGET, "Step 6: Generating sigma protocol proof with generic proof system");
 
     // Create SigmaPublicInput
     let sigma_public = SigmaPublicInput::<G, N>::new(
@@ -269,13 +271,17 @@ where
         ct_input.clone(),
         ct_output.clone(),
         bg_setup_params.perm_power_challenge,
-        bg_setup_params.c_perm,
+        bg_setup_params.c_power,
         config.domain.clone(),
     );
 
-    // Create SigmaWitness
-    let sigma_witness =
-        SigmaWitness::<G, N>::new(perm_power_vector, sigma_blinding, rerandomization_factors);
+    // Create SigmaWitness using the blinding factor from BG setup
+    // This ensures consistency with the commitment to the power vector
+    let sigma_witness = SigmaWitness::<G, N>::new(
+        perm_power_vector,
+        bg_setup_params.blinding_s,
+        rerandomization_factors,
+    );
 
     // Generate proof using the generic sigma proof system
     let sigma_proof = config
@@ -341,18 +347,18 @@ where
     // Step 2: Verify sigma protocol proof
     tracing::debug!(target: LOG_TARGET, "Step 2: Verifying sigma protocol proof with generic proof system");
 
-    // Create dummy Pedersen parameters - in practice these would be properly initialized
-    let mut randomness_generator = Vec::with_capacity(N + 1);
-    for _ in 0..=N {
-        randomness_generator.push(config.generator);
-    }
-    // Create a 2D generator table for Pedersen commitments
-    // For simplicity, using single element rows
-    let generators = vec![vec![config.generator]; N];
-    let pedersen_params = Parameters {
-        generators,
-        randomness_generator,
-    };
+    // Generate proper Pedersen parameters with distinct generators
+    // NOTE: In production, these parameters would be shared between prover and verifier
+    // and generated during a trusted setup phase. For testing, we use a fixed seed
+    // to ensure consistency between prover and verifier.
+    let mut pedersen_rng = StdRng::seed_from_u64(42);
+    let pedersen_params =
+        Pedersen::<G>::setup(&mut pedersen_rng).map_err(|e| -> Box<dyn std::error::Error> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to setup Pedersen parameters: {:?}", e),
+            ))
+        })?;
 
     // Create SigmaPublicInput for verification
     let sigma_public = SigmaPublicInput::<G, N>::new(
@@ -361,7 +367,7 @@ where
         ct_input.clone(),
         ct_output.clone(),
         proof.bg_setup_params.perm_power_challenge,
-        proof.bg_setup_params.c_perm,
+        proof.bg_setup_params.c_power,
         config.domain.clone(),
     );
 

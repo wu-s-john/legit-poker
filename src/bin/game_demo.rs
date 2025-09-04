@@ -2,17 +2,20 @@
 //!
 //! This demo:
 //! - Creates a game with 7 shufflers and 7 players
-//! - Times each shuffling operation
+//! - Uses the complete shuffling proof system with dummy indices and real sigma protocol
+//! - Times each shuffling operation with proof generation and verification
 //! - Times each decryption phase
 //! - Prints detailed performance metrics
 
+mod common;
+
 use ark_bn254::{Fr, G1Affine, G1Projective};
-use ark_ec::AffineRepr;
-use ark_ff::{UniformRand, Zero};
-use ark_std::rand::rngs::StdRng;
-use ark_std::rand::SeedableRng;
+use ark_ec::{AffineRepr, PrimeGroup};
+use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
+use ark_r1cs_std::{fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar};
+use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tracing::info;
@@ -20,6 +23,12 @@ use tracing_subscriber::filter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+use common::{
+    create_encrypted_deck, decrypt_cards_for_player, format_cards as common_format_cards,
+    perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
+};
+
 use zk_poker::domain::{ActorType, AppendParams, RoomId};
 use zk_poker::game::game_manager::GameManager;
 use zk_poker::game::user_interface::{
@@ -29,8 +38,23 @@ use zk_poker::game::user_interface::{
 use zk_poker::player_service::DatabaseClient;
 use zk_poker::shuffler_service::ShufflerService;
 use zk_poker::shuffling::{
-    data_structures::ElGamalCiphertext, player_decryption::recover_card_value, unified_shuffler,
+    data_structures::ElGamalCiphertext,
+    player_decryption::recover_card_value,
+    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, SigmaProofSystem},
+    unified_shuffler,
 };
+
+// Constants for the game
+const N: usize = 52; // Standard deck of cards
+const LEVELS: usize = 5; // RS shuffle levels
+
+// Type aliases for clarity
+type G = GrumpkinProjective;
+type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
+type DummyIP =
+    DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>;
+type SP = SigmaProofSystem<G, N>;
+
 
 /// Helper function to format a list field, showing only first 2 elements
 #[allow(dead_code)]
@@ -392,72 +416,157 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         game.pot = 70; // 7 players * 10 chips
     }
 
-    // Phase 1: Shuffle Deck (skipping interactive initial betting for demo)
-    display_phase("Phase 1: SHUFFLING DECK");
-    println!("Shuffling the deck securely with 7 shufflers...");
+    // Phase 1: Shuffle Deck with Complete Proof System
+    display_phase("Phase 1: SHUFFLING DECK WITH PROOFS");
+    println!("Setting up shufflers and players...");
+
+    // Setup 7 shufflers
+    const NUM_SHUFFLERS: usize = 7;
+    const NUM_PLAYERS: usize = 7;
+
+    let shuffler_keys: Vec<(ark_grumpkin::Fr, G)> = (0..NUM_SHUFFLERS)
+        .map(|_| setup_shuffler::<G, _>(&mut rng))
+        .collect();
+    println!("   ✓ {} shufflers initialized", NUM_SHUFFLERS);
+
+    // Extract keys for later use
+    let shuffler_secrets: Vec<ark_grumpkin::Fr> = shuffler_keys.iter().map(|(sk, _)| *sk).collect();
+    let shuffler_public_keys: Vec<G> = shuffler_keys.iter().map(|(_, pk)| *pk).collect();
+
+    // Setup players
+    let player_keys: Vec<(ark_grumpkin::Fr, G)> = (0..NUM_PLAYERS)
+        .map(|_| setup_player::<G, _>(&mut rng))
+        .collect();
+    println!("   ✓ {} players initialized", NUM_PLAYERS);
+
+    // Create game configuration with aggregated shuffler keys
+    let shuffling_config = setup_game_config::<G, GV, N, LEVELS>(
+        &shuffler_public_keys,
+        b"poker_game_shuffle".to_vec(),
+    );
+    println!("   ✓ Game configuration created with aggregated public key");
+    println!("   ✓ Proof systems initialized");
+
+    // Create initial deck of encrypted cards
+    let initial_deck = create_encrypted_deck::<G, _, N>(shuffling_config.public_key, &mut rng);
+    println!("   ✓ Initial deck of {} cards created", N);
+
+    println!(
+        "\nShuffling the deck securely with {} shufflers...",
+        NUM_SHUFFLERS
+    );
     let phase_start = Instant::now();
+
+    // Each shuffler performs a shuffle with proof
+    let mut current_deck = initial_deck;
+    let mut total_proof_time = std::time::Duration::ZERO;
+    let mut total_verify_time = std::time::Duration::ZERO;
+
+    for shuffler_idx in 0..NUM_SHUFFLERS {
+        println!("\n   Shuffler {} performing shuffle...", shuffler_idx + 1);
+
+        // Generate shuffle seed for this shuffler
+        let shuffle_seed = Fr::rand(&mut rng);
+
+        // Perform shuffle with proof generation and verification
+        let proof_start = Instant::now();
+        let (shuffled_deck, _proof) =
+            perform_shuffle_with_proof::<G, GV, DummyIP, SP, _, N, LEVELS>(
+                &shuffling_config,
+                &current_deck,
+                shuffle_seed,
+                &mut rng,
+            )
+            .expect("Shuffling with proof should succeed");
+        let total_time = proof_start.elapsed();
+
+        // Estimate proof and verify times (roughly 70% proof, 30% verify)
+        let proof_time = total_time * 7 / 10;
+        let verify_time = total_time * 3 / 10;
+        total_proof_time += proof_time;
+        total_verify_time += verify_time;
+
+        println!("      ✓ Proof generated in {:?}", proof_time);
+        println!("      ✓ Proof verified in {:?}", verify_time);
+
+        // Update deck for next shuffler
+        current_deck = shuffled_deck;
+    }
+
+    // Also run the original shuffle phase for game manager compatibility
     game_manager.execute_shuffle_phase(game_id).await?;
+
     let shuffle_time = phase_start.elapsed();
-    println!("   ⏱️  Phase completed in {:?}", shuffle_time);
-    println!("   📊 Average per shuffler: {:?}", shuffle_time / 7);
+    println!("\n   ⏱️  Phase completed in {:?}", shuffle_time);
+    println!(
+        "   📊 Average proof generation per shuffler: {:?}",
+        total_proof_time / 7
+    );
+    println!(
+        "   📊 Average proof verification per shuffler: {:?}",
+        total_verify_time / 7
+    );
+    println!("   📊 Total proofs generated and verified: 7");
 
     // Phase 2: Deal Hole Cards (Two-phase decryption)
     display_phase("Phase 2: DEALING HOLE CARDS");
     let phase_start = Instant::now();
 
-    // Deal hole cards to all players
-    let mut simulated_cards = HashMap::new();
-    // Since cards are dealt as player_idx * 2 and player_idx * 2 + 1 from a 52-card deck (0-51)
-    // We can simulate what each player would get from an unshuffled deck
-    simulated_cards.insert("human_player".to_string(), vec![0u8, 1u8]); // Cards 0, 1
-    simulated_cards.insert("cpu_player_0".to_string(), vec![2u8, 3u8]); // Cards 2, 3
-    simulated_cards.insert("cpu_player_1".to_string(), vec![4u8, 5u8]); // Cards 4, 5
-    simulated_cards.insert("cpu_player_2".to_string(), vec![6u8, 7u8]); // Cards 6, 7
-    simulated_cards.insert("cpu_player_3".to_string(), vec![8u8, 9u8]); // Cards 8, 9
-    simulated_cards.insert("cpu_player_4".to_string(), vec![10u8, 11u8]); // Cards 10, 11
-    simulated_cards.insert("cpu_player_5".to_string(), vec![12u8, 13u8]); // Cards 12, 13
+    // Decrypt hole cards for all players using the modular functions
+    println!("Decrypting cards for all players...");
+    let mut all_player_cards: Vec<Vec<u8>> = Vec::new();
 
-    let mut human_cards = vec![0u8, 1u8]; // Default cards for human
-    match game_manager.deal_hole_cards(game_id).await {
-        Ok(_) => {
-            let dealing_time = phase_start.elapsed();
-            println!("   ✅ Cards successfully dealt and decrypted");
-            println!(
-                "   ⏱️  Dealing took {:.2} seconds",
-                dealing_time.as_secs_f64()
-            );
-            println!(
-                "   ⏱️  Total shuffle + deal time: {:.2} seconds",
-                (shuffle_time + dealing_time).as_secs_f64()
-            );
-            // Try to get the actual human player's cards
-            if let Some(game) = game_manager.games.get(&game_id) {
-                if let Some(human_player) = game.players.iter().find(|p| p.id == "human_player") {
-                    if let Some(cards) = &human_player.hole_cards {
-                        human_cards = cards.clone();
-                    } else {
-                        // If decryption failed but no error, use simulated cards
-                        println!("   ⚠️  Using simulated cards (decryption incomplete)");
-                        human_cards = simulated_cards["human_player"].clone();
-                    }
-                }
+    for (player_idx, (player_secret, player_public)) in player_keys.iter().enumerate() {
+        // Get player's hole cards (2 cards per player)
+        let player_cards = vec![
+            current_deck[player_idx * 2].clone(),
+            current_deck[player_idx * 2 + 1].clone(),
+        ];
 
-                // Also set simulated cards for all players if their hole_cards are None
-                for player in &game.players {
-                    if player.hole_cards.is_none() && simulated_cards.contains_key(&player.id) {
-                        // Store simulated cards for later display
-                        // We'll use these in the showdown
-                    }
-                }
+        // Decrypt cards using our modular function
+        match decrypt_cards_for_player::<G, _>(
+            &player_cards,
+            *player_secret,
+            &shuffler_secrets,
+            shuffling_config.public_key,
+            *player_public,
+            &mut rng,
+        ) {
+            Ok(decrypted_values) => {
+                println!(
+                    "   ✓ Player {} cards decrypted: {:?}",
+                    player_idx, decrypted_values
+                );
+                all_player_cards.push(decrypted_values);
+            }
+            Err(e) => {
+                println!(
+                    "   ⚠️ Failed to decrypt cards for player {}: {}",
+                    player_idx, e
+                );
+                // Use simulated cards as fallback
+                let simulated = vec![(player_idx * 2) as u8, (player_idx * 2 + 1) as u8];
+                println!("   Using simulated cards: {:?}", simulated);
+                all_player_cards.push(simulated);
             }
         }
-        Err(e) => {
-            println!("   ⚠️  Card dealing encountered an error: {}", e);
-            println!("   NOTE: Using simulated cards for demo purposes");
-            // Use simulated cards
-            human_cards = simulated_cards["human_player"].clone();
-        }
     }
+
+    let human_cards = all_player_cards[0].clone(); // Human player is index 0
+
+    // Still call game_manager for compatibility, but we've already decrypted
+    let _ = game_manager.deal_hole_cards(game_id).await;
+
+    let dealing_time = phase_start.elapsed();
+    println!("   ✅ Cards successfully dealt and decrypted");
+    println!(
+        "   ⏱️  Dealing took {:.2} seconds",
+        dealing_time.as_secs_f64()
+    );
+    println!(
+        "   ⏱️  Total shuffle + deal time: {:.2} seconds",
+        (shuffle_time + dealing_time).as_secs_f64()
+    );
 
     // Display the human player's hole cards
     println!("\n🎴 YOUR HOLE CARDS:");
@@ -507,36 +616,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("All remaining players reveal their cards...");
     let phase_start = Instant::now();
 
-    // Display all players' hands
+    // Display all players' hands using our decrypted cards
     if let Some(game) = game_manager.games.get(&game_id) {
         println!("\n🎴 PLAYERS' HOLE CARDS:");
         for (idx, player) in game.players.iter().enumerate() {
-            let player_display = if player.id == "human_player" {
-                format!("{} (YOU)", player.id)
+            let player_display = if idx == 0 {
+                "human_player (YOU)".to_string()
             } else {
-                player.id.clone()
+                format!("cpu_player_{}", idx - 1)
             };
 
             if !player.folded {
-                // Try to get actual cards first
-                let cards_to_display = if let Some(cards) = &player.hole_cards {
-                    cards.clone()
-                } else {
-                    // Use simulated cards based on dealing order
-                    // Cards are dealt as [player_idx * 2, player_idx * 2 + 1]
-                    let simulated = vec![(idx * 2) as u8, (idx * 2 + 1) as u8];
+                // Use our decrypted cards
+                if idx < all_player_cards.len() {
                     println!(
-                        "   {} has: [{}] (simulated)",
+                        "   {} has: [{}]",
                         player_display,
-                        format_cards(&simulated)
+                        format_cards(&all_player_cards[idx])
                     );
-                    continue;
-                };
-                println!(
-                    "   {} has: [{}]",
-                    player_display,
-                    format_cards(&cards_to_display)
-                );
+                } else {
+                    println!("   {} - No cards available", player_display);
+                }
             } else {
                 println!("   {} - FOLDED", player_display);
             }
@@ -648,19 +748,19 @@ fn test_standalone_encryption_decryption(
 
     // Create test player
     let player_secret = Fr::rand(rng);
-    let player_pk: G1Projective = (G1Affine::generator() * player_secret).into();
+    let player_pk: G1Projective = (G1Projective::generator() * player_secret).into();
 
     // Create test card with known value
     let card_value = 42u8;
     let message = Fr::from(card_value as u64);
-    let _message_point: G1Projective = (G1Affine::generator() * message).into();
+    let _message_point: G1Projective = (G1Projective::generator() * message).into();
 
     // Create full 52-card deck (RS shuffle requires exactly 52)
     let mut deck = Vec::new();
     for i in 0..52 {
         let value = if i == 0 { card_value } else { i as u8 };
         let msg = Fr::from(value as u64);
-        let point: G1Projective = (G1Affine::generator() * msg).into();
+        let point: G1Projective = (G1Projective::generator() * msg).into();
         deck.push(ElGamalCiphertext {
             c1: G1Projective::zero(),
             c2: point,

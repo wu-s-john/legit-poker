@@ -415,7 +415,7 @@ where
         ?player_secret,
         "=== Native recover_card_value ==="
     );
-    
+
     // Step 1: Compute player-specific unblinding using the helper element
     // Only the player can do this as it requires knowing s_u
     let player_unblinding = player_ciphertext.player_unblinding_helper * player_secret;
@@ -448,7 +448,7 @@ where
 
     // Step 4: Map the group element back to a card value using pre-computed table
     let card_map = get_card_value_map::<C>();
-    
+
     tracing::debug!(target: LOG_TARGET, "Looking up in card map...");
     // Check what the expected values should be for our test indices
     let generator = C::generator();
@@ -464,7 +464,7 @@ where
         Some(card_value) => {
             tracing::debug!(target: LOG_TARGET, "Successfully found card value: {}", card_value);
             Ok(card_value)
-        },
+        }
         None => {
             warn!(target: LOG_TARGET,
                 "Failed to find card value for recovered element"

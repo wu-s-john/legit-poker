@@ -1,6 +1,8 @@
 //! Fiat-Shamir challenge derivation for Bayer-Groth permutation proof
 
 use crate::shuffling::curve_absorb::CurveAbsorb;
+use crate::shuffling::bayer_groth_permutation::sigma_protocol::commit_vector;
+use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField};
@@ -120,7 +122,6 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         target = LOG_TARGET,
         skip(self),
         fields(
-            generator = ?generator,
             permutation = ?permutation,
             prover_blinding_r = ?prover_blinding_r,
             prover_blinding_s = ?prover_blinding_s,
@@ -172,6 +173,90 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         // Step 5: Compute commitment to power vector using prover's blinding factor
         let c_power_perm =
             simple_commit_vector::<G, N>(generator, &perm_power_vector, prover_blinding_s);
+
+        // Step 6: Absorb commitment to power vector
+        self.absorb_perm_power_vector_commitment(&c_power_perm);
+        tracing::debug!(target: LOG_TARGET, ?c_power_perm, "Absorbed commitment to power vector");
+
+        // Step 7: Derive mixing and offset challenges in base field and convert to scalar field
+        let (perm_mixing_challenge_y_base, perm_offset_challenge_z_base) =
+            self.derive_perm_challenges_y_z();
+        let perm_mixing_challenge_y = G::ScalarField::from_le_bytes_mod_order(
+            &perm_mixing_challenge_y_base.into_bigint().to_bytes_le(),
+        );
+        let perm_offset_challenge_z = G::ScalarField::from_le_bytes_mod_order(
+            &perm_offset_challenge_z_base.into_bigint().to_bytes_le(),
+        );
+        tracing::debug!(target: LOG_TARGET, ?perm_mixing_challenge_y, ?perm_offset_challenge_z, "Derived permutation mixing and offset challenges");
+
+        let params = BayerGrothSetupParameters {
+            perm_power_challenge,
+            c_perm,
+            c_power: c_power_perm,
+            blinding_s: prover_blinding_s,
+            perm_mixing_challenge_y,
+            perm_offset_challenge_z,
+        };
+
+        (params, perm_power_vector)
+    }
+
+    /// Run the complete Bayer-Groth protocol with Pedersen commitments
+    /// This version uses proper Pedersen commitments for compatibility with the sigma protocol
+    #[tracing::instrument(
+        target = LOG_TARGET,
+        skip(self, pedersen_params),
+        fields(
+            permutation = ?permutation,
+            prover_blinding_r = ?prover_blinding_r,
+            prover_blinding_s = ?prover_blinding_s,
+            N = N
+        )
+    )]
+    pub fn run_protocol_with_pedersen<G, const N: usize>(
+        &mut self,
+        generator: G,
+        pedersen_params: &Parameters<G>,
+        permutation: &[usize; N],
+        prover_blinding_r: G::ScalarField,
+        prover_blinding_s: G::ScalarField,
+    ) -> (
+        BayerGrothSetupParameters<G::ScalarField, G, N>,
+        [G::ScalarField; N],
+    )
+    where
+        G: CurveGroup<BaseField = F> + CurveAbsorb<F>,
+        G::ScalarField: PrimeField,
+        F: PrimeField,
+    {
+        // Convert permutation to scalar field elements
+        let perm_vector: [G::ScalarField; N] = permutation
+            .iter()
+            .map(|&i| G::ScalarField::from(i as u64))
+            .collect::<Vec<_>>()
+            .try_into()
+            .expect("Permutation length mismatch");
+
+        // Step 1: Compute commitment to permutation vector using Pedersen commitment
+        let c_perm = commit_vector::<G, N>(pedersen_params, &perm_vector, prover_blinding_r);
+
+        // Step 2: Absorb commitment to permutation vector
+        self.absorb_perm_vector_commitment(&c_perm);
+        tracing::debug!(target: LOG_TARGET, ?c_perm, "Absorbed permutation vector commitment");
+
+        // Step 3: Derive power challenge in base field and convert to scalar field
+        let perm_power_challenge_base: G::BaseField = self.derive_perm_power_challenge();
+        // Convert from base field to scalar field for use in computations
+        let perm_power_challenge: G::ScalarField = G::ScalarField::from_le_bytes_mod_order(
+            &perm_power_challenge_base.into_bigint().to_bytes_le(),
+        );
+        tracing::debug!(target: LOG_TARGET, ?perm_power_challenge, "Derived permutation power challenge");
+
+        // Step 4: Compute permutation power vector
+        let perm_power_vector = compute_perm_power_vector(permutation, perm_power_challenge);
+
+        // Step 5: Compute commitment to power vector using Pedersen commitment
+        let c_power_perm = commit_vector::<G, N>(pedersen_params, &perm_power_vector, prover_blinding_s);
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);
