@@ -9,12 +9,12 @@
 
 mod common;
 
-use ark_bn254::{Fr, G1Affine, G1Projective};
-use ark_ec::{AffineRepr, PrimeGroup};
-use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_bn254::{Fr, G1Projective};
+use ark_ec::PrimeGroup;
+use ark_ff::{UniformRand, Zero};
 use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
 use ark_r1cs_std::{fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar};
-use ark_std::rand::{rngs::StdRng, Rng, SeedableRng};
+use ark_std::rand::{rngs::StdRng, SeedableRng};
 use async_trait::async_trait;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -25,9 +25,9 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use common::{
-    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, 
-    format_cards as common_format_cards, perform_shuffle_with_proof, 
-    setup_game_config, setup_player, setup_shuffler,
+    create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards,
+    format_cards as common_format_cards, perform_shuffle_with_proof, setup_game_config,
+    setup_player, setup_shuffler,
 };
 
 use zk_poker::domain::{ActorType, AppendParams, RoomId};
@@ -41,7 +41,7 @@ use zk_poker::shuffler_service::ShufflerService;
 use zk_poker::shuffling::{
     data_structures::ElGamalCiphertext,
     player_decryption::recover_card_value,
-    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, SigmaProofSystem},
+    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, ReencryptionProofSystem},
     unified_shuffler,
 };
 
@@ -54,8 +54,7 @@ type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
 type DummyIP =
     DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>;
-type SP = SigmaProofSystem<G, N>;
-
+type SP = ReencryptionProofSystem<G, N>;
 
 /// Helper function to format a list field, showing only first 2 elements
 #[allow(dead_code)]
@@ -581,17 +580,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 3: Reveal Community Cards (Flop)
     display_phase("Phase 3: REVEALING THE FLOP");
     let phase_start = Instant::now();
-    
+
     // Properly decrypt community cards using the committee protocol
     println!("Using committee decryption protocol (no blinding needed)...");
-    
+
     // Community cards are at positions 20-24 in the shuffled deck
     let community_positions = vec![20, 21, 22, 23, 24]; // Flop (3) + Turn (1) + River (1)
-    let community_encrypted: Vec<ElGamalCiphertext<G>> = community_positions[..3]  // Just the flop for now
+    let community_encrypted: Vec<ElGamalCiphertext<G>> = community_positions[..3] // Just the flop for now
         .iter()
         .map(|&idx| current_deck[idx].clone())
         .collect();
-    
+
     // Decrypt using committee protocol
     let community_cards = match decrypt_community_cards::<G, _>(
         &community_encrypted,
@@ -609,10 +608,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vec![20u8, 21u8, 22u8]
         }
     };
-    
+
     // Still call game_manager for compatibility
     game_manager.reveal_community_cards(game_id).await?;
-    
+
     // Display the first 3 community cards (the flop)
     println!("\n🎴 THE FLOP (First 3 community cards):");
     display_cards("Community cards", &community_cards);
@@ -624,14 +623,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Now that you've seen the flop, it's time to make your final betting decision.");
     let phase_start = Instant::now();
     game_manager.execute_final_betting(game_id).await?;
-    
+
     // Decrypt and display the turn and river
     println!("\n🎴 Revealing THE TURN AND RIVER...");
     let turn_river_encrypted: Vec<ElGamalCiphertext<G>> = vec![
         current_deck[23].clone(), // Turn
         current_deck[24].clone(), // River
     ];
-    
+
     let turn_river = match decrypt_community_cards::<G, _>(
         &turn_river_encrypted,
         &shuffler_secrets,
@@ -641,13 +640,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(cards) => cards,
         Err(_) => vec![23u8, 24u8], // Fallback
     };
-    
+
     println!("   ⏱️  Phase completed in {:?}", phase_start.elapsed());
-    
+
     // Display all community cards
     let mut all_community = community_cards.clone();
     all_community.extend_from_slice(&turn_river);
-    
+
     println!("\n🎴 ALL COMMUNITY CARDS:");
     display_cards("Complete board", &all_community);
     wait_for_continue()?;

@@ -1,7 +1,7 @@
 //! Fiat-Shamir challenge derivation for Bayer-Groth permutation proof
 
 use crate::shuffling::curve_absorb::CurveAbsorb;
-use crate::shuffling::bayer_groth_permutation::sigma_protocol::commit_vector;
+use crate::shuffling::bayer_groth_permutation::reencryption_protocol::commit_vector;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;

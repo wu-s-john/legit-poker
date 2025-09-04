@@ -68,17 +68,14 @@ pub mod bg_setup;
 pub mod bg_setup_gadget;
 pub mod linking_rs_gadgets;
 pub mod linking_rs_native;
-pub mod sigma_gadgets;
-pub mod sigma_protocol;
-
-#[cfg(test)]
-mod sponge_ec_test;
+pub mod reencryption_gadgets;
+pub mod reencryption_protocol;
 
 pub use bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 pub use bg_setup_gadget::BayerGrothTranscriptGadget;
 pub use linking_rs_gadgets::{
-    compute_permutation_proof_gadget, compute_perm_power_vector,
-    fixed_base_scalar_mul_gadget, left_product_gadget, linear_blend_gadget, right_product_gadget,
+    compute_perm_power_vector, compute_permutation_proof_gadget, fixed_base_scalar_mul_gadget,
+    left_product_gadget, linear_blend_gadget, right_product_gadget,
 };
 pub use linking_rs_native::{
     compute_left_product, compute_linear_blend, compute_permutation_proof, compute_right_product,

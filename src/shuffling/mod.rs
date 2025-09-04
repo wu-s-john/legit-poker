@@ -13,7 +13,6 @@ pub mod game_events;
 pub mod player_decryption;
 pub mod player_decryption_gadget;
 pub mod proof_system;
-pub mod proof_system_example;
 pub mod prove;
 pub mod public_key_setup;
 pub mod rs_shuffle;
@@ -23,13 +22,7 @@ pub mod unified_shuffler;
 pub mod utils;
 
 #[cfg(test)]
-mod test_scalar_mul;
-
-#[cfg(test)]
 pub mod test_utils;
-
-#[cfg(test)]
-pub mod scalar_multiplication_tests;
 
 pub use chaum_pedersen::*;
 pub use circuit::*;

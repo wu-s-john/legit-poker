@@ -5,7 +5,7 @@
 
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{CurveConfig, CurveGroup};
-use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::rand::{CryptoRng, Rng, RngCore};
 
@@ -18,8 +18,9 @@ use zk_poker::shuffling::{
         recover_card_value, PlayerTargetedBlindingContribution,
     },
     proof_system::{
-        create_dummy_proof_system, create_sigma_proof_system, DummyProofSystem, IndicesPublicInput,
-        IndicesWitness, ProofSystem, SigmaProofSystem, SigmaPublicInput, SigmaWitness,
+        create_dummy_proof_system, create_reencryption_proof_system, DummyProofSystem,
+        IndicesPublicInput, IndicesWitness, ProofSystem, ReencryptionProofSystem,
+        ReencryptionPublicInput, ReencryptionWitness,
     },
     shuffling_proof::{prove_shuffling, verify_shuffling, ShufflingConfig, ShufflingProof},
 };
@@ -90,7 +91,7 @@ pub fn setup_game_config<G, GV, const N: usize, const LEVELS: usize>(
     domain: Vec<u8>,
 ) -> ShufflingConfig<
     DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>,
-    SigmaProofSystem<G, N>,
+    ReencryptionProofSystem<G, N>,
     G,
 >
 where
@@ -106,14 +107,14 @@ where
 
     // Create proof systems
     let indices_proof_system = create_dummy_proof_system();
-    let sigma_proof_system = create_sigma_proof_system::<G, N>();
+    let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
 
     ShufflingConfig {
         domain,
         generator: G::generator(),
         public_key: aggregated_public_key,
         indices_proof_system,
-        sigma_proof_system,
+        reencryption_proof_system,
     }
 }
 
@@ -156,7 +157,10 @@ where
         PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
         Witness = IndicesWitness<G, GV, N, LEVELS>,
     >,
-    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>, Witness = SigmaWitness<G, N>>,
+    SP: ProofSystem<
+        PublicInput = ReencryptionPublicInput<G, N>,
+        Witness = ReencryptionWitness<G, N>,
+    >,
     IP::Error: Into<Box<dyn std::error::Error>>,
     SP::Error: Into<Box<dyn std::error::Error>>,
     R: RngCore + CryptoRng,
@@ -294,21 +298,18 @@ where
     let shares: Vec<CommunityDecryptionShare<G>> = shuffler_secrets
         .iter()
         .enumerate()
-        .map(|(idx, &secret)| {
-            CommunityDecryptionShare::generate(encrypted_card, secret, idx, rng)
-        })
+        .map(|(idx, &secret)| CommunityDecryptionShare::generate(encrypted_card, secret, idx, rng))
         .collect();
-    
+
     // Verify shares (optional but recommended for security)
     for (share, &pk) in shares.iter().zip(shuffler_public_keys.iter()) {
         if !share.verify(encrypted_card, pk) {
             return Err("Invalid decryption share".into());
         }
     }
-    
+
     // Decrypt the card value
-    decrypt_community_card(encrypted_card, shares, shuffler_secrets.len())
-        .map_err(|e| e.into())
+    decrypt_community_card(encrypted_card, shares, shuffler_secrets.len()).map_err(|e| e.into())
 }
 
 /// Decrypt multiple community cards

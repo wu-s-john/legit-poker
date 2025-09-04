@@ -21,7 +21,7 @@ use common::{
 
 use zk_poker::shuffling::{
     data_structures::ElGamalCiphertext,
-    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, SigmaProofSystem},
+    proof_system::{DummyProofSystem, IndicesPublicInput, IndicesWitness, ReencryptionProofSystem},
 };
 
 // Constants for demo
@@ -35,7 +35,7 @@ type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
 type DummyIP =
     DummyProofSystem<IndicesPublicInput<G, GV, N, LEVELS>, IndicesWitness<G, GV, N, LEVELS>>;
-type SP = SigmaProofSystem<G, N>;
+type SP = ReencryptionProofSystem<G, N>;
 
 // ============================================================================
 // Main Demo Function

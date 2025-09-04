@@ -3,14 +3,14 @@
 //! This module provides a complete proof system for verifying card shuffling with:
 //! - RS (Riffle Shuffle) algorithm for the actual permutation
 //! - Bayer-Groth setup for proving permutation correctness
-//! - Sigma protocol for proving re-encryption correctness
+//! - Reencryption protocol for proving re-encryption correctness
 //! - SNARK proof for verifying shuffled indices
 
 use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
-use super::bayer_groth_permutation::sigma_protocol::SigmaWindow;
+use super::bayer_groth_permutation::reencryption_protocol::ReencryptionWindow;
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
-    IndicesPublicInput, IndicesWitness, ProofSystem, SigmaPublicInput, SigmaWitness,
+    IndicesPublicInput, IndicesWitness, ProofSystem, ReencryptionPublicInput, ReencryptionWitness,
 };
 use super::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
 #[cfg(test)]
@@ -34,7 +34,7 @@ use ark_std::{
 const LOG_TARGET: &str = "nexus_nova::shuffling::shuffling_proof";
 
 /// Type alias for Pedersen commitment with proper window configuration
-type Pedersen<G> = PedersenCommitment<G, SigmaWindow>;
+type Pedersen<G> = PedersenCommitment<G, ReencryptionWindow>;
 
 /// Helper function to create RS Shuffle with Bayer-Groth Link circuit
 #[cfg(test)]
@@ -94,8 +94,8 @@ where
 {
     /// Bayer-Groth setup parameters (public-facing)
     pub bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
-    /// Sigma protocol proof for re-encryption correctness
-    pub sigma_proof: SP::Proof,
+    /// Reencryption protocol proof for re-encryption correctness
+    pub reencryption_proof: SP::Proof,
     /// SNARK proof for shuffled indices correctness
     pub shuffling_indices_snark_proof: IP::Proof,
     _marker: PhantomData<(IP, SP)>,
@@ -110,12 +110,12 @@ where
     /// Create a new ShufflingProof
     pub fn new(
         bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
-        sigma_proof: SP::Proof,
+        reencryption_proof: SP::Proof,
         shuffling_indices_snark_proof: IP::Proof,
     ) -> Self {
         Self {
             bg_setup_params,
-            sigma_proof,
+            reencryption_proof,
             shuffling_indices_snark_proof,
             _marker: PhantomData,
         }
@@ -138,8 +138,8 @@ where
     pub public_key: G,
     /// Indices proof system instance
     pub indices_proof_system: IP,
-    /// Sigma protocol proof system instance
-    pub sigma_proof_system: SP,
+    /// Reencryption protocol proof system instance
+    pub reencryption_proof_system: SP,
 }
 
 /// Generate a complete shuffling proof
@@ -175,7 +175,10 @@ where
         PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
         Witness = IndicesWitness<G, GV, N, LEVELS>,
     >,
-    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>, Witness = SigmaWitness<G, N>>,
+    SP: ProofSystem<
+        PublicInput = ReencryptionPublicInput<G, N>,
+        Witness = ReencryptionWitness<G, N>,
+    >,
     IP::Error: Into<Box<dyn std::error::Error>>,
     SP::Error: Into<Box<dyn std::error::Error>>,
 {
@@ -261,11 +264,11 @@ where
         .prove(&indices_public, &indices_witness, rng)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    // Step 6: Generate sigma protocol proof for re-encryption correctness
-    tracing::debug!(target: LOG_TARGET, "Step 6: Generating sigma protocol proof with generic proof system");
+    // Step 6: Generate reencryption protocol proof for re-encryption correctness
+    tracing::debug!(target: LOG_TARGET, "Step 6: Generating reencryption protocol proof with generic proof system");
 
-    // Create SigmaPublicInput
-    let sigma_public = SigmaPublicInput::<G, N>::new(
+    // Create ReencryptionPublicInput
+    let reencryption_public = ReencryptionPublicInput::<G, N>::new(
         config.public_key,
         pedersen_params,
         ct_input.clone(),
@@ -275,25 +278,29 @@ where
         config.domain.clone(),
     );
 
-    // Create SigmaWitness using the blinding factor from BG setup
+    // Create ReencryptionWitness using the blinding factor from BG setup
     // This ensures consistency with the commitment to the power vector
-    let sigma_witness = SigmaWitness::<G, N>::new(
+    let reencryption_witness = ReencryptionWitness::<G, N>::new(
         perm_power_vector,
         bg_setup_params.blinding_s,
         rerandomization_factors,
     );
 
-    // Generate proof using the generic sigma proof system
-    let sigma_proof = config
-        .sigma_proof_system
-        .prove(&sigma_public, &sigma_witness, rng)
+    // Generate proof using the generic reencryption proof system
+    let reencryption_proof = config
+        .reencryption_proof_system
+        .prove(&reencryption_public, &reencryption_witness, rng)
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     tracing::debug!(target: LOG_TARGET, "Successfully generated complete shuffling proof");
 
     Ok((
         ct_output,
-        ShufflingProof::new(bg_setup_params, sigma_proof, shuffling_indices_snark_proof),
+        ShufflingProof::new(
+            bg_setup_params,
+            reencryption_proof,
+            shuffling_indices_snark_proof,
+        ),
     ))
 }
 
@@ -329,7 +336,7 @@ where
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<PublicInput = IndicesPublicInput<G, GV, N, LEVELS>>,
-    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>>,
+    SP: ProofSystem<PublicInput = ReencryptionPublicInput<G, N>>,
     IP::Error: Into<Box<dyn std::error::Error>>,
     SP::Error: Into<Box<dyn std::error::Error>>,
 {
@@ -344,8 +351,8 @@ where
         return Ok(false);
     }
 
-    // Step 2: Verify sigma protocol proof
-    tracing::debug!(target: LOG_TARGET, "Step 2: Verifying sigma protocol proof with generic proof system");
+    // Step 2: Verify reencryption protocol proof
+    tracing::debug!(target: LOG_TARGET, "Step 2: Verifying reencryption protocol proof with generic proof system");
 
     // Generate proper Pedersen parameters with distinct generators
     // NOTE: In production, these parameters would be shared between prover and verifier
@@ -360,8 +367,8 @@ where
             ))
         })?;
 
-    // Create SigmaPublicInput for verification
-    let sigma_public = SigmaPublicInput::<G, N>::new(
+    // Create ReencryptionPublicInput for verification
+    let reencryption_public = ReencryptionPublicInput::<G, N>::new(
         config.public_key,
         pedersen_params,
         ct_input.clone(),
@@ -371,12 +378,12 @@ where
         config.domain.clone(),
     );
 
-    // Verify using the generic sigma proof system
+    // Verify using the generic reencryption proof system
     config
-        .sigma_proof_system
-        .verify(&sigma_public, &proof.sigma_proof)
+        .reencryption_proof_system
+        .verify(&reencryption_public, &proof.reencryption_proof)
         .map_err(|e| -> Box<dyn std::error::Error> {
-            tracing::warn!(target: LOG_TARGET, "Sigma protocol verification failed");
+            tracing::warn!(target: LOG_TARGET, "Reencryption protocol verification failed");
             e.into()
         })?;
 
@@ -429,7 +436,10 @@ where
         PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
         Witness = IndicesWitness<G, GV, N, LEVELS>,
     >,
-    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>, Witness = SigmaWitness<G, N>>,
+    SP: ProofSystem<
+        PublicInput = ReencryptionPublicInput<G, N>,
+        Witness = ReencryptionWitness<G, N>,
+    >,
     IP::Error: Into<Box<dyn std::error::Error>>,
     SP::Error: Into<Box<dyn std::error::Error>>,
 {
@@ -447,8 +457,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::super::proof_system::{
-        create_dummy_proof_system, create_groth16_indices_proof_system, create_sigma_proof_system,
-        DummyProofSystem,
+        create_dummy_proof_system, create_groth16_indices_proof_system,
+        create_reencryption_proof_system, DummyProofSystem,
     };
     use super::*;
     use ark_bn254::{Bn254, Fr};
@@ -560,7 +570,7 @@ mod tests {
         // Create concrete proof system instances
         let indices_proof_system =
             create_groth16_indices_proof_system::<E, G, GV, N, LEVELS>(proving_key, verifying_key);
-        let sigma_proof_system = create_sigma_proof_system::<G, N>();
+        let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
 
         // Setup configuration
         let generator = G::generator();
@@ -574,7 +584,7 @@ mod tests {
             generator,
             public_key,
             indices_proof_system,
-            sigma_proof_system,
+            reencryption_proof_system,
         };
 
         // Create actual input ciphertexts with encrypted values
@@ -589,7 +599,7 @@ mod tests {
 
         // Call the generic test function
         type IP = super::super::proof_system::Groth16IndicesProofSystem<E, G, GV, N, LEVELS>;
-        type SP = super::super::proof_system::SigmaProofSystem<G, N>;
+        type SP = super::super::proof_system::ReencryptionProofSystem<G, N>;
 
         let result = test_prove_and_verify::<G, GV, IP, SP, N, LEVELS, StdRng>(
             &config,
@@ -629,9 +639,9 @@ mod tests {
         >;
         let indices_proof_system: DummyIP = create_dummy_proof_system();
 
-        // Create real SigmaProofSystem for sigma protocol
-        type SP = super::super::proof_system::SigmaProofSystem<G, N>;
-        let sigma_proof_system = create_sigma_proof_system::<G, N>();
+        // Create real ReencryptionProofSystem for reencryption protocol
+        type SP = super::super::proof_system::ReencryptionProofSystem<G, N>;
+        let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
 
         // Setup configuration
         let generator = G::generator();
@@ -645,7 +655,7 @@ mod tests {
             generator,
             public_key,
             indices_proof_system,
-            sigma_proof_system,
+            reencryption_proof_system,
         };
 
         // Create actual input ciphertexts with encrypted values
@@ -689,7 +699,7 @@ mod tests {
 
                         // Verify that the proof components are as expected
                         // DummyProofSystem returns unit type () as proof
-                        // So we can't inspect the indices proof, but we can verify sigma proof exists
+                        // So we can't inspect the indices proof, but we can verify reencryption proof exists
                         assert!(
                             !proof.bg_setup_params.c_perm.is_zero(),
                             "BG commitment should be non-zero"

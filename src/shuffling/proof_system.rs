@@ -2,11 +2,11 @@
 
 use super::bayer_groth_permutation::{
     bg_setup::BayerGrothSetupParameters,
-    sigma_protocol::{prove_sigma_linkage_ni, verify_sigma_linkage_ni},
+    reencryption_protocol::{prove, verify},
 };
 
-// Re-export SigmaProof for convenience
-pub use super::bayer_groth_permutation::sigma_protocol::SigmaProof;
+// Re-export ReencryptionProof for convenience
+pub use super::bayer_groth_permutation::reencryption_protocol::ReencryptionProof;
 use super::data_structures::ElGamalCiphertext;
 use super::rs_shuffle::{
     circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::WitnessData,
@@ -222,11 +222,11 @@ where
 }
 
 // ============================================================================
-// Sigma Protocol Proof System
+// Reencryption Protocol Proof System
 // ============================================================================
 
-/// Public input for the sigma protocol proof system
-pub struct SigmaPublicInput<G, const N: usize>
+/// Public input for the reencryption protocol proof system
+pub struct ReencryptionPublicInput<G, const N: usize>
 where
     G: CurveGroup,
 {
@@ -239,11 +239,11 @@ where
     pub domain: Vec<u8>,
 }
 
-impl<G, const N: usize> SigmaPublicInput<G, N>
+impl<G, const N: usize> ReencryptionPublicInput<G, N>
 where
     G: CurveGroup,
 {
-    /// Create a new SigmaPublicInput
+    /// Create a new ReencryptionPublicInput
     pub fn new(
         public_key: G,
         pedersen_params: Parameters<G>,
@@ -265,8 +265,8 @@ where
     }
 }
 
-/// Witness for the sigma protocol proof system
-pub struct SigmaWitness<G, const N: usize>
+/// Witness for the reencryption protocol proof system
+pub struct ReencryptionWitness<G, const N: usize>
 where
     G: CurveGroup,
 {
@@ -275,11 +275,11 @@ where
     pub rerandomization_scalars: [G::ScalarField; N],
 }
 
-impl<G, const N: usize> SigmaWitness<G, N>
+impl<G, const N: usize> ReencryptionWitness<G, N>
 where
     G: CurveGroup,
 {
-    /// Create a new SigmaWitness
+    /// Create a new ReencryptionWitness
     pub fn new(
         perm_power_vector: [G::ScalarField; N],
         power_perm_blinding_factor: G::ScalarField,
@@ -293,15 +293,15 @@ where
     }
 }
 
-/// Sigma protocol proof system
-pub struct SigmaProofSystem<G, const N: usize>
+/// Reencryption protocol proof system
+pub struct ReencryptionProofSystem<G, const N: usize>
 where
     G: CurveGroup,
 {
     _marker: PhantomData<G>,
 }
 
-impl<G, const N: usize> Default for SigmaProofSystem<G, N>
+impl<G, const N: usize> Default for ReencryptionProofSystem<G, N>
 where
     G: CurveGroup,
 {
@@ -312,15 +312,15 @@ where
     }
 }
 
-impl<G, const N: usize> ProofSystem for SigmaProofSystem<G, N>
+impl<G, const N: usize> ProofSystem for ReencryptionProofSystem<G, N>
 where
     G: CurveGroup + CurveAbsorb<G::BaseField>,
     G::BaseField: PrimeField + Absorb,
     G::ScalarField: PrimeField + Absorb + UniformRand,
 {
-    type PublicInput = SigmaPublicInput<G, N>;
-    type Witness = SigmaWitness<G, N>;
-    type Proof = SigmaProof<G, N>;
+    type PublicInput = ReencryptionPublicInput<G, N>;
+    type Witness = ReencryptionWitness<G, N>;
+    type Proof = ReencryptionProof<G, N>;
     type Error = Box<dyn std::error::Error>;
 
     fn prove<R: RngCore + CryptoRng>(
@@ -333,7 +333,7 @@ where
         let mut transcript = PoseidonSponge::<G::BaseField>::new(&crate::config::poseidon_config());
         transcript.absorb(&public_input.domain);
 
-        let proof = prove_sigma_linkage_ni(
+        let proof = prove(
             &public_input.public_key,
             &public_input.pedersen_params,
             &public_input.input_ciphertexts,
@@ -358,7 +358,7 @@ where
         let mut transcript = PoseidonSponge::<G::BaseField>::new(&crate::config::poseidon_config());
         transcript.absorb(&public_input.domain);
 
-        let valid = verify_sigma_linkage_ni(
+        let valid = verify(
             &public_input.public_key,
             &public_input.pedersen_params,
             &public_input.input_ciphertexts,
@@ -370,7 +370,7 @@ where
         );
 
         if !valid {
-            return Err("Sigma protocol verification failed".into());
+            return Err("Reencryption protocol verification failed".into());
         }
         Ok(())
     }
@@ -440,12 +440,12 @@ where
     }
 }
 
-/// Create a sigma proof system
-pub fn create_sigma_proof_system<G, const N: usize>() -> SigmaProofSystem<G, N>
+/// Create a reencryption proof system
+pub fn create_reencryption_proof_system<G, const N: usize>() -> ReencryptionProofSystem<G, N>
 where
     G: CurveGroup,
 {
-    SigmaProofSystem::default()
+    ReencryptionProofSystem::default()
 }
 
 /// Create a dummy proof system for testing
