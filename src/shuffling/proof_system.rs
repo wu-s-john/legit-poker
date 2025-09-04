@@ -60,31 +60,77 @@ pub trait ProofSystem {
 // ============================================================================
 
 /// Public input for the indices proof system
-pub struct IndicesPublicInput<E, G, GV, const N: usize, const LEVELS: usize>
+pub struct IndicesPublicInput<G, GV, const N: usize, const LEVELS: usize>
 where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>,
-    GV: CurveVar<G, E::ScalarField>,
+    G: CurveGroup,
+    G::BaseField: PrimeField,
+    GV: CurveVar<G, G::BaseField>,
 {
-    pub seed: E::ScalarField,
+    pub seed: G::BaseField,
     pub bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
     pub generator: G,
     pub domain: Vec<u8>,
-    pub _marker: PhantomData<GV>,
+    _marker: PhantomData<GV>,
+}
+
+impl<G, GV, const N: usize, const LEVELS: usize> IndicesPublicInput<G, GV, N, LEVELS>
+where
+    G: CurveGroup,
+    G::BaseField: PrimeField,
+    GV: CurveVar<G, G::BaseField>,
+{
+    /// Create a new IndicesPublicInput
+    pub fn new(
+        seed: G::BaseField,
+        bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
+        generator: G,
+        domain: Vec<u8>,
+    ) -> Self {
+        Self {
+            seed,
+            bg_setup_params,
+            generator,
+            domain,
+            _marker: PhantomData,
+        }
+    }
 }
 
 /// Witness for the indices proof system
-pub struct IndicesWitness<E, G, GV, const N: usize, const LEVELS: usize>
+pub struct IndicesWitness<G, GV, const N: usize, const LEVELS: usize>
 where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>,
-    GV: CurveVar<G, E::ScalarField>,
+    G: CurveGroup,
+    G::BaseField: PrimeField,
+    GV: CurveVar<G, G::BaseField>,
 {
     pub permutation_usize: [usize; N],
     pub witness_data: WitnessData<N, LEVELS>,
     pub blinding_r: <G::Config as CurveConfig>::ScalarField,
     pub blinding_s: <G::Config as CurveConfig>::ScalarField,
-    pub _marker: PhantomData<(GV, E)>,
+    _marker: PhantomData<GV>,
+}
+
+impl<G, GV, const N: usize, const LEVELS: usize> IndicesWitness<G, GV, N, LEVELS>
+where
+    G: CurveGroup,
+    G::BaseField: PrimeField,
+    GV: CurveVar<G, G::BaseField>,
+{
+    /// Create a new IndicesWitness
+    pub fn new(
+        permutation_usize: [usize; N],
+        witness_data: WitnessData<N, LEVELS>,
+        blinding_r: <G::Config as CurveConfig>::ScalarField,
+        blinding_s: <G::Config as CurveConfig>::ScalarField,
+    ) -> Self {
+        Self {
+            permutation_usize,
+            witness_data,
+            blinding_r,
+            blinding_s,
+            _marker: PhantomData,
+        }
+    }
 }
 
 /// Groth16-based proof system for indices
@@ -110,8 +156,8 @@ where
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     E::ScalarField: PrimeField + Absorb,
 {
-    type PublicInput = IndicesPublicInput<E, G, GV, N, LEVELS>;
-    type Witness = IndicesWitness<E, G, GV, N, LEVELS>;
+    type PublicInput = IndicesPublicInput<G, GV, N, LEVELS>;
+    type Witness = IndicesWitness<G, GV, N, LEVELS>;
     type Proof = Groth16Proof<E>;
     type Error = Box<dyn std::error::Error>;
 
@@ -162,8 +208,8 @@ where
     ) -> Result<(), Self::Error> {
         // Prepare public inputs for verification
         let public_inputs = vec![
-            E::ScalarField::from(17u64), // alpha challenge (simplified)
-                                         // In practice, would include commitment coordinates
+            G::BaseField::from(17u64), // alpha challenge (simplified)
+                                       // In practice, would include commitment coordinates
         ];
 
         let valid = Groth16::<E>::verify(&self.verifying_key, &public_inputs, proof)?;
@@ -193,6 +239,32 @@ where
     pub domain: Vec<u8>,
 }
 
+impl<G, const N: usize> SigmaPublicInput<G, N>
+where
+    G: CurveGroup,
+{
+    /// Create a new SigmaPublicInput
+    pub fn new(
+        public_key: G,
+        pedersen_params: Parameters<G>,
+        input_ciphertexts: [ElGamalCiphertext<G>; N],
+        output_ciphertexts: [ElGamalCiphertext<G>; N],
+        perm_power_challenge: G::ScalarField,
+        power_perm_vector: G,
+        domain: Vec<u8>,
+    ) -> Self {
+        Self {
+            public_key,
+            pedersen_params,
+            input_ciphertexts,
+            output_ciphertexts,
+            perm_power_challenge,
+            power_perm_vector,
+            domain,
+        }
+    }
+}
+
 /// Witness for the sigma protocol proof system
 pub struct SigmaWitness<G, const N: usize>
 where
@@ -201,6 +273,24 @@ where
     pub perm_power_vector: [G::ScalarField; N],
     pub power_perm_blinding_factor: G::ScalarField,
     pub rerandomization_scalars: [G::ScalarField; N],
+}
+
+impl<G, const N: usize> SigmaWitness<G, N>
+where
+    G: CurveGroup,
+{
+    /// Create a new SigmaWitness
+    pub fn new(
+        perm_power_vector: [G::ScalarField; N],
+        power_perm_blinding_factor: G::ScalarField,
+        rerandomization_scalars: [G::ScalarField; N],
+    ) -> Self {
+        Self {
+            perm_power_vector,
+            power_perm_blinding_factor,
+            rerandomization_scalars,
+        }
+    }
 }
 
 /// Sigma protocol proof system

@@ -8,7 +8,7 @@ use super::proof_system::{
     DummyProofSystem, Groth16IndicesProofSystem, ProofSystem, SigmaProofSystem,
     IndicesPublicInput, IndicesWitness, SigmaPublicInput, SigmaWitness,
 };
-use crate::shuffling::shuffling_proof::ShufflingProof;
+// use crate::shuffling::shuffling_proof::ShufflingProof; // Commented out - not used currently
 use ark_bn254::{Bn254, Fr};
 use ark_grumpkin::Projective as GrumpkinProjective;
 use ark_r1cs_std::{fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar};
@@ -36,14 +36,12 @@ pub struct DummyShufflingConfig {
     pub public_key: GrumpkinProjective,
     pub indices_proof_system: DummyProofSystem<
         IndicesPublicInput<
-            Bn254,
             GrumpkinProjective,
             ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<Fr>>,
             52,
             3,
         >,
         IndicesWitness<
-            Bn254,
             GrumpkinProjective,
             ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<Fr>>,
             52,

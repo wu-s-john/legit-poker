@@ -6,28 +6,24 @@
 //! - Sigma protocol for proving re-encryption correctness
 //! - SNARK proof for verifying shuffled indices
 
-use super::bayer_groth_permutation::{
-    bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript},
-    sigma_protocol::{prove_sigma_linkage_ni, verify_sigma_linkage_ni, SigmaProof},
-};
+use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 use super::data_structures::ElGamalCiphertext;
+use super::proof_system::{
+    IndicesPublicInput, IndicesWitness, ProofSystem, SigmaPublicInput, SigmaWitness,
+};
+use super::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
+#[cfg(test)]
 use super::rs_shuffle::{
     circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::WitnessData,
-    witness_preparation::apply_rs_shuffle_permutation,
 };
-use crate::{
-    curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
-};
+use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use ark_crypto_primitives::commitment::pedersen::Parameters;
-use ark_crypto_primitives::{
-    snark::SNARK,
-    sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge},
-};
-use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
+use ark_crypto_primitives::sponge::Absorb;
+use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::PrimeField;
-use ark_groth16::{Groth16, Proof as Groth16Proof, ProvingKey, VerifyingKey};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::{
+    marker::PhantomData,
     rand::{CryptoRng, Rng, RngCore},
     vec::Vec,
     UniformRand,
@@ -35,62 +31,10 @@ use ark_std::{
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::shuffling_proof";
 
-/// Complete shuffling proof containing all proof components
-#[derive(Debug)]
-pub struct ShufflingProof<E, G, const N: usize>
-where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>,
-{
-    /// Bayer-Groth setup parameters (public-facing)
-    pub bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
-    /// Sigma protocol proof for re-encryption correctness
-    pub sigma_proof: SigmaProof<G, N>,
-    /// SNARK proof for shuffled indices correctness
-    pub shuffling_indices_snark_proof: Groth16Proof<E>,
-}
-
-/// Configuration for the shuffling proof system
-pub struct ShufflingConfig<E, G, const N: usize, const LEVELS: usize>
-where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>,
-{
-    /// Domain separation string for Fiat-Shamir
-    pub domain: Vec<u8>,
-    /// Generator point for commitments
-    pub generator: G,
-    /// Public key for ElGamal encryption (aggregated from all shufflers)
-    pub public_key: G,
-    /// Proving key for SNARK
-    pub proving_key: ProvingKey<E>,
-    /// Verifying key for SNARK
-    pub verifying_key: VerifyingKey<E>,
-}
-
-/// Create RS Shuffle with Bayer-Groth Link circuit
-///
-/// This function creates the circuit instance with all necessary inputs
-/// for proving correct shuffling with Bayer-Groth linking.
-///
-/// # Type Parameters
-/// - `E`: Pairing curve
-/// - `G`: Inner curve group
-/// - `GV`: Curve variable type
-/// - `N`: Number of cards
-/// - `LEVELS`: Number of RS shuffle levels
-///
-/// # Parameters
-/// - `seed`: RS shuffle seed (used as alpha challenge)
-/// - `bg_setup_params`: Bayer-Groth setup parameters with commitments
-/// - `permutation_usize`: The permutation as usize array
-/// - `witness_data`: RS shuffle witness data
-/// - `blinding_r`: First blinding factor
-/// - `blinding_s`: Second blinding factor
-/// - `generator`: Generator point for commitments
-/// - `domain`: Domain separation string
-fn create_rs_shuffle_circuit<E, G, GV, const N: usize, const LEVELS: usize>(
-    seed: E::ScalarField,
+/// Helper function to create RS Shuffle with Bayer-Groth Link circuit
+#[cfg(test)]
+fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
+    seed: G::BaseField,
     bg_setup_params: &BayerGrothSetupParameters<G::ScalarField, G, N>,
     permutation_usize: &[usize; N],
     witness_data: &WitnessData<N, LEVELS>,
@@ -98,13 +42,13 @@ fn create_rs_shuffle_circuit<E, G, GV, const N: usize, const LEVELS: usize>(
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
     domain: Vec<u8>,
-) -> RSShuffleWithBayerGrothLinkCircuit<E::ScalarField, G, GV, N, LEVELS>
+) -> RSShuffleWithBayerGrothLinkCircuit<G::BaseField, G, GV, N, LEVELS>
 where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>,
-    G::Config: CurveConfig<BaseField = E::ScalarField>,
-    GV: CurveVar<G, E::ScalarField>,
+    G: CurveGroup,
+    G::Config: CurveConfig,
+    GV: CurveVar<G, G::BaseField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    G::BaseField: PrimeField,
 {
     // Convert permutation to scalar field elements
     let permutation_scalars: [<G::Config as CurveConfig>::ScalarField; N] =
@@ -113,15 +57,15 @@ where
         });
 
     // Extract initial indices (0..N-1)
-    let indices_init: [E::ScalarField; N] = std::array::from_fn(|i| E::ScalarField::from(i as u64));
+    let indices_init: [G::BaseField; N] = std::array::from_fn(|i| G::BaseField::from(i as u64));
 
     // Extract shuffled indices from witness data
     let final_sorted = &witness_data.next_levels[LEVELS - 1];
-    let indices_after_shuffle: [E::ScalarField; N] =
-        std::array::from_fn(|i| E::ScalarField::from(final_sorted[i].idx as u64));
+    let indices_after_shuffle: [G::BaseField; N] =
+        std::array::from_fn(|i| G::BaseField::from(final_sorted[i].idx as u64));
 
     // Create and return the circuit using the new method
-    RSShuffleWithBayerGrothLinkCircuit::<E::ScalarField, G, GV, N, LEVELS>::new(
+    RSShuffleWithBayerGrothLinkCircuit::<G::BaseField, G, GV, N, LEVELS>::new(
         seed,
         bg_setup_params.c_perm,
         bg_setup_params.c_power,
@@ -133,6 +77,64 @@ where
         generator,
         domain,
     )
+}
+
+/// Complete shuffling proof containing all proof components
+/// Generic over IP (Indices Proof system) and SP (Sigma Proof system)
+pub struct ShufflingProof<IP, SP, G, const N: usize>
+where
+    IP: ProofSystem,
+    SP: ProofSystem,
+    G: CurveGroup,
+{
+    /// Bayer-Groth setup parameters (public-facing)
+    pub bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
+    /// Sigma protocol proof for re-encryption correctness
+    pub sigma_proof: SP::Proof,
+    /// SNARK proof for shuffled indices correctness
+    pub shuffling_indices_snark_proof: IP::Proof,
+    _marker: PhantomData<(IP, SP)>,
+}
+
+impl<IP, SP, G, const N: usize> ShufflingProof<IP, SP, G, N>
+where
+    IP: ProofSystem,
+    SP: ProofSystem,
+    G: CurveGroup,
+{
+    /// Create a new ShufflingProof
+    pub fn new(
+        bg_setup_params: BayerGrothSetupParameters<G::ScalarField, G, N>,
+        sigma_proof: SP::Proof,
+        shuffling_indices_snark_proof: IP::Proof,
+    ) -> Self {
+        Self {
+            bg_setup_params,
+            sigma_proof,
+            shuffling_indices_snark_proof,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Configuration for the shuffling proof system
+/// Generic over IP (Indices Proof system) and SP (Sigma Proof system)
+pub struct ShufflingConfig<IP, SP, G>
+where
+    IP: ProofSystem,
+    SP: ProofSystem,
+    G: CurveGroup,
+{
+    /// Domain separation string for Fiat-Shamir
+    pub domain: Vec<u8>,
+    /// Generator point for commitments
+    pub generator: G,
+    /// Public key for ElGamal encryption (aggregated from all shufflers)
+    pub public_key: G,
+    /// Indices proof system instance
+    pub indices_proof_system: IP,
+    /// Sigma protocol proof system instance
+    pub sigma_proof_system: SP,
 }
 
 /// Generate a complete shuffling proof
@@ -150,27 +152,34 @@ where
 /// # Returns
 /// - `Ok((ct_output, ShufflingProof))`: Output ciphertexts and complete proof of correct shuffling
 /// - `Err`: If proof generation fails
-pub fn prove_shuffling<E, G, GV, const N: usize, const LEVELS: usize>(
-    config: &ShufflingConfig<E, G, N, LEVELS>,
+pub fn prove_shuffling<G, GV, IP, SP, const N: usize, const LEVELS: usize>(
+    config: &ShufflingConfig<IP, SP, G>,
     ct_input: &[ElGamalCiphertext<G>; N],
-    seed: E::ScalarField,
+    seed: G::BaseField,
     rng: &mut (impl RngCore + CryptoRng),
-) -> Result<([ElGamalCiphertext<G>; N], ShufflingProof<E, G, N>), Box<dyn std::error::Error>>
+) -> Result<([ElGamalCiphertext<G>; N], ShufflingProof<IP, SP, G, N>), Box<dyn std::error::Error>>
 where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
-    G::Config: CurveConfig<BaseField = E::ScalarField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
-    E::ScalarField: PrimeField + Absorb,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+    G::BaseField: PrimeField + Absorb,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    IP: ProofSystem<
+        PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
+        Witness = IndicesWitness<G, GV, N, LEVELS>,
+    >,
+    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>, Witness = SigmaWitness<G, N>>,
+    IP::Error: Into<Box<dyn std::error::Error>>,
+    SP::Error: Into<Box<dyn std::error::Error>>,
 {
     tracing::debug!(target: LOG_TARGET, "Starting shuffling proof generation");
 
     // Step 1: Apply RS shuffle permutation to get witness data and permutation
     tracing::debug!(target: LOG_TARGET, "Step 1: Applying RS shuffle permutation");
     let (witness_data, _num_samples, ct_shuffled) =
-        apply_rs_shuffle_permutation::<E::ScalarField, ElGamalCiphertext<G>, N, LEVELS>(
+        apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
             seed, ct_input,
         );
 
@@ -201,7 +210,7 @@ where
     let blinding_r = <G::Config as CurveConfig>::ScalarField::rand(rng);
     let blinding_s = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
-    let mut bg_transcript = BayerGrothTranscript::<E::ScalarField>::new(&config.domain);
+    let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(&config.domain);
     let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol::<G, N>(
         config.generator,
         &permutation_usize,
@@ -210,25 +219,33 @@ where
     );
 
     // Step 4: Create and run SNARK circuit for RS shuffle with Bayer-Groth linking
-    tracing::debug!(target: LOG_TARGET, "Step 4: Creating and running SNARK circuit");
+    tracing::debug!(target: LOG_TARGET, "Step 4: Creating indices proof with generic proof system");
 
-    // Create the circuit using helper function
-    let circuit = create_rs_shuffle_circuit::<E, G, GV, N, LEVELS>(
+    // Create IndicesPublicInput
+    let indices_public = IndicesPublicInput::<G, GV, N, LEVELS>::new(
         seed,
-        &bg_setup_params,
-        &permutation_usize,
-        &witness_data,
-        blinding_r,
-        blinding_s,
+        bg_setup_params.clone(),
         config.generator,
         config.domain.clone(),
     );
 
-    // Generate SNARK proof
-    let shuffling_indices_snark_proof = Groth16::<E>::prove(&config.proving_key, circuit, rng)?;
+    // Create IndicesWitness
+    let indices_witness = IndicesWitness::<G, GV, N, LEVELS>::new(
+        permutation_usize,
+        witness_data.clone(),
+        blinding_r,
+        blinding_s,
+    );
+
+    // Generate proof using the generic indices proof system
+    let shuffling_indices_snark_proof =
+        config
+            .indices_proof_system
+            .prove(&indices_public, &indices_witness, rng)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Step 5: Generate sigma protocol proof for re-encryption correctness
-    tracing::debug!(target: LOG_TARGET, "Step 5: Generating sigma protocol proof");
+    tracing::debug!(target: LOG_TARGET, "Step 5: Generating sigma protocol proof with generic proof system");
 
     // Generate new blinding factor for sigma protocol (different from BG blinding)
     let sigma_blinding = <G::Config as CurveConfig>::ScalarField::rand(rng);
@@ -246,33 +263,39 @@ where
         randomness_generator,
     };
 
-    // Create Poseidon transcript for Fiat-Shamir
-    let mut transcript = PoseidonSponge::<E::ScalarField>::new(&crate::config::poseidon_config());
-    transcript.absorb(&config.domain);
-
-    let sigma_proof = prove_sigma_linkage_ni(
-        &config.public_key,
-        &pedersen_params,
-        ct_input,
-        &ct_output,
-        bg_setup_params.perm_power_challenge, // x value from BG protocol
-        &bg_setup_params.c_perm,              // Use commitment from BG setup as B_vector_commitment
-        &perm_power_vector,                   // Use perm_power_vector from BG protocol
-        sigma_blinding,                       // Use new blinding factor for sigma protocol
-        &rerandomization_factors,
-        &mut transcript,
-        rng,
+    // Create SigmaPublicInput
+    let sigma_public = SigmaPublicInput::<G, N>::new(
+        config.public_key,
+        pedersen_params,
+        ct_input.clone(),
+        ct_output.clone(),
+        bg_setup_params.perm_power_challenge,
+        bg_setup_params.c_perm,
+        config.domain.clone(),
     );
+
+    // Create SigmaWitness
+    let sigma_witness = SigmaWitness::<G, N>::new(
+        perm_power_vector,
+        sigma_blinding,
+        rerandomization_factors,
+    );
+
+    // Generate proof using the generic sigma proof system
+    let sigma_proof = config
+        .sigma_proof_system
+        .prove(&sigma_public, &sigma_witness, rng)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     tracing::debug!(target: LOG_TARGET, "Successfully generated complete shuffling proof");
 
     Ok((
         ct_output,
-        ShufflingProof {
+        ShufflingProof::new(
             bg_setup_params,
             sigma_proof,
             shuffling_indices_snark_proof,
-        },
+        ),
     ))
 }
 
@@ -292,18 +315,25 @@ where
 /// - `Ok(true)`: If the proof is valid
 /// - `Ok(false)`: If the proof is invalid
 /// - `Err`: If verification fails
-pub fn verify_shuffling<E, G, const N: usize, const LEVELS: usize>(
-    config: &ShufflingConfig<E, G, N, LEVELS>,
+pub fn verify_shuffling<G, GV, IP, SP, const N: usize, const LEVELS: usize>(
+    config: &ShufflingConfig<IP, SP, G>,
     ct_input: &[ElGamalCiphertext<G>; N],
     ct_output: &[ElGamalCiphertext<G>; N],
-    proof: &ShufflingProof<E, G, N>,
+    proof: &ShufflingProof<IP, SP, G, N>,
+    seed: G::BaseField,
 ) -> Result<bool, Box<dyn std::error::Error>>
 where
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
-    G::Config: CurveConfig<BaseField = E::ScalarField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand + Absorb,
-    E::ScalarField: PrimeField + Absorb,
+    G::BaseField: PrimeField + Absorb,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    IP: ProofSystem<PublicInput = IndicesPublicInput<G, GV, N, LEVELS>>,
+    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>>,
+    IP::Error: Into<Box<dyn std::error::Error>>,
+    SP::Error: Into<Box<dyn std::error::Error>>,
 {
     tracing::debug!(target: LOG_TARGET, "Starting shuffling proof verification");
 
@@ -317,7 +347,7 @@ where
     }
 
     // Step 2: Verify sigma protocol proof
-    tracing::debug!(target: LOG_TARGET, "Step 2: Verifying sigma protocol proof");
+    tracing::debug!(target: LOG_TARGET, "Step 2: Verifying sigma protocol proof with generic proof system");
 
     // Create dummy Pedersen parameters - in practice these would be properly initialized
     let mut randomness_generator = Vec::with_capacity(N + 1);
@@ -332,43 +362,45 @@ where
         randomness_generator,
     };
 
-    // Create Poseidon transcript for Fiat-Shamir
-    let mut transcript = PoseidonSponge::<E::ScalarField>::new(&crate::config::poseidon_config());
-    transcript.absorb(&config.domain);
+    // Create SigmaPublicInput for verification
+    let sigma_public = SigmaPublicInput::<G, N>::new(
+        config.public_key,
+        pedersen_params,
+        ct_input.clone(),
+        ct_output.clone(),
+        proof.bg_setup_params.perm_power_challenge,
+        proof.bg_setup_params.c_perm,
+        config.domain.clone(),
+    );
 
-    if !verify_sigma_linkage_ni(
-        &config.public_key,
-        &pedersen_params,
-        ct_input,
-        ct_output,
-        proof.bg_setup_params.perm_power_challenge, // x value from BG protocol
-        &proof.bg_setup_params.c_perm,              // Use commitment from BG setup
-        &proof.sigma_proof,
-        &mut transcript,
-    ) {
-        tracing::warn!(target: LOG_TARGET, "Sigma protocol verification failed");
-        return Ok(false);
-    }
+    // Verify using the generic sigma proof system
+    config
+        .sigma_proof_system
+        .verify(&sigma_public, &proof.sigma_proof)
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            tracing::warn!(target: LOG_TARGET, "Sigma protocol verification failed");
+            e.into()
+        })?;
 
     // Step 3: Verify SNARK proof
-    tracing::debug!(target: LOG_TARGET, "Step 3: Verifying SNARK proof");
+    tracing::debug!(target: LOG_TARGET, "Step 3: Verifying indices proof with generic proof system");
 
-    // Prepare public inputs for SNARK verification
-    let public_inputs = vec![
-        E::ScalarField::from(17u64), // alpha challenge
-                                     // Add commitment coordinates (simplified - would need proper serialization)
-    ];
+    // Create IndicesPublicInput for verification
+    let indices_public = IndicesPublicInput::<G, GV, N, LEVELS>::new(
+        seed,
+        proof.bg_setup_params.clone(),
+        config.generator,
+        config.domain.clone(),
+    );
 
-    let snark_valid = Groth16::<E>::verify(
-        &config.verifying_key,
-        &public_inputs,
-        &proof.shuffling_indices_snark_proof,
-    )?;
-
-    if !snark_valid {
-        tracing::warn!(target: LOG_TARGET, "SNARK verification failed");
-        return Ok(false);
-    }
+    // Verify using the generic indices proof system
+    config
+        .indices_proof_system
+        .verify(&indices_public, &proof.shuffling_indices_snark_proof)
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            tracing::warn!(target: LOG_TARGET, "Indices proof verification failed");
+            e.into()
+        })?;
 
     tracing::debug!(target: LOG_TARGET, "Shuffling proof verification succeeded");
     Ok(true)
@@ -380,39 +412,54 @@ where
 /// generates a proof using `prove_shuffling`, then verifies it using `verify_shuffling`
 ///
 /// Returns true if the proof generation and verification succeed
-pub fn test_prove_and_verify<E, G, GV, const N: usize, const LEVELS: usize, R>(
-    config: &ShufflingConfig<E, G, N, LEVELS>,
+pub fn test_prove_and_verify<G, GV, IP, SP, const N: usize, const LEVELS: usize, R>(
+    config: &ShufflingConfig<IP, SP, G>,
     ct_input: &[ElGamalCiphertext<G>; N],
-    seed: E::ScalarField,
+    seed: G::BaseField,
     rng: &mut R,
 ) -> Result<bool, Box<dyn std::error::Error>>
 where
     R: Rng + RngCore + CryptoRng,
-    E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
-    G::Config: CurveConfig<BaseField = E::ScalarField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand + Absorb,
-    E::ScalarField: PrimeField + Absorb,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+    G::BaseField: PrimeField + Absorb,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    IP: ProofSystem<
+        PublicInput = IndicesPublicInput<G, GV, N, LEVELS>,
+        Witness = IndicesWitness<G, GV, N, LEVELS>,
+    >,
+    SP: ProofSystem<PublicInput = SigmaPublicInput<G, N>, Witness = SigmaWitness<G, N>>,
+    IP::Error: Into<Box<dyn std::error::Error>>,
+    SP::Error: Into<Box<dyn std::error::Error>>,
 {
     // Generate the proof
-    let (ct_output, proof) = prove_shuffling::<E, G, GV, N, LEVELS>(config, ct_input, seed, rng)?;
+    let (ct_output, proof) =
+        prove_shuffling::<G, GV, IP, SP, N, LEVELS>(config, ct_input, seed, rng)?;
 
     // Verify the proof
-    let is_valid = verify_shuffling::<E, G, N, LEVELS>(config, ct_input, &ct_output, &proof)?;
+    let is_valid =
+        verify_shuffling::<G, GV, IP, SP, N, LEVELS>(config, ct_input, &ct_output, &proof, seed)?;
 
     Ok(is_valid)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::proof_system::{
+        create_groth16_indices_proof_system, create_sigma_proof_system,
+    };
     use super::*;
     use ark_bn254::{Bn254, Fr};
+    use ark_ec::pairing::Pairing;
     use ark_ec::PrimeGroup;
+    use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
     use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
     use ark_r1cs_std::fields::fp::FpVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
+    use ark_snark::SNARK;
     use ark_std::rand::rngs::StdRng;
     use ark_std::rand::SeedableRng;
 
@@ -424,16 +471,16 @@ mod tests {
     where
         R: Rng + RngCore + CryptoRng,
         E: Pairing,
-        G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
+        G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<G::BaseField>,
         G::Config: CurveConfig<BaseField = E::ScalarField>,
-        GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+        GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
         for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
         <G::Config as CurveConfig>::ScalarField: UniformRand,
-        E::ScalarField: PrimeField + Absorb,
+        G::BaseField: PrimeField + Absorb,
     {
         // Create a simple dummy circuit for key generation
         let generator = G::generator();
-        let seed = E::ScalarField::from(42u64);
+        let seed = G::BaseField::from(42u64);
         let dummy_permutation: [usize; N] = std::array::from_fn(|i| i);
         let blinding_r = <G::Config as CurveConfig>::ScalarField::from(1u64);
         let blinding_s = <G::Config as CurveConfig>::ScalarField::from(2u64);
@@ -445,11 +492,11 @@ mod tests {
         });
 
         let (witness_data, _, _) =
-            apply_rs_shuffle_permutation::<E::ScalarField, ElGamalCiphertext<G>, N, LEVELS>(
+            apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
                 seed, &dummy_ct,
             );
 
-        let mut bg_transcript = BayerGrothTranscript::<E::ScalarField>::new(b"test");
+        let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
         let (bg_setup_params, _) = bg_transcript.run_protocol::<G, N>(
             generator,
             &dummy_permutation,
@@ -457,7 +504,7 @@ mod tests {
             blinding_s,
         );
 
-        let dummy_circuit = create_rs_shuffle_circuit::<E, G, GV, N, LEVELS>(
+        let dummy_circuit = create_rs_shuffle_circuit::<G, GV, N, LEVELS>(
             seed,
             &bg_setup_params,
             &dummy_permutation,
@@ -491,6 +538,11 @@ mod tests {
         let (proving_key, verifying_key) =
             generate_test_keys::<E, G, GV, N, LEVELS, StdRng>(&mut rng);
 
+        // Create concrete proof system instances
+        let indices_proof_system =
+            create_groth16_indices_proof_system::<E, G, GV, N, LEVELS>(proving_key, verifying_key);
+        let sigma_proof_system = create_sigma_proof_system::<G, N>();
+
         // Setup configuration
         let generator = G::generator();
         // Grumpkin scalar field for private key
@@ -502,8 +554,8 @@ mod tests {
             domain: domain.clone(),
             generator,
             public_key,
-            proving_key,
-            verifying_key,
+            indices_proof_system,
+            sigma_proof_system,
         };
 
         // Create actual input ciphertexts with encrypted values
@@ -513,11 +565,14 @@ mod tests {
             ElGamalCiphertext::encrypt_scalar(message, randomness, public_key)
         });
 
-        // Test with random seed (BN254's scalar field)
-        let shuffle_seed = Fr::rand(&mut rng);
+        // Test with random seed (Grumpkin's base field which is BN254's scalar field)
+        let shuffle_seed = ark_bn254::Fr::rand(&mut rng);
 
         // Call the generic test function
-        let result = test_prove_and_verify::<E, G, GV, N, LEVELS, StdRng>(
+        type IP = super::super::proof_system::Groth16IndicesProofSystem<E, G, GV, N, LEVELS>;
+        type SP = super::super::proof_system::SigmaProofSystem<G, N>;
+
+        let result = test_prove_and_verify::<G, GV, IP, SP, N, LEVELS, StdRng>(
             &config,
             &ct_input,
             shuffle_seed,
