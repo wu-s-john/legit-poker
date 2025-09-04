@@ -11,6 +11,8 @@ pub mod field_conversion_gadget;
 pub mod game_events;
 pub mod player_decryption;
 pub mod player_decryption_gadget;
+pub mod proof_system;
+pub mod proof_system_example;
 pub mod prove;
 pub mod public_key_setup;
 pub mod rs_shuffle;
