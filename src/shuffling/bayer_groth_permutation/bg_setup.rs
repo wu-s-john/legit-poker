@@ -646,7 +646,7 @@ mod tests {
         let cs = ConstraintSystem::<Fr>::new_ref();
 
         use crate::shuffling::bayer_groth_permutation::linking_rs_gadgets::{
-            alloc_vector, left_product_gadget, linear_blend_gadget, right_product_gadget,
+            alloc_vector, left_product_gadget, linear_blend_gadget_dynamic, right_product_gadget,
         };
 
         // Allocate permutation values as circuit variables (these are scalar field elements)
@@ -667,7 +667,7 @@ mod tests {
 
         // Compute the linear blend d = y * perm_vector + perm_power_vector
         // All operations are in the scalar field Fr
-        let d = linear_blend_gadget(&perm_vector, &perm_power_vector, &perm_mixing_challenge_y)?;
+        let d = linear_blend_gadget_dynamic(&perm_vector, &perm_power_vector, &perm_mixing_challenge_y)?;
         let left_circuit = left_product_gadget(&d, &perm_offset_challenge_z)?;
         let right_circuit = right_product_gadget(
             cs.clone(),

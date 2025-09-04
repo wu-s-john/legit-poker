@@ -7,9 +7,10 @@ use super::data_structures::{SortedRowVar, UnsortedRowVar, WitnessDataVar};
 use super::permutation::IndexedElGamalCiphertext;
 use super::permutation::{check_grand_product, IndexPositionPair, PermutationProduct};
 use crate::bayer_groth_permutation::bg_setup_gadget::BayerGrothSetupParametersGadget;
+use crate::bayer_groth_permutation::linking_rs_gadgets::compute_perm_power_vector;
 use crate::shuffling::bayer_groth_permutation::{
     bg_setup_gadget::BayerGrothTranscriptGadget,
-    linking_rs_gadgets::{compute_perm_power_vector, compute_permutation_proof_gadget},
+    linking_rs_gadgets::compute_permutation_proof_gadget,
 };
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
@@ -762,12 +763,8 @@ mod tests {
         });
 
         // Run native protocol with provided blinding factors
-        let (native_params, native_perm_power_vector) = native_transcript.run_protocol::<G1Projective, N>(
-            generator,
-            &perm_usize,
-            blinding_r,
-            blinding_s,
-        );
+        let (native_params, native_perm_power_vector) = native_transcript
+            .run_protocol::<G1Projective, N>(generator, &perm_usize, blinding_r, blinding_s);
 
         tracing::debug!(target: TEST_TARGET,
             perm_power_challenge = ?native_params.perm_power_challenge,
