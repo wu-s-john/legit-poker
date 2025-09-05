@@ -141,11 +141,6 @@ where
         compute_output_aggregator(output_ciphertexts, perm_power_challenge);
 
     // Absorb public inputs into transcript
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state before absorbing public inputs: {:?}",
-        transcript.state
-    );
     absorb_public_inputs(
         transcript,
         &input_ciphertext_aggregator,
@@ -154,25 +149,10 @@ where
     );
     tracing::debug!(
         target: LOG_TARGET,
-        "Transcript state after absorbing public inputs: {:?}",
-        transcript.state
-    );
-
-    // Log the aggregator for debugging
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Absorbed input_ciphertext_aggregator: {:?}",
-        input_ciphertext_aggregator
-    );
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Absorbed output_ciphertext_aggregator: {:?}",
-        output_ciphertext_aggregator
-    );
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Absorbed power_perm_commitment: {:?}",
-        power_perm_commitment
+        ?input_ciphertext_aggregator,
+        ?output_ciphertext_aggregator,
+        ?power_perm_commitment,
+        "Absorbed public inputs into transcript"
     );
 
     // --- Commit phase: pick random blinds ---
@@ -204,40 +184,14 @@ where
 
     tracing::debug!(
         target: LOG_TARGET,
-        blinding_rerandomization_commitment = ?blinding_rerandomization_commitment,
+        ?blinding_rerandomization_commitment,
         "Computed blinding rerandomization commitment"
     );
 
     // Absorb commitments and derive challenge
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state before absorbing blinding_factor_commitment: {:?}",
-        transcript.state
-    );
     absorb_point(transcript, &blinding_factor_commitment);
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state after absorbing blinding_factor_commitment: {:?}",
-        transcript.state
-    );
     absorb_point(transcript, &blinding_rerandomization_commitment);
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state after absorbing blinding_rerandomization_commitment: {:?}",
-        transcript.state
-    );
-
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state before squeezing challenge: {:?}",
-        transcript.state
-    );
     let challenge: G::ScalarField = transcript.squeeze_field_elements(1)[0];
-    tracing::debug!(
-        target: LOG_TARGET,
-        challenge = ?challenge,
-        "Squeezed challenge from transcript"
-    );
     tracing::debug!(
         target: LOG_TARGET,
         output_ciphertext_aggregator = ?output_ciphertext_aggregator,
@@ -300,12 +254,6 @@ where
     G: CurveAbsorb<G::BaseField>,
 {
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
-
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Transcript state before absorbing ciphertext inputs and outputs: {:?}",
-        transcript.state
-    );
 
     // Recompute aggregators C^a and C'^a where a_i = x^(i+1)
     let input_ciphertext_aggregator =
