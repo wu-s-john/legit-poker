@@ -1,6 +1,5 @@
 //! Fiat-Shamir challenge derivation for Bayer-Groth permutation proof
 
-use crate::shuffling::bayer_groth_permutation::reencryption_protocol::commit_vector;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
@@ -120,7 +119,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// where perm_power_vector is the private witness
     #[tracing::instrument(
         target = LOG_TARGET,
-        skip(self, generator),
+        skip(self, perm_params, power_params),
         fields(
             permutation = ?permutation,
             prover_blinding_r = ?prover_blinding_r,
@@ -130,7 +129,8 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     )]
     pub fn run_protocol<G, const N: usize>(
         &mut self,
-        generator: G,
+        perm_params: &Parameters<G>, // DeckHashWindow parameters for permutation
+        power_params: &Parameters<G>, // ReencryptionWindow parameters for power vector
         permutation: &[usize; N],
         prover_blinding_r: G::ScalarField,
         prover_blinding_s: G::ScalarField,
@@ -151,9 +151,13 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
             .try_into()
             .expect("Permutation length mismatch");
 
-        // Step 1: Compute commitment to permutation vector using prover's blinding factor
-        // Using simple single-generator commitment: g^(r + sum(i * v[i]))
-        let c_perm = simple_commit_vector::<G, N>(generator, &perm_vector, prover_blinding_r);
+        // Step 1: Compute Pedersen commitment to permutation vector using DeckHashWindow parameters
+        // This uses a linearly homomorphic commitment over scalar field elements
+        let c_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
+            perm_params,
+            &perm_vector,
+            prover_blinding_r,
+        );
 
         // Step 2: Absorb commitment to permutation vector
         self.absorb_perm_vector_commitment(&c_perm);
@@ -168,11 +172,16 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         tracing::debug!(target: LOG_TARGET, ?perm_power_challenge, "Derived permutation power challenge");
 
         // Step 4: Compute permutation power vector
-        let perm_power_vector = compute_perm_power_vector(permutation, perm_power_challenge);
+        let perm_power_vector =
+            super::utils::compute_perm_power_vector(permutation, perm_power_challenge);
 
-        // Step 5: Compute commitment to power vector using prover's blinding factor
-        let c_power_perm =
-            simple_commit_vector::<G, N>(generator, &perm_power_vector, prover_blinding_s);
+        // Step 5: Compute Pedersen commitment to power vector using ReencryptionWindow parameters
+        // The power vector contains scalar field elements x^π(i), so we use the linearly homomorphic commitment
+        let c_power_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
+            power_params,
+            &perm_power_vector,
+            prover_blinding_s,
+        );
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);
@@ -200,154 +209,24 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
 
         (params, perm_power_vector)
     }
-
-    /// Run the complete Bayer-Groth protocol with Pedersen commitments
-    /// This version uses proper Pedersen commitments for compatibility with the sigma protocol
-    #[tracing::instrument(
-        target = LOG_TARGET,
-        skip(self, pedersen_params),
-        fields(
-            permutation = ?permutation,
-            prover_blinding_r = ?prover_blinding_r,
-            prover_blinding_s = ?prover_blinding_s,
-            N = N
-        )
-    )]
-    pub fn run_protocol_with_pedersen<G, const N: usize>(
-        &mut self,
-        generator: G,
-        pedersen_params: &Parameters<G>,
-        permutation: &[usize; N],
-        prover_blinding_r: G::ScalarField,
-        prover_blinding_s: G::ScalarField,
-    ) -> (
-        BayerGrothSetupParameters<G::ScalarField, G, N>,
-        [G::ScalarField; N],
-    )
-    where
-        G: CurveGroup<BaseField = F> + CurveAbsorb<F>,
-        G::ScalarField: PrimeField,
-        F: PrimeField,
-    {
-        // Convert permutation to scalar field elements
-        let perm_vector: [G::ScalarField; N] = permutation
-            .iter()
-            .map(|&i| G::ScalarField::from(i as u64))
-            .collect::<Vec<_>>()
-            .try_into()
-            .expect("Permutation length mismatch");
-
-        // Step 1: Compute commitment to permutation vector using Pedersen commitment
-        let c_perm = commit_vector::<G, N>(pedersen_params, &perm_vector, prover_blinding_r);
-
-        // Step 2: Absorb commitment to permutation vector
-        self.absorb_perm_vector_commitment(&c_perm);
-        tracing::debug!(target: LOG_TARGET, ?c_perm, "Absorbed permutation vector commitment");
-
-        // Step 3: Derive power challenge in base field and convert to scalar field
-        let perm_power_challenge_base: G::BaseField = self.derive_perm_power_challenge();
-        // Convert from base field to scalar field for use in computations
-        let perm_power_challenge: G::ScalarField = G::ScalarField::from_le_bytes_mod_order(
-            &perm_power_challenge_base.into_bigint().to_bytes_le(),
-        );
-        tracing::debug!(target: LOG_TARGET, ?perm_power_challenge, "Derived permutation power challenge");
-
-        // Step 4: Compute permutation power vector
-        let perm_power_vector = compute_perm_power_vector(permutation, perm_power_challenge);
-
-        // Step 5: Compute commitment to power vector using Pedersen commitment
-        let c_power_perm =
-            commit_vector::<G, N>(pedersen_params, &perm_power_vector, prover_blinding_s);
-
-        // Step 6: Absorb commitment to power vector
-        self.absorb_perm_power_vector_commitment(&c_power_perm);
-        tracing::debug!(target: LOG_TARGET, ?c_power_perm, "Absorbed commitment to power vector");
-
-        // Step 7: Derive mixing and offset challenges in base field and convert to scalar field
-        let (perm_mixing_challenge_y_base, perm_offset_challenge_z_base) =
-            self.derive_perm_challenges_y_z();
-        let perm_mixing_challenge_y = G::ScalarField::from_le_bytes_mod_order(
-            &perm_mixing_challenge_y_base.into_bigint().to_bytes_le(),
-        );
-        let perm_offset_challenge_z = G::ScalarField::from_le_bytes_mod_order(
-            &perm_offset_challenge_z_base.into_bigint().to_bytes_le(),
-        );
-        tracing::debug!(target: LOG_TARGET, ?perm_mixing_challenge_y, ?perm_offset_challenge_z, "Derived permutation mixing and offset challenges");
-
-        let params = BayerGrothSetupParameters {
-            perm_power_challenge,
-            c_perm,
-            c_power: c_power_perm,
-            blinding_s: prover_blinding_s,
-            perm_mixing_challenge_y,
-            perm_offset_challenge_z,
-        };
-
-        (params, perm_power_vector)
-    }
-}
-
-/// Compute the permutation power vector = (x^π(1), ..., x^π(N))
-///
-/// Parameters:
-/// - permutation: The permutation π (1-indexed values)
-/// - perm_power_challenge: The challenge x derived from Fiat-Shamir (in scalar field)
-///
-/// Returns: Power vector where power_vector[i] = x^π(i)
-fn compute_perm_power_vector<F: PrimeField, const N: usize>(
-    permutation: &[usize; N],
-    perm_power_challenge: F,
-) -> [F; N] {
-    // power_vector[i] = x^π(i)
-    // Note: permutation contains 1-indexed values
-    let power_vector: Vec<F> = permutation
-        .iter()
-        .map(|&pi| perm_power_challenge.pow(&[pi as u64]))
-        .collect();
-
-    tracing::debug!(target: "bayer_groth::setup", "Computed permutation power vector of length {}", power_vector.len());
-
-    power_vector
-        .try_into()
-        .expect("Vector length should match array size N")
-}
-
-/// Simple single-generator commitment: g^(r + sum(i * v[i]))
-/// This replaces the multi-generator Pedersen commitment for simplicity
-pub fn simple_commit_vector<G: CurveGroup, const N: usize>(
-    generator: G,
-    values: &[G::ScalarField; N],
-    randomness: G::ScalarField,
-) -> G {
-    tracing::debug!(target: LOG_TARGET, ?generator, ?randomness, values_len = values.len(), "Native commitment input");
-
-    // Compute exponent = randomness + sum(i * values[i])
-    let mut exponent = randomness;
-    for (i, &val) in values.iter().enumerate() {
-        // Use (i+1) to match 1-based indexing convention
-        let index_scalar = G::ScalarField::from((i + 1) as u64);
-        exponent += index_scalar * val;
-        tracing::debug!(target: LOG_TARGET, i, ?val, ?index_scalar, ?exponent, "Native commitment accumulation");
-    }
-
-    // Return g^exponent
-    let result = generator * exponent;
-    tracing::debug!(target: LOG_TARGET, ?exponent, result_projective = ?result, result_affine = ?result.into_affine(), "Native commitment result");
-    result
 }
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
+    use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
     use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::BayerGrothTranscriptGadget;
     use ark_bn254::{Fq, Fr, G1Projective};
+    use ark_crypto_primitives::commitment::{
+        pedersen::Commitment as PedersenCommitment, CommitmentScheme,
+    };
     use ark_ec::PrimeGroup;
     use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar, prelude::*};
     use ark_relations::gr1cs::{ConstraintSystem, SynthesisError};
     use ark_std::Zero;
-    use ark_std::{test_rng, UniformRand};
-    use rand::RngCore;
+    use ark_std::{rand::SeedableRng, test_rng, UniformRand};
+    use rand::{rngs::StdRng, RngCore};
 
     #[test]
     fn test_fiat_shamir_deterministic() {
@@ -358,14 +237,24 @@ mod tests {
         let prover_blinding_r = Fr::rand(&mut rng);
         let prover_blinding_s = Fr::rand(&mut rng);
 
+        // Create Pedersen parameters
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+                .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+
         // Run protocol twice with same inputs
         // Transcript operates over base field (Fq)
         let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
 
-        let generator = G1Projective::generator();
+        let _generator = G1Projective::generator();
 
         let (output1, perm_power_vector1) = transcript1.run_protocol::<G1Projective, 5>(
-            generator,
+            &perm_params,
+            &power_params,
             &perm,
             prover_blinding_r,
             prover_blinding_s,
@@ -373,7 +262,8 @@ mod tests {
 
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let (output2, perm_power_vector2) = transcript2.run_protocol::<G1Projective, 5>(
-            generator,
+            &perm_params,
+            &power_params,
             &perm,
             prover_blinding_r,
             prover_blinding_s,
@@ -402,12 +292,22 @@ mod tests {
         let prover_blinding_r = Fr::rand(&mut rng);
         let prover_blinding_s = Fr::rand(&mut rng);
 
-        let generator = G1Projective::generator();
+        let _generator = G1Projective::generator();
+
+        // Create Pedersen parameters
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+                .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
         // Run with different permutations
         let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let (output1, _) = transcript1.run_protocol::<G1Projective, 3>(
-            generator,
+            &perm_params,
+            &power_params,
             &perm1,
             prover_blinding_r,
             prover_blinding_s,
@@ -415,7 +315,8 @@ mod tests {
 
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
         let (output2, _) = transcript2.run_protocol::<G1Projective, 3>(
-            generator,
+            &perm_params,
+            &power_params,
             &perm2,
             prover_blinding_r,
             prover_blinding_s,
@@ -430,7 +331,7 @@ mod tests {
         let perm = [3, 1, 4, 2, 5];
         let perm_power_challenge = Fr::from(2u64);
 
-        let power_vector = compute_perm_power_vector(&perm, perm_power_challenge);
+        let power_vector = crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector(&perm, perm_power_challenge);
 
         // Verify power_vector[i] = x^π(i)
         assert_eq!(power_vector[0], Fr::from(8u64)); // 2^3 = 8
@@ -476,21 +377,40 @@ mod tests {
     fn test_blinding_factor_independence() -> Result<(), SynthesisError> {
         let mut rng = test_rng();
         let perm: [usize; 5] = [3, 1, 4, 2, 5];
-        let generator = G1Projective::generator();
+        let _generator = G1Projective::generator();
+
+        // Create Pedersen parameters
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+                .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
         // Run with first set of blinding factors
         let blinding_r1 = Fr::rand(&mut rng);
         let blinding_s1 = Fr::rand(&mut rng);
         let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let (output1, _) =
-            transcript1.run_protocol::<G1Projective, 5>(generator, &perm, blinding_r1, blinding_s1);
+        let (output1, _) = transcript1.run_protocol::<G1Projective, 5>(
+            &perm_params,
+            &power_params,
+            &perm,
+            blinding_r1,
+            blinding_s1,
+        );
 
         // Run with different blinding factors but same permutation
         let blinding_r2 = Fr::rand(&mut rng);
         let blinding_s2 = Fr::rand(&mut rng);
         let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
-        let (output2, _) =
-            transcript2.run_protocol::<G1Projective, 5>(generator, &perm, blinding_r2, blinding_s2);
+        let (output2, _) = transcript2.run_protocol::<G1Projective, 5>(
+            &perm_params,
+            &power_params,
+            &perm,
+            blinding_r2,
+            blinding_s2,
+        );
 
         // Commitments should be different due to different blinding
         assert_ne!(output1.c_perm, output2.c_perm);
@@ -609,7 +529,7 @@ mod tests {
             .try_into()
             .expect("Permutation should have exactly 52 elements");
         let perm_power_vector_vals =
-            compute_perm_power_vector::<Fr, N>(&perm, perm_power_challenge_val);
+            crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector::<Fr, N>(&perm, perm_power_challenge_val);
         let perm_power_vector_vals_vec: Vec<Fr> = perm_power_vector_vals.to_vec();
 
         // Simulate external commitment to power vector

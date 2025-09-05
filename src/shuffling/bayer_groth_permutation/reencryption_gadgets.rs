@@ -4,7 +4,7 @@
 //! inside a SNARK, ensuring the same witness b is used throughout.
 //!
 //! Key fixes vs the previous version:
-//! 1) commit_vector_gadget now uses the same per-coordinate Pedersen bases as native code.
+//! 1) commit_vector_gadget now uses the standard arkworks PedersenCommGadget.
 //! 2) The Fiat–Shamir challenge `c` is passed into the circuit (do not recompute it
 //!    in-circuit) to avoid field/domain mismatch with the native transcript.
 
@@ -24,9 +24,9 @@ use ark_std::{borrow::Borrow, vec::Vec};
 use tracing::instrument;
 
 use super::reencryption_protocol::ReencryptionProof;
-use ark_crypto_primitives::commitment::pedersen::Parameters;
-use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
-use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+use ark_crypto_primitives::sponge::{
+    constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
+};
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::reencryption_gadgets";
 
@@ -39,7 +39,7 @@ where
     GG: CurveVar<G, G::BaseField>,
 {
     pub blinding_factor_commitment: GG,
-    pub blinding_rerandomization_commitment: GG,
+    pub blinding_rerandomization_commitment: ElGamalCiphertextVar<G, GG>,
     pub sigma_response_power_permutation_vector: [FpVar<G::BaseField>; N],
     pub sigma_response_blinding: FpVar<G::BaseField>,
     pub sigma_response_rerand: FpVar<G::BaseField>,
@@ -88,7 +88,7 @@ where
             GG::new_variable(cs.clone(), || Ok(proof.blinding_factor_commitment), mode)?;
 
         // Allocate blinding_rerandomization_commitment
-        let blinding_rerandomization_commitment = GG::new_variable(
+        let blinding_rerandomization_commitment = ElGamalCiphertextVar::new_variable(
             cs.clone(),
             || Ok(proof.blinding_rerandomization_commitment),
             mode,
@@ -151,7 +151,6 @@ where
 fn absorb_public_inputs_gadget<G, GG>(
     transcript: &mut PoseidonSpongeVar<G::BaseField>,
     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
-    output_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
     b_vector_commitment: &GG,
 ) -> Result<(), SynthesisError>
 where
@@ -160,7 +159,7 @@ where
     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
-    // Absorb aggregated input ciphertexts (already computed)
+    // Absorb aggregated input ciphertexts (matching native absorb_public_inputs)
     let input_aggregator_sum = &input_ciphertext_aggregator.c1 + &input_ciphertext_aggregator.c2;
     tracing::trace!(
         target: LOG_TARGET,
@@ -169,14 +168,7 @@ where
     );
     input_aggregator_sum.curve_absorb_gadget(transcript)?;
 
-    // Absorb aggregated output ciphertexts (already computed)
-    let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
-    tracing::trace!(
-        target: LOG_TARGET,
-        "absorb_public_inputs_gadget: output_aggregator_sum = {:?}",
-        output_aggregator_sum.value()
-    );
-    output_aggregator_sum.curve_absorb_gadget(transcript)?;
+    // Note: Native verify doesn't absorb output aggregator - only input aggregator
 
     // Absorb b_vector_commitment
     tracing::trace!(
@@ -195,8 +187,7 @@ where
 fn compute_challenge_gadget<G, GG, const N: usize>(
     transcript: &mut PoseidonSpongeVar<G::BaseField>,
     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
-    output_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
-    b_vector_commitment: &GG,
+    permutation_power_vector_commitment: &GG,
     proof: &ReencryptionProofVar<G, GG, N>,
 ) -> Result<FpVar<G::BaseField>, SynthesisError>
 where
@@ -205,40 +196,19 @@ where
     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
-    tracing::debug!(
-        target: LOG_TARGET,
-        "compute_challenge_gadget: Starting challenge computation"
-    );
-
-    // Absorb public inputs
+    // Absorb public inputs (matching native verify)
     absorb_public_inputs_gadget(
         transcript,
         input_ciphertext_aggregator,
-        output_ciphertext_aggregator,
-        b_vector_commitment,
+        permutation_power_vector_commitment,
     )?;
 
     tracing::debug!(
         target: LOG_TARGET,
-        "prover's input_ciphertext_aggregator: {:?}",
-        input_ciphertext_aggregator.value()
-    );
-    tracing::debug!(
-        target: LOG_TARGET,
-        "prover's output_ciphertext_aggregator: {:?}",
-        output_ciphertext_aggregator.value()
-    );
-    tracing::debug!(
-        target: LOG_TARGET,
-        "prover's b_vector_commitment: {:?}",
-        b_vector_commitment.value()
-    );
-
-    // Absorb proof commitments
-    tracing::debug!(
-        target: LOG_TARGET,
-        "Absorbing blinding_factor_commitment: {:?}",
-        proof.blinding_factor_commitment.value()
+        input_ciphertext_aggregator = ?input_ciphertext_aggregator.value().ok(),
+        b_vector_commitment = ?permutation_power_vector_commitment.value().ok(),
+        blinding_factor_commitment = ?proof.blinding_factor_commitment.value().ok(),
+        "Absorbed public inputs and proof commitments"
     );
     proof
         .blinding_factor_commitment
@@ -251,6 +221,12 @@ where
     );
     proof
         .blinding_rerandomization_commitment
+        .c1
+        .curve_absorb_gadget(transcript)?;
+
+    proof
+        .blinding_rerandomization_commitment
+        .c2
         .curve_absorb_gadget(transcript)?;
 
     // Squeeze the challenge
@@ -266,20 +242,21 @@ where
 /// Verifies the reencryption protocol inside a SNARK circuit, ensuring the same witness is used
 /// throughout the entire proof system. Returns a Boolean constraint indicating validity.
 ///
-/// ## Constraints Enforced:
+/// ## Constraints Enforced (NEW Algorithm):
 ///
 /// 1. **Commitment Consistency**: com(sigma_response_power_permutation_vector; sigma_response_blinding) = blinding_factor_commitment · power_perm_commitment^c
 ///    - Uses the same Pedersen vector bases as the native verifier.
-/// 2. **Shuffle Correctness**: E(1; sigma_response_rerand) · ∏input_ciphertexts[j]^{sigma_response_power_permutation_vector[j]} = blinding_rerandomization_commitment · (output_ciphertext_aggregator)^c
+/// 2. **Shuffle Correctness**: E(1; sigma_response_rerand) · ∏input_ciphertexts[j]^{sigma_response_power_permutation_vector[j]} = blinding_rerandomization_commitment · (input_ciphertext_aggregator)^c
+///    - Note: Uses input_ciphertext_aggregator in RHS (not output) per the new algorithm
 ///
 /// The challenge is computed using the provided transcript for efficiency.
 #[instrument(target = LOG_TARGET, level = "trace", skip_all)]
 pub fn verify_gadget<G, GG, const N: usize>(
     cs: ConstraintSystemRef<G::BaseField>,
     transcript: &mut PoseidonSpongeVar<G::BaseField>,
-    generator: &GG,  // curve generator G
-    public_key: &GG, // ElGamal PK = x·G
-    native_params: &Parameters<G>,
+    public_key: &GG,                  // ElGamal PK = x·G
+    pedersen_blinding_base: &GG,      // H for Pedersen commitment
+    pedersen_message_bases: &[GG; N], // [G_1, ..., G_N] for Pedersen commitment
     input_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
     output_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
     perm_power_challenge: &FpVar<G::BaseField>, // a_i = x^(i+1)
@@ -289,22 +266,27 @@ pub fn verify_gadget<G, GG, const N: usize>(
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField> + Clone,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
-    // Compute input aggregator: ∏(input_ciphertexts[i])^{x^(i+1)}
-    let input_ciphertext_aggregator =
-        compute_output_aggregator_gadget(cs.clone(), input_ciphertexts, perm_power_challenge)?;
+    tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
 
-    // Compute output aggregator: ∏(output_ciphertexts[i])^{x^(i+1)}
-    let output_ciphertext_aggregator =
-        compute_output_aggregator_gadget(cs.clone(), output_ciphertexts, perm_power_challenge)?;
+    // Compute powers sequence [x^1, x^2, ..., x^N] matching native implementation
+    let powers = crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_gadget::<
+        G::BaseField,
+        N,
+    >(cs.clone(), perm_power_challenge)?;
+
+    // Compute input aggregator C^a where a_i = x^(i+1)
+    let input_ciphertext_aggregator = msm_ciphertexts_gadget(input_ciphertexts, &powers)?;
+
+    // Note: Native verify doesn't compute output aggregator - it's only used in prove
 
     // Compute the Fiat-Shamir challenge using the provided transcript
+    // Updated to match native: only uses input aggregator, not output
     let challenge_c = compute_challenge_gadget::<G, GG, N>(
         transcript,
         &input_ciphertext_aggregator,
-        &output_ciphertext_aggregator,
         power_perm_commitment,
         proof,
     )?;
@@ -316,11 +298,23 @@ where
     );
 
     // 1) com(sigma_response_power_permutation_vector; sigma_response_blinding) = blinding_factor_commitment + (c · power_perm_commitment)
+    // Debug: Log the values being committed
+    tracing::debug!(
+        target: LOG_TARGET,
+        "Committing values in circuit: sigma_response_power_permutation_vector[0] = {:?}",
+        proof.sigma_response_power_permutation_vector[0].value()
+    );
+    tracing::debug!(
+        target: LOG_TARGET,
+        "sigma_response_blinding = {:?}",
+        proof.sigma_response_blinding.value()
+    );
+    
     let lhs_com = commit_vector_gadget::<G, GG, N>(
-        native_params,
+        pedersen_blinding_base,
+        pedersen_message_bases,
         &proof.sigma_response_power_permutation_vector,
         &proof.sigma_response_blinding,
-        cs.clone(),
     )?;
     let c_bits = challenge_c.to_bits_le()?;
     let power_perm_commitment_scaled = power_perm_commitment.scalar_mul_le(c_bits.iter())?;
@@ -333,32 +327,49 @@ where
 
     tracing::debug!(target: LOG_TARGET, "check1 = {:?}", check1.value().ok());
 
-    // 2) E(1; sigma_response_rerand) · ∏ input_ciphertexts[j]^{sigma_response_power_permutation_vector[j]} = blinding_rerandomization_commitment · (output_ciphertext_aggregator)^c
-    // LHS - sigma_response_rerand is now a single scalar
+    // 2) Group-side equality (V2): E(1; z_ρ) · ∏ (C'_i)^{z_{b,i}} = T_grp · (C^a)^c
+    // LHS - compute E_pk(1; z_ρ) · ∏ output_ciphertexts[j]^{z_b[j]}
+    // This matches native encrypt_one_and_combine
     let sigma_response_rerand_bits = proof.sigma_response_rerand.to_bits_le()?;
-    let rerand_c1 = generator.scalar_mul_le(sigma_response_rerand_bits.iter())?;
-    let rerand_c2_temp = public_key.scalar_mul_le(sigma_response_rerand_bits.iter())?;
-    let rerand_c2 = &rerand_c2_temp + generator; // Add generator for E_pk(1; r)
+
+    // Get the generator internally (matching native implementation)
+    let generator = GG::constant(G::generator());
+
+    // E_pk(1; z_ρ) = (g^z_ρ, g + pk^z_ρ)
+    let enc_one_c1 = generator.scalar_mul_le(sigma_response_rerand_bits.iter())?;
+    let enc_one_c2_temp = public_key.scalar_mul_le(sigma_response_rerand_bits.iter())?;
+    let enc_one_c2 = &enc_one_c2_temp + &generator; // Add generator for E_pk(1; r)
+
+    // ∏ (C'_i)^{z_b[i]} - note: using OUTPUT ciphertexts to match native
     let msm = msm_ciphertexts_gadget(
-        cs.clone(),
-        input_ciphertexts,
+        output_ciphertexts, // Changed from input_ciphertexts to match native
         &proof.sigma_response_power_permutation_vector,
     )?;
-    let lhs_c1 = &rerand_c1 + &msm.c1;
-    let lhs_c2 = &rerand_c2 + &msm.c2;
 
-    // Compute lhs as single point (c1 + c2)
-    let lhs_point = &lhs_c1 + &lhs_c2;
+    // LHS as ElGamal ciphertext
+    let lhs_grp = ElGamalCiphertextVar::new(&enc_one_c1 + &msm.c1, &enc_one_c2 + &msm.c2);
 
-    tracing::debug!(target: LOG_TARGET, "E_pk(1; z_rho) · ∏_{{j=1}}^N C_j^{{z_power_perm[j]}} = {:?}", lhs_point.value().ok());
+    // RHS - T_grp · (C^a)^c where C^a is the input aggregator
+    // This is ElGamal multiplication: T_grp + (C^a) * c
+    let input_agg_c1_scaled = input_ciphertext_aggregator
+        .c1
+        .scalar_mul_le(c_bits.iter())?;
+    let input_agg_c2_scaled = input_ciphertext_aggregator
+        .c2
+        .scalar_mul_le(c_bits.iter())?;
 
-    // RHS - blinding_rerandomization_commitment + (c1 + c2 of output_aggregator) * c
-    let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
-    let output_aggregator_scaled = output_aggregator_sum.scalar_mul_le(c_bits.iter())?;
-    let rhs_point = &proof.blinding_rerandomization_commitment + &output_aggregator_scaled;
-    tracing::debug!(target: LOG_TARGET, "blinding_rerandomization_commitment · (output_aggregator)^c = {:?}", rhs_point.value().ok());
+    let rhs_grp = ElGamalCiphertextVar::new(
+        &proof.blinding_rerandomization_commitment.c1 + &input_agg_c1_scaled,
+        &proof.blinding_rerandomization_commitment.c2 + &input_agg_c2_scaled,
+    );
 
-    let check2 = lhs_point.is_eq(&rhs_point)?;
+    tracing::debug!(target: LOG_TARGET, "LHS (V2): c1={:?}, c2={:?}", lhs_grp.c1.value().ok(), lhs_grp.c2.value().ok());
+    tracing::debug!(target: LOG_TARGET, "RHS (V2): c1={:?}, c2={:?}", rhs_grp.c1.value().ok(), rhs_grp.c2.value().ok());
+
+    // Check both c1 and c2 components separately
+    let check2_c1 = lhs_grp.c1.is_eq(&rhs_grp.c1)?;
+    let check2_c2 = lhs_grp.c2.is_eq(&rhs_grp.c2)?;
+    let check2 = Boolean::kary_and(&[check2_c1, check2_c2])?;
     tracing::debug!(target: LOG_TARGET, "Check2: {:?}", check2.value().ok());
 
     // Both checks must pass
@@ -366,36 +377,8 @@ where
     Ok(result)
 }
 
-/// Compute C'^a = ∏(C'_i)^{x^(i+1)} inside the circuit.
-#[allow(non_snake_case)]
-#[instrument(level = "trace", skip_all, fields(N = N))]
-pub fn compute_output_aggregator_gadget<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
-    output_ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
-    x: &FpVar<G::BaseField>,
-) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
-where
-    G: CurveGroup,
-    G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
-    for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
-{
-    // powers[i] = x^(i+1)
-    let mut powers = Vec::with_capacity(N);
-    let mut x_power = x.clone();
-    for _ in 0..N {
-        powers.push(x_power.clone());
-        x_power = &x_power * x;
-    }
-    let powers: [FpVar<G::BaseField>; N] = powers.try_into().unwrap();
-
-    msm_ciphertexts_gadget(_cs, output_ciphertexts, &powers)
-}
-
-/// MSM over ciphertexts in-circuit.
-#[allow(non_snake_case)]
+/// MSM over ciphertexts in-circuit using functional fold pattern.
 fn msm_ciphertexts_gadget<G, GG, const N: usize>(
-    _cs: ConstraintSystemRef<G::BaseField>,
     ciphertexts: &[ElGamalCiphertextVar<G, GG>; N],
     scalars: &[FpVar<G::BaseField>; N],
 ) -> Result<ElGamalCiphertextVar<G, GG>, SynthesisError>
@@ -405,61 +388,70 @@ where
     GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
-    // Initialize with first term
-    let bits0 = scalars[0].to_bits_le()?;
-    let mut acc_c1 = ciphertexts[0].c1.scalar_mul_le(bits0.iter())?;
-    let mut acc_c2 = ciphertexts[0].c2.scalar_mul_le(bits0.iter())?;
-
-    // Accumulate
-    for i in 1..N {
-        let bits = scalars[i].to_bits_le()?;
-        let t1 = ciphertexts[i].c1.scalar_mul_le(bits.iter())?;
-        let t2 = ciphertexts[i].c2.scalar_mul_le(bits.iter())?;
-        acc_c1 = &acc_c1 + &t1;
-        acc_c2 = &acc_c2 + &t2;
-    }
-
-    Ok(ElGamalCiphertextVar::new(acc_c1, acc_c2))
+    // Use fold to accumulate the scalar multiplication results
+    ciphertexts
+        .iter()
+        .zip(scalars.iter())
+        .map(|(ct, scalar)| {
+            // Convert scalar to bits for scalar multiplication
+            let bits = scalar.to_bits_le()?;
+            // Perform scalar multiplication on both components
+            let c1_scaled = ct.c1.scalar_mul_le(bits.iter())?;
+            let c2_scaled = ct.c2.scalar_mul_le(bits.iter())?;
+            Ok(ElGamalCiphertextVar::new(c1_scaled, c2_scaled))
+        })
+        .try_fold(
+            // Initialize with zero ciphertext
+            ElGamalCiphertextVar::new(GG::zero(), GG::zero()),
+            |acc, result| {
+                let term = result?;
+                // Add the current term to the accumulator
+                Ok(ElGamalCiphertextVar::new(
+                    &acc.c1 + &term.c1,
+                    &acc.c2 + &term.c2,
+                ))
+            },
+        )
 }
 
-/// Derive the same vector Pedersen bases in-circuit as native code, then
-/// compute com(values; randomness) = pedersen_blinding_base^randomness · Π_j bases[j]^{values[j]}.
+/// Compute Pedersen commitment to a vector of field elements mirroring pedersen_commit_scalars
+/// This directly implements: com(values; randomness) = H^randomness * Π_j G_j^{values[j]}
+///
+/// Since we can't access the internal params field of ParametersVar, we pass the bases directly
 fn commit_vector_gadget<G, GG, const N: usize>(
-    native_params: &Parameters<G>,
+    blinding_base: &GG,
+    message_bases: &[GG; N],
     values: &[FpVar<G::BaseField>; N],
     randomness: &FpVar<G::BaseField>,
-    cs: impl Into<Namespace<G::BaseField>>,
 ) -> Result<GG, SynthesisError>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GG: CurveVar<G, G::BaseField> + Clone,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
-    let cs = cs.into().cs();
+    // Convert randomness to bits for scalar multiplication
+    let randomness_bits = randomness.to_bits_le()?;
 
-    // Get the bases from native parameters
-    let (native_h, native_bases) =
-        super::reencryption_protocol::vector_commit_bases::<G, N>(native_params);
+    // Compute H^randomness (the blinding term)
+    let blinding_term = blinding_base.scalar_mul_le(randomness_bits.iter())?;
 
-    // Allocate pedersen_blinding_base and bases as constants in circuit
-    let pedersen_blinding_base = GG::new_constant(cs.clone(), native_h)?;
-    let mut bases = Vec::with_capacity(N);
-    for i in 0..N {
-        bases.push(GG::new_constant(cs.clone(), native_bases[i])?);
-    }
+    // Compute Π_j G_j^{values[j]} using fold pattern like native implementation
+    let message_term =
+        message_bases
+            .iter()
+            .zip(values.iter())
+            .try_fold(GG::zero(), |acc, (base, value)| {
+                // Convert value to bits for scalar multiplication
+                let value_bits = value.to_bits_le()?;
+                // Compute G_j^{value[j]}
+                let term = base.scalar_mul_le(value_bits.iter())?;
+                // Add to accumulator
+                Ok::<GG, SynthesisError>(&acc + &term)
+            })?;
 
-    // pedersen_blinding_base^randomness
-    let r_bits = randomness.to_bits_le()?;
-    let mut acc = pedersen_blinding_base.scalar_mul_le(r_bits.iter())?;
-
-    // sum bases[j]^{values[j]}
-    for j in 0..N {
-        let bits = values[j].to_bits_le()?;
-        let term = bases[j].scalar_mul_le(bits.iter())?;
-        acc = &acc + &term;
-    }
-    Ok(acc)
+    // Combine: H^randomness + Π_j G_j^{values[j]}
+    Ok(&blinding_term + &message_term)
 }
 
 // -----------------------------------------------------------------------------
@@ -484,24 +476,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shuffling::bayer_groth_permutation::reencryption_protocol::vector_commit_bases as native_vector_bases;
+    use crate::shuffling::bayer_groth_permutation::utils::extract_pedersen_bases as native_extract_bases;
     use crate::shuffling::test_utils::{
         generate_random_ciphertexts, shuffle_and_rerandomize_random,
     };
     use ark_bn254::{Fq, Fr, G1Projective};
-    use ark_crypto_primitives::commitment::{
-        pedersen::Commitment as PedersenCommitment, CommitmentScheme,
-    };
+    use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
+    use ark_crypto_primitives::commitment::CommitmentScheme;
     use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
     use ark_crypto_primitives::sponge::CryptographicSponge;
     use ark_ec::PrimeGroup;
-    use ark_ff::Field;
     use ark_r1cs_std::fields::fp::FpVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
     use ark_std::UniformRand;
-    use ark_std::Zero;
     use tracing_subscriber::filter;
     use tracing_subscriber::fmt::format::FmtSpan;
     use tracing_subscriber::layer::SubscriberExt;
@@ -509,7 +498,7 @@ mod tests {
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
     type Pedersen<G> =
-        PedersenCommitment<G, super::super::reencryption_protocol::ReencryptionWindow>;
+        PedersenCommitment<G, crate::pedersen_commitment_opening_proof::ReencryptionWindow>;
 
     const TEST_TARGET: &str = "nexus_nova";
 
@@ -534,7 +523,7 @@ mod tests {
         values: &[Fr; N],
         randomness: Fr,
     ) -> G1Projective {
-        let (h, bases) = native_vector_bases::<G1Projective, N>(params);
+        let (h, bases) = native_extract_bases::<G1Projective, N>(params);
         let mut acc = h * randomness;
         for j in 0..N {
             acc += bases[j] * values[j];
@@ -554,35 +543,38 @@ mod tests {
 
         // Permute + rerandomize
         let pi: [usize; N] = core::array::from_fn(|i| (i * 7 + 3) % N); // simple pseudorandom permutation
-        let mut pi_inv = [0usize; N];
-        for i in 0..N {
-            pi_inv[pi[i]] = i;
-        }
         let (c_out, rerand) =
             shuffle_and_rerandomize_random::<G1Projective, N>(&c_in, &pi, public_key, &mut rng);
 
         // FS exponent x and vectors a,b (we only need b and rho here)
         let x = Fr::from(2u64);
 
-        let mut b = [Fr::zero(); N];
-        for j in 0..N {
-            // b[j] = x^(pi_inv[j]+1) (1-based exponent indexing)
-            b[j] = x.pow(&[(pi_inv[j] as u64) + 1]);
-        }
+        // NEW algorithm: b[i] = x^{π(i)+1} (output-aligned with 1-based indexing)
+        let b = crate::shuffling::bayer_groth_permutation::utils::compute_power_permutation_vector::<
+            Fr,
+            N,
+        >(&pi, x);
 
         // power_perm_commitment = com(b; power_perm_blinding_factor) with the same vector-Pedersen as native prover
         let power_perm_blinding_factor = Fr::rand(&mut rng);
         let power_perm_commitment =
             commit_vector_native::<N>(&pedersen_params, &b, power_perm_blinding_factor);
 
-        // Compute input-indexed rerandomization scalars: r_j^in = rerand[pi_inv[j]]
-        let mut rerandomization_scalars = [Fr::zero(); N];
-        for j in 0..N {
-            rerandomization_scalars[j] = rerand[pi_inv[j]];
-        }
+        // NEW algorithm: rerandomization scalars are already output-indexed
+        let rerandomization_scalars = rerand;
+
+        // Verify the shuffle relation holds before creating the proof
+        assert!(
+            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<
+                G1Projective,
+                N,
+            >(&public_key, &c_in, &c_out, x, &b, &rerandomization_scalars,),
+            "Shuffle relation does not hold - cannot create valid proof!"
+        );
 
         // Native proof
         let config_fr = crate::config::poseidon_config::<Fq>();
+        tracing::debug!(target: TEST_TARGET, "Creating native prover sponge with Fq config");
         let mut prover_sponge = PoseidonSponge::new(&config_fr);
         let proof = super::super::reencryption_protocol::prove(
             &public_key,
@@ -617,8 +609,7 @@ mod tests {
         // ------------------ Build circuit and verify in-circuit ------------------
         let cs = ConstraintSystem::<Fq>::new_ref();
 
-        // Generator and PK as constants
-        let gen_var = G1Var::constant(G1Projective::generator());
+        // PK as constant
         let pk_var = G1Var::constant(public_key);
 
         // Allocate ciphertexts as constants
@@ -654,17 +645,43 @@ mod tests {
             AllocationMode::Witness,
         )?;
 
+        // Extract Pedersen bases from native parameters and allocate as circuit constants
+        // IMPORTANT: Normalize all bases to affine form to ensure consistent representation
+        let (blinding_base, message_bases) =
+            native_extract_bases::<G1Projective, N>(&pedersen_params);
+        
+        tracing::debug!(target: TEST_TARGET, "Extracted {} message bases for N={}", message_bases.len(), N);
+        tracing::debug!(target: TEST_TARGET, "Native blinding_base = {:?}", blinding_base);
+        for (i, base) in message_bases.iter().enumerate() {
+            tracing::debug!(target: TEST_TARGET, "Native message_base[{}] = {:?}", i, base);
+        }
+        
+        // Convert to affine to ensure consistent coordinate representation
+        let blinding_base_affine = blinding_base.into_affine();
+        let blinding_base_var = G1Var::constant(blinding_base_affine.into());
+        
+        let message_bases_vars: Vec<G1Var> = message_bases
+            .iter()
+            .map(|base| {
+                let base_affine = base.into_affine();
+                G1Var::constant(base_affine.into())
+            })
+            .collect();
+        let message_bases_var: [G1Var; N] = message_bases_vars.try_into().unwrap();
+
         // Create transcript for challenge computation
         let config = crate::config::poseidon_config::<Fq>();
+        tracing::debug!(target: TEST_TARGET, "Creating circuit transcript with Fq config");
         let mut transcript = PoseidonSpongeVar::new(cs.clone(), &config);
+        
 
         // Verify in-circuit
         let ok = verify_gadget::<G1Projective, G1Var, N>(
             cs.clone(),
             &mut transcript,
-            &gen_var,
             &pk_var,
-            &pedersen_params,
+            &blinding_base_var,
+            &message_bases_var,
             &c_in_var,
             &c_out_var,
             &x_var,

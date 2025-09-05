@@ -70,6 +70,7 @@ pub mod linking_rs_gadgets;
 pub mod linking_rs_native;
 pub mod reencryption_gadgets;
 pub mod reencryption_protocol;
+pub mod utils;
 
 pub use bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
 pub use bg_setup_gadget::BayerGrothTranscriptGadget;

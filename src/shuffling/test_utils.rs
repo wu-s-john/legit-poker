@@ -127,47 +127,6 @@ pub fn apply_permutation<C: CurveGroup, const N: usize>(
     core::array::from_fn(|i| input_deck[permutation[i]].clone())
 }
 
-/// Generate a random permutation of size N using Fisher-Yates shuffle.
-///
-/// Creates a permutation array where permutation[i] indicates which input position
-/// maps to output position i.
-///
-/// # Example
-/// ```ignore
-/// let perm = generate_random_permutation::<52>(&mut rng);
-/// // perm[0] = 37 means input position 37 goes to output position 0
-/// ```
-pub fn generate_random_permutation<const N: usize>(rng: &mut impl Rng) -> [usize; N] {
-    let mut perm = [0; N];
-    for i in 0..N {
-        perm[i] = i;
-    }
-
-    // Fisher-Yates shuffle
-    for i in (1..N).rev() {
-        let j = (rng.next_u32() as usize) % (i + 1);
-        perm.swap(i, j);
-    }
-
-    perm
-}
-
-/// Invert a permutation array.
-///
-/// If `perm[i] = j`, then `inv[j] = i`.
-///
-/// # Example
-/// ```ignore
-/// let perm = [2, 0, 1];  // 0->2, 1->0, 2->1
-/// let inv = invert_permutation(&perm);  // [1, 2, 0]
-/// ```
-pub fn invert_permutation<const N: usize>(perm: &[usize; N]) -> [usize; N] {
-    let mut inv = [0; N];
-    for i in 0..N {
-        inv[perm[i]] = i;
-    }
-    inv
-}
 
 #[cfg(test)]
 mod tests {
@@ -199,28 +158,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_permutation_operations() {
-        let mut rng = test_rng();
-
-        const N: usize = 5;
-        let perm = generate_random_permutation::<N>(&mut rng);
-
-        // Check permutation is valid (contains each element exactly once)
-        let mut seen = [false; N];
-        for &p in &perm {
-            assert!(p < N);
-            assert!(!seen[p]);
-            seen[p] = true;
-        }
-
-        // Test inversion
-        let inv = invert_permutation(&perm);
-        for i in 0..N {
-            assert_eq!(inv[perm[i]], i);
-            assert_eq!(perm[inv[i]], i);
-        }
-    }
 
     #[test]
     fn test_shuffle_and_rerandomize() {
@@ -231,7 +168,9 @@ mod tests {
         const N: usize = 4;
         let (input_deck, _) =
             generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
-        let perm = generate_random_permutation::<N>(&mut rng);
+        
+        // Use a simple test permutation instead of generating one
+        let perm = [2, 0, 3, 1]; // A fixed permutation for testing
 
         // Test with random rerandomization
         let (output_deck, rerandomizations) =

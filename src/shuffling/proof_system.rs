@@ -33,10 +33,14 @@ use super::rs_shuffle::{
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use ark_crypto_primitives::{
-    commitment::pedersen::Parameters,
+    commitment::{
+        pedersen::{Commitment as PedersenCommitment, Parameters},
+        CommitmentScheme,
+    },
     snark::SNARK,
     sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge},
 };
+use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, ToConstraintField};
 use ark_groth16::{
@@ -634,9 +638,21 @@ where
             seed, &dummy_ct,
         );
 
+    // Create dummy Pedersen parameters for test key generation
+    use ark_std::rand::SeedableRng;
+    use rand::rngs::StdRng;
+    
+    let mut deck_rng = StdRng::seed_from_u64(42);
+    let perm_params = PedersenCommitment::<G, DeckHashWindow>::setup(&mut deck_rng)
+        .expect("Failed to setup DeckHashWindow Pedersen parameters");
+    
+    let mut power_rng = StdRng::seed_from_u64(43);
+    let power_params = PedersenCommitment::<G, ReencryptionWindow>::setup(&mut power_rng)
+        .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+
     let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
     let (bg_setup_params, _) =
-        bg_transcript.run_protocol::<G, N>(generator, &dummy_permutation, blinding_r, blinding_s);
+        bg_transcript.run_protocol::<G, N>(&perm_params, &power_params, &dummy_permutation, blinding_r, blinding_s);
 
     let dummy_circuit = create_rs_shuffle_circuit::<G, GV, N, LEVELS>(
         seed,

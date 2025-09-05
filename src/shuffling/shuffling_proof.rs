@@ -7,7 +7,7 @@
 //! - SNARK proof for verifying shuffled permutation
 
 use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
-use super::bayer_groth_permutation::reencryption_protocol::ReencryptionWindow;
+use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
     PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionPublicInput,
@@ -34,8 +34,11 @@ use ark_std::{
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::shuffling_proof";
 
-/// Type alias for Pedersen commitment with proper window configuration
-type Pedersen<G> = PedersenCommitment<G, ReencryptionWindow>;
+/// Type alias for Pedersen commitment with ReencryptionWindow configuration
+type PedersenReenc<G> = PedersenCommitment<G, ReencryptionWindow>;
+
+/// Type alias for Pedersen commitment with DeckHashWindow configuration
+type PedersenDeck<G> = PedersenCommitment<G, DeckHashWindow>;
 
 /// Helper function to create RS Shuffle with Bayer-Groth Link circuit
 #[cfg(test)]
@@ -214,17 +217,24 @@ where
         }
     });
 
-    // Step 3: Generate Pedersen parameters first (needed for both BG setup and sigma protocol)
-    // NOTE: Using a fixed seed to ensure consistency between prover and verifier.
+    // Step 3: Generate Pedersen parameters for both window types
+    // NOTE: Using fixed seeds to ensure consistency between prover and verifier.
     // In production, these would be shared public parameters.
-    let mut pedersen_rng = StdRng::seed_from_u64(42);
-    let pedersen_params =
-        Pedersen::<G>::setup(&mut pedersen_rng).map_err(|e| -> Box<dyn std::error::Error> {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to setup Pedersen parameters: {:?}", e),
-            ))
-        })?;
+    let mut deck_rng = StdRng::seed_from_u64(42);
+    let perm_params = PedersenDeck::<G>::setup(&mut deck_rng).map_err(|e| -> Box<dyn std::error::Error> {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to setup DeckHashWindow Pedersen parameters: {:?}", e),
+        ))
+    })?;
+    
+    let mut power_rng = StdRng::seed_from_u64(43);
+    let power_params = PedersenReenc::<G>::setup(&mut power_rng).map_err(|e| -> Box<dyn std::error::Error> {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to setup ReencryptionWindow Pedersen parameters: {:?}", e),
+        ))
+    })?;
 
     // Step 4: Run Bayer-Groth setup to generate setup parameters
     tracing::debug!(target: LOG_TARGET, "Step 4: Running Bayer-Groth setup");
@@ -232,9 +242,9 @@ where
     let blinding_s = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
     let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(&config.domain);
-    let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol_with_pedersen::<G, N>(
-        config.generator,
-        &pedersen_params,
+    let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol::<G, N>(
+        &perm_params,
+        &power_params,
         &permutation_usize,
         blinding_r,
         blinding_s,
@@ -271,7 +281,7 @@ where
     // Create ReencryptionPublicInput
     let reencryption_public = ReencryptionPublicInput::<G, N>::new(
         config.public_key,
-        pedersen_params,
+        power_params,
         ct_input.clone(),
         ct_output.clone(),
         bg_setup_params.perm_power_challenge,
@@ -357,21 +367,22 @@ where
 
     // Generate proper Pedersen parameters with distinct generators
     // NOTE: In production, these parameters would be shared between prover and verifier
-    // and generated during a trusted setup phase. For testing, we use a fixed seed
+    // and generated during a trusted setup phase. For testing, we use fixed seeds
     // to ensure consistency between prover and verifier.
-    let mut pedersen_rng = StdRng::seed_from_u64(42);
-    let pedersen_params =
-        Pedersen::<G>::setup(&mut pedersen_rng).map_err(|e| -> Box<dyn std::error::Error> {
+    // Note: We only need the power_params for reencryption verification
+    let mut power_rng = StdRng::seed_from_u64(43);
+    let power_params =
+        PedersenReenc::<G>::setup(&mut power_rng).map_err(|e| -> Box<dyn std::error::Error> {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to setup Pedersen parameters: {:?}", e),
+                format!("Failed to setup ReencryptionWindow Pedersen parameters: {:?}", e),
             ))
         })?;
 
     // Create ReencryptionPublicInput for verification
     let reencryption_public = ReencryptionPublicInput::<G, N>::new(
         config.public_key,
-        pedersen_params,
+        power_params,
         ct_input.clone(),
         ct_output.clone(),
         proof.bg_setup_params.perm_power_challenge,
@@ -531,9 +542,21 @@ mod tests {
                 seed, &dummy_ct,
             );
 
+        // Create Pedersen parameters for test key generation
+        use ark_std::rand::SeedableRng;
+        use rand::rngs::StdRng;
+        
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenDeck::<G>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params = PedersenReenc::<G>::setup(&mut power_rng)
+            .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+
         let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
         let (bg_setup_params, _) = bg_transcript.run_protocol::<G, N>(
-            generator,
+            &perm_params,
+            &power_params,
             &dummy_permutation,
             blinding_r,
             blinding_s,

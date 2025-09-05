@@ -41,6 +41,17 @@ impl PedersenWindow for DeckHashWindow {
     const NUM_WINDOWS: usize = 52; // For 52 cards in a deck
 }
 
+/// Window configuration for reencryption protocol commitments
+/// Used for committing to power vectors in the Bayer-Groth protocol
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct ReencryptionWindow;
+
+impl PedersenWindow for ReencryptionWindow {
+    const WINDOW_SIZE: usize = 4;
+    // Large enough that setup() yields many generators; > N is sufficient (we use ~52 max).
+    const NUM_WINDOWS: usize = 416;
+}
+
 // ---------------------------
 // Gadget functions
 // ---------------------------

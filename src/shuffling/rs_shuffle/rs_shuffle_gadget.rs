@@ -655,12 +655,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
     use crate::shuffling::bayer_groth_permutation::{
         bg_setup::BayerGrothTranscript,
         linking_rs_native::{
             compute_left_product, compute_left_product_for_permutation_check, compute_linear_blend,
             compute_right_product, compute_right_product_for_permutation_check,
         },
+    };
+    use ark_crypto_primitives::commitment::{
+        pedersen::Commitment as PedersenCommitment,
+        CommitmentScheme,
     };
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
     use ark_bn254::{Fr, G1Projective};
@@ -762,9 +767,20 @@ mod tests {
             val.into_bigint().as_ref()[0] as usize
         });
 
+        // Create Pedersen parameters for the test
+        use ark_std::rand::SeedableRng;
+        use rand::rngs::StdRng;
+        
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params = PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+            .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+
         // Run native protocol with provided blinding factors
         let (native_params, native_perm_power_vector) = native_transcript
-            .run_protocol::<G1Projective, N>(generator, &perm_usize, blinding_r, blinding_s);
+            .run_protocol::<G1Projective, N>(&perm_params, &power_params, &perm_usize, blinding_r, blinding_s);
 
         tracing::debug!(target: TEST_TARGET,
             perm_power_challenge = ?native_params.perm_power_challenge,
