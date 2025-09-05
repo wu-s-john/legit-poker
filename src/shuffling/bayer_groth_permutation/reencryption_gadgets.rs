@@ -326,12 +326,12 @@ where
     let power_perm_commitment_scaled = power_perm_commitment.scalar_mul_le(c_bits.iter())?;
     let rhs_com = &proof.blinding_factor_commitment + &power_perm_commitment_scaled;
 
-    tracing::debug!(target: LOG_TARGET, "com(sigma_response_power_permutation_vector; sigma_response_blinding) = {:?}", lhs_com.value());
-    tracing::debug!(target: LOG_TARGET, "blinding_factor_commitment + (c · power_perm_commitment): rhs_com = {:?}", rhs_com.value());
+    tracing::debug!(target: LOG_TARGET, "com(sigma_response_power_permutation_vector; sigma_response_blinding) = {:?}", lhs_com.value().ok());
+    tracing::debug!(target: LOG_TARGET, "blinding_factor_commitment + (c · power_perm_commitment): rhs_com = {:?}", rhs_com.value().ok());
 
     let check1 = lhs_com.is_eq(&rhs_com)?;
 
-    tracing::debug!(target: LOG_TARGET, "check1 = {:?}", check1.value());
+    tracing::debug!(target: LOG_TARGET, "check1 = {:?}", check1.value().ok());
 
     // 2) E(1; sigma_response_rerand) · ∏ input_ciphertexts[j]^{sigma_response_power_permutation_vector[j]} = blinding_rerandomization_commitment · (output_ciphertext_aggregator)^c
     // LHS - sigma_response_rerand is now a single scalar
@@ -350,16 +350,16 @@ where
     // Compute lhs as single point (c1 + c2)
     let lhs_point = &lhs_c1 + &lhs_c2;
 
-    tracing::debug!(target: LOG_TARGET, "E_pk(1; z_rho) · ∏_{{j=1}}^N C_j^{{z_power_perm[j]}} = {:?}", lhs_point.value());
+    tracing::debug!(target: LOG_TARGET, "E_pk(1; z_rho) · ∏_{{j=1}}^N C_j^{{z_power_perm[j]}} = {:?}", lhs_point.value().ok());
 
     // RHS - blinding_rerandomization_commitment + (c1 + c2 of output_aggregator) * c
     let output_aggregator_sum = &output_ciphertext_aggregator.c1 + &output_ciphertext_aggregator.c2;
     let output_aggregator_scaled = output_aggregator_sum.scalar_mul_le(c_bits.iter())?;
     let rhs_point = &proof.blinding_rerandomization_commitment + &output_aggregator_scaled;
-    tracing::debug!(target: LOG_TARGET, "blinding_rerandomization_commitment · (output_aggregator)^c = {:?}", rhs_point.value());
+    tracing::debug!(target: LOG_TARGET, "blinding_rerandomization_commitment · (output_aggregator)^c = {:?}", rhs_point.value().ok());
 
     let check2 = lhs_point.is_eq(&rhs_point)?;
-    tracing::debug!(target: LOG_TARGET, "Check2: {:?}", check2.value());
+    tracing::debug!(target: LOG_TARGET, "Check2: {:?}", check2.value().ok());
 
     // Both checks must pass
     let result = Boolean::kary_and(&[check1, check2])?;

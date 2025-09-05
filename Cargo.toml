@@ -88,6 +88,7 @@ ark-ed-on-bls12-381-bandersnatch = { git = "https://github.com/arkworks-rs/algeb
 ] }
 ark-ed-on-bn254 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
     "std",
+    "r1cs",
 ] }
 ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/algebra.git", default-features = false, features = [
     "std",

@@ -920,14 +920,14 @@ mod tests {
             &mut transcript_gadget,
         )?;
 
-        tracing::debug!(target: TEST_TARGET, proof_point = ?proof_point.value()?, "Computed the bayer groth proof");
+        tracing::debug!(target: TEST_TARGET, proof_point = ?proof_point.value().ok(), "Computed the bayer groth proof");
 
         tracing::debug!(target: TEST_TARGET,
-            perm_power_challenge = ?bg_params.perm_power_challenge.value()?,
-            c_perm = ?bg_params.c_perm.value()?,
-            c_power = ?bg_params.c_power.value()?,
-            perm_mixing_challenge_y = ?bg_params.perm_mixing_challenge_y.value()?,
-            perm_offset_challenge_z = ?bg_params.perm_offset_challenge_z.value()?,
+            perm_power_challenge = ?bg_params.perm_power_challenge.value().ok(),
+            c_perm = ?bg_params.c_perm.value().ok(),
+            c_power = ?bg_params.c_power.value().ok(),
+            perm_mixing_challenge_y = ?bg_params.perm_mixing_challenge_y.value().ok(),
+            perm_offset_challenge_z = ?bg_params.perm_offset_challenge_z.value().ok(),
             "Printing out computed challenges");
 
         // Step 8: Verify circuit parameters match native parameters

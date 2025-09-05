@@ -250,8 +250,8 @@ where
 {
     // Compute the witness value for the result
     let result_value = || -> Result<F, SynthesisError> {
-        let exp_val = exponent.value()?;
-        let base_val = base.value()?;
+        let exp_val = exponent.value().unwrap_or_default();
+        let base_val = base.value().unwrap_or_default();
 
         // Convert exponent to u64 (assumes small value like permutation index)
         let exp_u64 = exp_val.into_bigint().as_ref()[0];

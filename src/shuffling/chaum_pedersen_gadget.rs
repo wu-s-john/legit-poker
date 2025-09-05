@@ -76,11 +76,11 @@ where
 
         // Allocate t_g as CurveVar
         let t_g = CV::new_variable(cs.clone(), || Ok(proof.t_g), mode)?;
-        tracing::trace!(target: LOG_TARGET, "Allocated t_g: {:?}", t_g.value());
+        tracing::trace!(target: LOG_TARGET, "Allocated t_g: {:?}", t_g.value().ok());
 
         // Allocate t_h as CurveVar
         let t_h = CV::new_variable(cs.clone(), || Ok(proof.t_h), mode)?;
-        tracing::trace!(target: LOG_TARGET, "Allocated t_h: {:?}", t_h.value());
+        tracing::trace!(target: LOG_TARGET, "Allocated t_h: {:?}", t_h.value().ok());
 
         // Allocate z as bits for scalar multiplication
         // proof.z is C::ScalarField, convert to bits for circuit operations
@@ -114,21 +114,21 @@ where
     let mut sponge = PoseidonSpongeVar::new(cs.clone(), &config);
 
     // Absorb t_g using CurveAbsorbGadget
-    tracing::debug!(target: LOG_TARGET, "Absorbing t_g: {:?}", t_g.value());
+    tracing::debug!(target: LOG_TARGET, "Absorbing t_g: {:?}", t_g.value().ok());
     t_g.curve_absorb_gadget(&mut sponge)?;
 
     // Absorb t_h using CurveAbsorbGadget
-    tracing::debug!(target: LOG_TARGET, "Absorbing t_h: {:?}", t_h.value());
+    tracing::debug!(target: LOG_TARGET, "Absorbing t_h: {:?}", t_h.value().ok());
     t_h.curve_absorb_gadget(&mut sponge)?;
 
     // Squeeze challenge in base field
     let challenge_base = sponge.squeeze_field_elements(1)?[0].clone();
-    tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base.value());
+    tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base.value().ok());
 
     let challenge: EmulatedFpVar<C::ScalarField, C::BaseField> =
         embed_to_emulated(cs, challenge_base)?;
 
-    tracing::debug!(target: LOG_TARGET, "Converted challenge to scalar field: {:?}", challenge.value());
+    tracing::debug!(target: LOG_TARGET, "Converted challenge to scalar field: {:?}", challenge.value().ok());
 
     Ok(challenge)
 }
@@ -169,36 +169,36 @@ where
 
         // Compute lhs1 = g^z (using scalar_mul_le with bits)
         let lhs1 = g.clone().scalar_mul_le(self.z_bits.iter())?;
-        tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1.value());
+        tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1.value().ok());
 
         // Compute rhs1 = T_g + α^c
         let alpha_c = alpha.clone() * &challenge;
         let rhs1 = &self.t_g + &alpha_c;
-        tracing::debug!(target: LOG_TARGET, "rhs1 (T_g · α^c) = {:?}", rhs1.value());
+        tracing::debug!(target: LOG_TARGET, "rhs1 (T_g · α^c) = {:?}", rhs1.value().ok());
 
         // Check equation 1
         let check1 = lhs1.is_eq(&rhs1)?;
-        tracing::debug!(target: LOG_TARGET, "Equation 1 result: {:?}", check1.value());
+        tracing::debug!(target: LOG_TARGET, "Equation 1 result: {:?}", check1.value().ok());
 
         // Verify equation 2: h^z = T_h · β^c
         tracing::debug!(target: LOG_TARGET, "Verifying equation 2: h^z = T_h · β^c");
 
         // Compute lhs2 = h^z (using scalar_mul_le with bits)
         let lhs2 = h.clone().scalar_mul_le(self.z_bits.iter())?;
-        tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2.value());
+        tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2.value().ok());
 
         // Compute rhs2 = T_h + β^c
         let beta_c = beta.clone() * &challenge;
         let rhs2 = &self.t_h + &beta_c;
-        tracing::debug!(target: LOG_TARGET, "rhs2 (T_h · β^c) = {:?}", rhs2.value());
+        tracing::debug!(target: LOG_TARGET, "rhs2 (T_h · β^c) = {:?}", rhs2.value().ok());
 
         // Check equation 2
         let check2 = lhs2.is_eq(&rhs2)?;
-        tracing::debug!(target: LOG_TARGET, "Equation 2 result: {:?}", check2.value());
+        tracing::debug!(target: LOG_TARGET, "Equation 2 result: {:?}", check2.value().ok());
 
         // Both checks must pass
         let result = Boolean::kary_and(&[check1, check2])?;
-        tracing::debug!(target: LOG_TARGET, "Final verification result: {:?}", result.value());
+        tracing::debug!(target: LOG_TARGET, "Final verification result: {:?}", result.value().ok());
 
         Ok(result)
     }

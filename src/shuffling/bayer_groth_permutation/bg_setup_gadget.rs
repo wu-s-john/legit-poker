@@ -170,14 +170,14 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
         track_constraints!(cs_clone, "bg_setup_protocol", LOG_TARGET, {
             // Step 1: Absorb commitment to permutation vector
             self.absorb_perm_vector_commitment(c_perm)?;
-            tracing::debug!(target: LOG_TARGET, c_perm = ?c_perm.value()?, "Step 1: Absorbed permutation vector commitment");
+            tracing::debug!(target: LOG_TARGET, c_perm = ?c_perm.value().ok(), "Step 1: Absorbed permutation vector commitment");
 
             // Step 2: Derive power challenge
             let perm_power_challenge = self.derive_perm_power_challenge()?;
 
             let perm_power_challenge_scalar =
                 EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
-                    let power_base = perm_power_challenge.value()?;
+                    let power_base = perm_power_challenge.value().unwrap_or_default();
                     let power_scalar = C::ScalarField::from_le_bytes_mod_order(
                         &power_base.into_bigint().to_bytes_le(),
                     );
@@ -185,12 +185,12 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
                 })?;
 
             tracing::debug!(target: LOG_TARGET,
-                perm_power_challenge = ?perm_power_challenge_scalar.value()?, "Step 2: Derived power challenge");
+                perm_power_challenge = ?perm_power_challenge_scalar.value().ok(), "Step 2: Derived power challenge");
 
             // Step 3: Absorb commitment to power vector
             self.absorb_perm_power_vector_commitment(c_power)?;
             tracing::debug!(target: LOG_TARGET,
-                c_power = ?c_power.value()?,
+                c_power = ?c_power.value().ok(),
                 "Step 3: Absorbed power vector commitment");
 
             // Step 4: Derive mixing and offset challenges
@@ -201,7 +201,7 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
 
             let perm_mixing_challenge_y_scalar =
                 EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
-                    let y_base = perm_mixing_challenge_y_base.value()?;
+                    let y_base = perm_mixing_challenge_y_base.value().unwrap_or_default();
                     let y_scalar = C::ScalarField::from_le_bytes_mod_order(
                         &y_base.into_bigint().to_bytes_le(),
                     );
@@ -210,7 +210,7 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
 
             let perm_offset_challenge_z_scalar =
                 EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
-                    let z_base = perm_offset_challenge_z_base.value()?;
+                    let z_base = perm_offset_challenge_z_base.value().unwrap_or_default();
                     let z_scalar = C::ScalarField::from_le_bytes_mod_order(
                         &z_base.into_bigint().to_bytes_le(),
                     );
@@ -218,8 +218,8 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
                 })?;
 
             tracing::debug!(target: LOG_TARGET,
-                perm_mixing_challenge_y_base = ?perm_mixing_challenge_y_scalar.value()?,
-                perm_offset_challenge_z_base = ?perm_offset_challenge_z_scalar.value()?,
+                perm_mixing_challenge_y_base = ?perm_mixing_challenge_y_scalar.value().ok(),
+                perm_offset_challenge_z_base = ?perm_offset_challenge_z_scalar.value().ok(),
                 "Step 4: Derived mixing and offset challenges");
 
             Ok(BayerGrothSetupParametersGadget {

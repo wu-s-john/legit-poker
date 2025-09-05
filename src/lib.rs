@@ -10,6 +10,8 @@ pub mod shuffler_service;
 pub mod shuffling;
 pub mod vrf;
 
+pub mod pedersen_commitment_opening_proof;
+
 #[cfg(feature = "gpu")]
 pub mod gpu;
 

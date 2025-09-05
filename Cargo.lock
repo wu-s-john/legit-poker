@@ -241,6 +241,7 @@ dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff",
+ "ark-r1cs-std",
  "ark-std",
 ]
 

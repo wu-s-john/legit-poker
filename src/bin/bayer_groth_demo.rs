@@ -35,8 +35,10 @@ const NUM_PLAYERS: usize = 7; // Number of players
 // Type aliases for clarity
 type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
-type DummyIP =
-    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>;
+type DummyIP = DummyProofSystem<
+    PermutationPublicInput<G, GV, N, LEVELS>,
+    PermutationWitness<G, GV, N, LEVELS>,
+>;
 type SP = ReencryptionProofSystem<G, N>;
 
 // ============================================================================
@@ -55,7 +57,7 @@ fn main() {
     println!("  - {} RS shuffle levels per shuffle\n", LEVELS);
 
     // Initialize RNG with seed for reproducibility
-    let mut rng = StdRng::seed_from_u64(12345);
+    let mut rng = StdRng::seed_from_u64(666);
     let total_start = Instant::now();
 
     // Step 1: Setup shufflers

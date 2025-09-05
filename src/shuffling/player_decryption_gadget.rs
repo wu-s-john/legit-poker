@@ -281,12 +281,12 @@ where
 {
     // Compute h = aggregated_public_key + player_public_key
     let h = aggregated_public_key + player_public_key;
-    tracing::debug!(target: LOG_TARGET, "h (aggregated_pk + player_pk): {:?}", h.value());
+    tracing::debug!(target: LOG_TARGET, "h (aggregated_pk + player_pk): {:?}", h.value().ok());
 
     // Get generator
     let generator = CV::constant(C::generator());
-    tracing::debug!(target: LOG_TARGET, "Blinding base contribution: {:?}", contribution.blinding_base_contribution.value());
-    tracing::debug!(target: LOG_TARGET, "Blinding combined contribution: {:?}", contribution.blinding_combined_contribution.value());
+    tracing::debug!(target: LOG_TARGET, "Blinding base contribution: {:?}", contribution.blinding_base_contribution.value().ok());
+    tracing::debug!(target: LOG_TARGET, "Blinding combined contribution: {:?}", contribution.blinding_combined_contribution.value().ok());
 
     // Verify the Chaum-Pedersen proof
     let result = contribution.proof.verify_gadget(
@@ -297,7 +297,7 @@ where
         &contribution.blinding_combined_contribution,
     )?;
 
-    tracing::debug!(target: LOG_TARGET, "Chaum-Pedersen proof verification result: {:?}", result.value());
+    tracing::debug!(target: LOG_TARGET, "Chaum-Pedersen proof verification result: {:?}", result.value().ok());
     Ok(result)
 }
 
@@ -349,10 +349,10 @@ where
         .fold(initial_ciphertext.c1.clone(), |acc, (i, contribution)| {
             trace!(target: LOG_TARGET, "Processing blinded_base contribution {}", i);
             let result = &acc + &contribution.blinding_base_contribution;
-            trace!(target: LOG_TARGET, "Updated blinded_base after contribution {}: {:?}", i, result.value());
+            trace!(target: LOG_TARGET, "Updated blinded_base after contribution {}: {:?}", i, result.value().ok());
             result
         });
-    tracing::debug!(target: LOG_TARGET, "Final blinded_base: {:?}", blinded_base.value());
+    tracing::debug!(target: LOG_TARGET, "Final blinded_base: {:?}", blinded_base.value().ok());
 
     // Accumulate blinded message with player key: pk^r * g^m_i + Σ(pk·y_u)^δ_j
     let blinded_message_with_player_key = blinding_contributions
@@ -360,7 +360,7 @@ where
         .fold(initial_ciphertext.c2.clone(), |acc, contribution| {
             &acc + &contribution.blinding_combined_contribution
         });
-    tracing::debug!(target: LOG_TARGET, "Final blinded_message_with_player_key: {:?}", blinded_message_with_player_key.value());
+    tracing::debug!(target: LOG_TARGET, "Final blinded_message_with_player_key: {:?}", blinded_message_with_player_key.value().ok());
 
     // Accumulate player unblinding helper: Σg^δ_j
     let player_unblinding_helper = blinding_contributions
@@ -368,7 +368,7 @@ where
         .fold(CV::zero(), |acc, contribution| {
             &acc + &contribution.blinding_base_contribution
         });
-    tracing::debug!(target: LOG_TARGET, "Final player_unblinding_helper: {:?}", player_unblinding_helper.value());
+    tracing::debug!(target: LOG_TARGET, "Final player_unblinding_helper: {:?}", player_unblinding_helper.value().ok());
 
     // Collect all proofs for the transcript
     let proofs: Vec<_> = blinding_contributions
@@ -411,11 +411,11 @@ where
     // This gives us A_u^(Σx_j) = A_u^x = g^((r+Δ) * x) = pk^(r+Δ)
     let mut mu = CV::zero();
     for (i, share) in shares.iter().enumerate() {
-        tracing::debug!(target: LOG_TARGET, "  Share[{}]: {:?}", i, share.share.value());
+        tracing::debug!(target: LOG_TARGET, "  Share[{}]: {:?}", i, share.share.value().ok());
         mu = &mu + &share.share;
     }
 
-    tracing::debug!(target: LOG_TARGET, "Combined unblinding result: {:?}", mu.value());
+    tracing::debug!(target: LOG_TARGET, "Combined unblinding result: {:?}", mu.value().ok());
     tracing::debug!(target: LOG_TARGET, "=== End combine_unblinding_shares_gadget ===");
 
     Ok(mu)
@@ -447,16 +447,16 @@ where
 {
     tracing::debug!(
         target: LOG_TARGET,
-        blinded_base = ?player_ciphertext.blinded_base.value(),
-        blinded_message = ?player_ciphertext.blinded_message_with_player_key.value(),
-        player_unblinding_helper = ?player_ciphertext.player_unblinding_helper.value(),
+        blinded_base = ?player_ciphertext.blinded_base.value().ok(),
+        blinded_message = ?player_ciphertext.blinded_message_with_player_key.value().ok(),
+        player_unblinding_helper = ?player_ciphertext.player_unblinding_helper.value().ok(),
         "=== Circuit recover_card_point_gadget ==="
     );
 
     // Log player secret bits (be careful with this in production!)
     let secret_bits: Vec<bool> = player_secret_bits
         .iter()
-        .map(|b| b.value().unwrap_or(false))
+        .map(|b| b.value().unwrap_or_default())
         .collect();
     tracing::debug!(target: LOG_TARGET, "Player secret bits (length {}): first 8 bits: {:?}",
         secret_bits.len(),
@@ -471,9 +471,9 @@ where
 
     println!(
         "Step 1 - Player unblinding (helper^secret): {:?}",
-        player_unblinding.value()
+        player_unblinding.value().ok()
     );
-    tracing::debug!(target: LOG_TARGET, "Step 1 - Player unblinding (helper^secret): {:?}", player_unblinding.value());
+    tracing::debug!(target: LOG_TARGET, "Step 1 - Player unblinding (helper^secret): {:?}", player_unblinding.value().ok());
 
     // Step 2: Combine committee unblinding shares
     let combined_unblinding =
@@ -481,9 +481,9 @@ where
 
     println!(
         "Step 2 - Combined unblinding from shares: {:?}",
-        combined_unblinding.value()
+        combined_unblinding.value().ok()
     );
-    tracing::debug!(target: LOG_TARGET, "Step 2 - Combined unblinding from shares: {:?}", combined_unblinding.value());
+    tracing::debug!(target: LOG_TARGET, "Step 2 - Combined unblinding from shares: {:?}", combined_unblinding.value().ok());
 
     // Step 3: Recover the message group element by removing all blinding
     // Mathematical equation: g^m = blinded_message / (combined_unblinding · player_unblinding)
@@ -493,10 +493,10 @@ where
 
     println!(
         "Step 3 - Recovered element (g^m): {:?}",
-        recovered_element.value()
+        recovered_element.value().ok()
     );
     println!("=== End Circuit recover_card_point_gadget ===");
-    tracing::debug!(target: LOG_TARGET, "Step 3 - Recovered element (g^m): {:?}", recovered_element.value());
+    tracing::debug!(target: LOG_TARGET, "Step 3 - Recovered element (g^m): {:?}", recovered_element.value().ok());
     tracing::debug!(target: LOG_TARGET, "=== End Circuit recover_card_point_gadget ===");
 
     Ok(recovered_element)

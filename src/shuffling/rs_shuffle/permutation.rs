@@ -76,8 +76,8 @@ where
     tracing::debug!(
         target: LOG_TARGET,
         "Left product: {:?}, Right product: {:?}",
-        prod_left.value(),
-        prod_right.value()
+        prod_left.value().ok(),
+        prod_right.value().ok()
     );
     prod_left.enforce_equal(&prod_right)?;
 
