@@ -150,6 +150,18 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
       .unwrap();
   ```
 - **Logging**: Use structured logging with tracing modules instead of `println!` for output. Always specify the target when using tracing macros (e.g., `tracing::info!(target = "module_name", "message")` or `tracing::debug!(target = "module_name", "debug info")`). Only use `println!` when implementing a custom Debug trait for a struct.
+  - When logging multiple variables, use the `?` operator before variable names to automatically derive Debug formatting, and include descriptive names at the end:
+  ```rust
+  tracing::debug!(
+      target: TEST_TARGET,
+      ?blinding_term,
+      ?king_blinded_message,
+      ?test_recovery,
+      points_match,
+      "King encryption math verification"
+  );
+  ```
+  This pattern makes logs more readable and allows easy filtering by variable names.
 
 ### Testing Approach
 - Unit tests throughout individual crates
@@ -284,6 +296,24 @@ The following tools provide efficient, language-aware code analysis:
 
 # SNARK Programming Tips
 
+## Elliptic Curve Field Handling
+
+When working with elliptic curve objects, we should make an effort to discern what is scalar field and what is base field. This becomes critically important when working with scalar multiplication on elliptic curves in SNARK circuits.
+
+**Key Principle**: When doing SNARK circuit computations with elliptic curves, we should try to have the scalar fields be base fields. This makes the SNARK circuit cheaper with less constraints and witnesses.
+
+The reason is that we need to break the scalar field value into bits and do scalar multiplication on it. Here's an example of the correct pattern:
+
+```rust
+// Convert scalar to bits and perform scalar multiplication
+let c_bits = challenge_c.to_bits_le()?;
+let b_vector_commitment_scaled = b_vector_commitment.scalar_mul_le(c_bits.iter())?;
+```
+
+This approach minimizes circuit complexity by keeping scalar operations in the base field whenever possible.
+
+## AllocVar Implementation
+
 - When you are allocating variables, you should try to implement by implementing the trait `AllocVar`. Here is an example:
 
 ```rust
@@ -335,3 +365,282 @@ where
 
 - When trying to enforce a constraint, please first write a comment about it expressing the mathematical equation that you are trying to enforce. This will help you understand what you are trying to enforce and will also help you debug any issues that may arise.
 - When enforcing a constraint, please use `cs.enforce_constraint` rather than `expression.enforce_equal`. It makes it cleaner what is on the left-hand side of the equation and the right-hand side.
+
+## Boolean Operations in Circuits
+
+The arkworks `Boolean` type uses trait implementations with standard Rust bitwise operators rather than methods:
+
+```rust
+use ark_r1cs_std::boolean::Boolean;
+
+// ✅ CORRECT - Use bitwise operators
+let and_result = &bool_a & &bool_b;  // AND operation
+let or_result = &bool_a | &bool_b;   // OR operation  
+let xor_result = &bool_a ^ &bool_b;  // XOR operation
+let not_result = !&bool_a;           // NOT operation
+
+// ❌ INCORRECT - These methods don't exist
+let and_result = bool_a.and(&bool_b);  // Won't compile
+let or_result = bool_a.or(&bool_b);    // Won't compile
+```
+
+**Important notes**:
+- Always use references with the operators (`&bool_a & &bool_b`)
+- These operations generate appropriate constraints automatically
+- The operators return `Result<Boolean<F>, SynthesisError>` in constraint contexts
+- Use `?` to propagate errors: `let result = (&bool_a & &bool_b)?;`
+
+# SNARK Developer Guidelines: Mirror-First, Safety-First
+
+This section provides comprehensive guidelines for writing SNARK code with native/circuit parity. The core principle: **Write one specification and implement it twice** - a native backend (CPU code) and a circuit backend (constraints). Keep them behaviorally identical and prove they stay in lockstep with tests and logging.
+
+## 0. Scope & Goals
+
+- Produce correct, auditable, and maintainable circuits that exactly mirror the native verifier logic
+- Avoid common foot-guns (under-constrained signals, field reinterpretation mistakes, secret-dependent control flow)
+- Ship with a robust testing + logging harness so regressions are caught early
+
+## 1. Architecture: "One Spec, Two Backends"
+
+**Rule A1**: Design the verifier once as a pure function over an abstract transcript and abstract group/scalar ops. Then provide:
+- **Native backend**: concrete types (PoseidonSponge, G, G::ScalarField)
+- **Circuit backend**: gadget types (PoseidonSpongeVar, CurveVar, bit-decomposed scalars or non-native field vars)
+
+This pattern eliminates copy-paste divergence and keeps the native and circuit code literally the same algorithm instantiated over two type families.
+
+## 2. Data Representation & Encoding (Critical)
+
+You will typically have two prime fields:
+- **G::ScalarField** (e.g., Fr): used for exponents/scalars (Pedersen, ElGamal, MSMs)
+- **G::BaseField** (e.g., Fp): coordinates of curve points, state field of Poseidon sponges, etc.
+
+**Rule D1 (No silent cast)**: Never represent an Fr scalar as an FpVar by "conversion". If Fr != Fp, that is a change of field and can break soundness.
+
+### Preferred Encodings:
+- **Scalars (Fr) → bits**: canonical little-endian bit-decomposition with booleanity and exact length checks; feed into scalar_mul_le gadgets
+- **Alternative**: Non-native field variables (NonNativeFieldVar<Fr, Fp>) when you truly need field arithmetic over Fr in an Fp circuit (costlier, but sometimes necessary)
+- **Points**: affine (x, y) over Fp. Forbid the point at infinity unless explicitly allowed; do subgroup/cofactor checks for public inputs if your curve requires it
+- **Transcript**: define one canonical encoding for every absorbed object (point coordinates, scalar bits/limbs, array order, endianness) and use it everywhere
+
+## 3. Constraint Hygiene & Equality Semantics
+
+- Everything you compute must be constrained. Assignments/witness values without constraints are a bug
+- **Booleanity & ranges**: enforce `b*(1-b)=0` for bits; for limbs, enforce range via lookups or running sums
+- **No secret-dependent branching**: replace `if (secret)` with boolean gating: `out = b*x + (1-b)*y`
+- **Equality of points**: use enforce_equal (or constrain both coordinates); do not rely on host-side ==
+
+## 4. Transcript + Challenge Derivation (Determinism)
+
+- Hash the same bytes in the same order on both backends
+- Absorb points as (x, y) in an agreed order; absorb scalars as exact bitstrings (or limbs) that the circuit also allocates
+- Derive the challenge c identically (same rate/capacity, same squeeze count)
+- Add an "audit" mode: log the exact absorbed preimage stream (hex) on both backends and compare byte-for-byte in tests
+
+## 5. Gadget Design Principles
+
+- **Match native function signatures**: e.g., if native does `encrypt_one_and_combine(keys, σ_ρ, C_in, σ_b)`, the gadget should do the same, only with circuit types (points, bits)
+- **Expose scalar inputs as bits** (or non-native variables). Provide both fixed-base and variable-base MSM variants with windowing control
+- **Use lookups** for small integer and membership checks when your arithmetization supports them
+
+## 6. Testing Strategy (Must-Have)
+
+### Positive Tests
+- Random valid instances prove and verify
+
+### Fail-to-Prove (Negative) Tests
+For each relation:
+- Flip a bit in σ_b[0] → proving must fail
+- Swap transcript absorption order → fail
+- Alter one ciphertext → fail
+
+### Transcript Snapshot Tests
+- Native vs circuit audit logs must match byte-for-byte
+- Challenge equality: `c_native == c_circuit.value().unwrap()` for random instances
+
+### Constraint Budget Regression
+- Assert constraint counts (per N) to catch accidental bloat
+
+### Property-Based Fuzzing
+- Test corner cases (0, 1, max limbs, carries, edge points)
+
+## 7. Performance Guidelines
+
+- Prefer ZK-friendly hashes (Poseidon/Rescue/Griffin) for in-circuit commitments/transcripts
+- Minimize public inputs: hash long statements to a short digest inside the circuit; expose only the digest
+- Windowed MSMs: configure windows (e.g., 4–6 bits) and reuse decompositions across operations
+- Cache shared sub-computations: decompose scalars once, reuse bits across all scalar muls
+- If using PLONK-ish stacks, exploit lookups and custom gates for range checks and S-boxes
+
+## 8. Recursion / IVC / Folding (if applicable)
+
+- Keep the step circuit tiny and uniform; expose a compact accumulator/digest in public IO
+- Choose recursion-friendly curves (e.g., curve cycles) if you plan to verify proofs inside proofs
+- Gate expensive verifier checks carefully and reuse transcript state across steps
+
+## 9. Ops: SRS, Versioning, Domain Separation
+
+- **Groth16**: per-circuit trusted setup; manage keys and toxic waste; re-run if the circuit changes
+- **PLONK-ish**: universal SRS; derive per-circuit proving/verifying keys
+- **Version everything**: hash circuit sources and keys; include a circuit/version tag as a domain separator in public inputs/transcript
+
+## 10. Example Implementation Patterns
+
+### 10.1 Recommended Allocation (Bits-Based)
+
+```rust
+use ark_r1cs_std::{alloc::AllocVar, boolean::Boolean, prelude::*};
+
+pub struct SigmaProofBitsVar<G, GG, const N: usize>
+where
+    G: CurveGroup,
+    GG: CurveVar<G, G::BaseField>,
+{
+    pub blinding_factor_commitment: GG,
+    pub blinding_rerandomization_commitment: GG,
+    pub sigma_response_b_bits: [Vec<Boolean<G::BaseField>>; N],
+    pub sigma_response_blinding_bits: Vec<Boolean<G::BaseField>>,
+    pub sigma_response_rerand_bits: Vec<Boolean<G::BaseField>>,
+}
+
+impl<G, GG, const N: usize> AllocVar<SigmaProof<G, N>, G::BaseField> for SigmaProofBitsVar<G, GG, N>
+where
+    G: CurveGroup,
+    GG: CurveVar<G, G::BaseField>,
+{
+    fn new_variable<T: Borrow<SigmaProof<G, N>>>(
+        cs: impl Into<Namespace<G::BaseField>>,
+        f: impl FnOnce() -> Result<T, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let ns = cs.into();
+        let cs = ns.cs();
+        let proof = f()?.borrow().clone();
+
+        let blinding_factor_commitment =
+            GG::new_variable(cs.clone(), || Ok(proof.blinding_factor_commitment), mode)?;
+        let blinding_rerandomization_commitment =
+            GG::new_variable(cs.clone(), || Ok(proof.blinding_rerandomization_commitment), mode)?;
+
+        let alloc_fr_bits = |x: G::ScalarField| -> Result<Vec<Boolean<G::BaseField>>, SynthesisError> {
+            let bits_le: Vec<bool> = x.into_bigint().to_bits_le();
+            bits_le.into_iter()
+                .map(|b| Boolean::new_variable(cs.clone(), || Ok(b), mode))
+                .collect()
+        };
+
+        let mut tmp: Vec<Vec<Boolean<G::BaseField>>> = Vec::with_capacity(N);
+        for i in 0..N {
+            tmp.push(alloc_fr_bits(proof.sigma_response_b[i])?);
+        }
+        let sigma_response_b_bits: [Vec<Boolean<G::BaseField>>; N] = tmp.try_into().unwrap();
+
+        let sigma_response_blinding_bits = alloc_fr_bits(proof.sigma_response_blinding)?;
+        let sigma_response_rerand_bits   = alloc_fr_bits(proof.sigma_response_rerand)?;
+
+        Ok(Self {
+            blinding_factor_commitment,
+            blinding_rerandomization_commitment,
+            sigma_response_b_bits,
+            sigma_response_blinding_bits,
+            sigma_response_rerand_bits,
+        })
+    }
+}
+```
+
+### 10.2 Enforcement Pattern
+
+```rust
+// 1) Pedersen commitment side:
+// Mathematical equation: com(z_b; z_s) = T_com · B^c
+let lhs_com = pedersen::commit_bits(&params_var, &sigma_response_b_bits, &sigma_response_blinding_bits)?;
+let rhs_com = blinding_factor_commitment.clone()
+    + b_vector_commitment.scalar_mul_le(challenge_bits.iter())?;
+lhs_com.enforce_equal(&rhs_com)?;
+
+// 2) Group/ciphertext side:
+// Mathematical equation: E_pk(1; z_ρ) · ∏ C_j^{z_b[j]} = T_grp · (C'^a)^c
+let lhs_grp = elgamal::encrypt_one_and_combine_bits(
+    &keys_var,
+    &sigma_response_rerand_bits,
+    &input_ciphertexts_var,
+    &sigma_response_b_bits,
+)?;
+let rhs_grp = blinding_rerandomization_commitment.clone()
+    + (output_agg.c1.clone() + output_agg.c2.clone())
+        .scalar_mul_le(challenge_bits.iter())?;
+lhs_grp.enforce_equal(&rhs_grp)?;
+```
+
+## 11. Logging & Diagnostics (Native/Circuit Sync)
+
+### Log Absorb Events
+- Log exactly before every absorb_* call. Emit the preimage encoding (hex) in "audit" builds
+- During witness generation, reconstruct the same bytes and log them under the same tag
+- Your test harness compares the two logs
+
+### Key Checkpoints
+- Log computed aggregators, commitments, derived challenge, and the LHS/RHS of each enforced equality (native side)
+- In circuit, expose these as debug witnesses in audit mode if your framework permits
+
+### Example Logging Pattern
+```rust
+absorb_public_inputs(
+    transcript,
+    &input_ciphertext_aggregator,
+    &output_ciphertext_aggregator,
+    b_vector_commitment,
+);
+
+tracing::debug!(
+    target: LOG_TARGET,
+    "Computed input_ciphertext_aggregator: {:?}",
+    input_ciphertext_aggregator
+);
+tracing::debug!(
+    target: LOG_TARGET,
+    "Computed output_ciphertext_aggregator: {:?}",
+    output_ciphertext_aggregator
+);
+tracing::debug!(
+    target: LOG_TARGET,
+    "Computed b_vector_commitment: {:?}",
+    b_vector_commitment
+);
+```
+
+## 12. Common Pitfalls & How to Avoid Them
+
+- **Assigned but not constrained** → Always accompany every witness computation with the constraint that forces its value
+- **Field confusion (Fr vs Fp)** → Use bits or non-native vars; never "reinterpret cast"
+- **Secret-dependent branches** → Replace with boolean selects and gate both branches
+- **Unsafe division** → Replace `a/b` with `a * inv(b)` plus a non-zero check gadget
+- **Point equality via host ==** → Use gadget equality constraints
+
+## 13. PR & Release Checklists
+
+### PR Checklist
+- [ ] No Fr values allocated as FpVar. Scalars are bits or non-native
+- [ ] All bits/limbs have boolean/range constraints
+- [ ] All equalities are enforced in-circuit (no host comparisons)
+- [ ] Transcript encoding documented and used identically in both backends
+- [ ] Negative tests cover each enforced relation
+- [ ] Constraint counts recorded and compared
+
+### Release Checklist
+- [ ] Circuit/key versions bumped and domain-separated
+- [ ] Proving/verifying keys re-generated if circuit changed (Groth16)
+- [ ] Public input surface area minimized; digests used where possible
+
+## 14. TL;DR (Pin These Rules)
+
+1. **One spec, two backends**
+2. **Never cast Fr → FpVar**. Use bits or non-native fields
+3. **Fix encodings**. Same byte order and object order for transcript absorption
+4. **Constrain everything**. No unconstrained witness values
+5. **Test to fail**. Every rule has a negative test
+6. **Audit transcripts**. Byte-for-byte logs match across backends
+7. **Keep circuits static**. No secret-dependent branches
+8. **Minimize public inputs** and version everything
+
+- Can you add that if a curve value needs to be added to a transcript, please use @src/shuffling/curve_absorb.rs . It makes things easier to use
