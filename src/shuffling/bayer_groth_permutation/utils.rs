@@ -4,7 +4,9 @@ use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+#[cfg(test)]
 use ark_r1cs_std::fields::fp::FpVar;
+#[cfg(test)]
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 /// Compute the power sequence [x^1, x^2, ..., x^N] efficiently for SNARKs
@@ -54,7 +56,8 @@ pub(crate) fn compute_powers_sequence_with_index_1<F: PrimeField, const N: usize
 ///
 /// # Constraints
 /// Enforces N-1 multiplication constraints: x_{i+1} = x_i * x
-pub(crate) fn compute_powers_sequence_gadget<F: PrimeField, const N: usize>(
+#[cfg(test)]
+pub fn compute_powers_sequence_gadget<F: PrimeField, const N: usize>(
     _cs: ConstraintSystemRef<F>,
     x: &FpVar<F>,
 ) -> Result<[FpVar<F>; N], SynthesisError> {
@@ -116,6 +119,7 @@ pub(crate) fn compute_perm_power_vector<F: PrimeField, const N: usize>(
 ///
 /// # Returns
 /// An array where `b[i] = x^{π(i)+1}` for i = 0..N-1
+#[cfg(test)]
 pub(crate) fn compute_power_permutation_vector<F: PrimeField, const N: usize>(
     permutation: &[usize; N],
     perm_power_challenge: F,
@@ -150,20 +154,27 @@ pub(crate) fn msm_ciphertexts<G: CurveGroup, const N: usize>(
 ///
 /// This provides the bases for a linearly homomorphic Pedersen commitment over scalar field elements,
 /// which is required for the Sigma protocol's algebraic structure.
+///
+/// IMPORTANT: Normalizes all bases to affine form to ensure consistent representation
+/// between native and circuit implementations.
 pub(crate) fn extract_pedersen_bases<G, const N: usize>(params: &Parameters<G>) -> (G, [G; N])
 where
     G: CurveGroup,
 {
     // Use the first element of randomness_generator as H (blinding base)
-    let blinding_base = params.randomness_generator[0];
+    // Normalize to affine and back to projective to ensure Z=1
+    let blinding_base = params.randomness_generator[0].into_affine().into();
 
     // Flatten the 2D generator table and take the first N bases for message elements
-    let mut generator_iter = params.generators.iter().flat_map(|row| row.iter()).cloned();
+    // Normalize each base to ensure consistent representation
+    let mut generator_iter = params.generators.iter().flat_map(|row| row.iter());
 
     let message_bases: [G; N] = std::array::from_fn(|_| {
-        generator_iter
+        let base = generator_iter
             .next()
-            .expect("Not enough Pedersen generators for the requested N")
+            .expect("Not enough Pedersen generators for the requested N");
+        // Normalize to affine and back to projective to ensure Z=1
+        base.into_affine().into()
     });
 
     (blinding_base, message_bases)

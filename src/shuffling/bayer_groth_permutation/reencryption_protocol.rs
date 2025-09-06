@@ -65,12 +65,27 @@ use ark_std::{rand::Rng, vec::Vec};
 /// Logging target for this module
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::reencryption_protocol";
 
-/// Type alias for arkworks’ byte-oriented Pedersen; we only use its parameters to source bases.
+/// Helper function to convert a base field element to a scalar field element
+/// by interpreting its little-endian bytes as an integer and reducing mod r.
+/// This ensures consistency with the circuit's to_bits_le() → scalar_mul_le() pattern.
+#[inline]
+fn fq_to_fr<G: CurveGroup>(x: G::BaseField) -> G::ScalarField
+where
+    G::BaseField: PrimeField,
+    G::ScalarField: PrimeField,
+{
+    // Serialize the base field element to bytes
+    let mut bytes = Vec::new();
+    x.serialize_uncompressed(&mut bytes).unwrap();
+    // Interpret as scalar field element
+    G::ScalarField::from_le_bytes_mod_order(&bytes)
+}
+
+/// Type alias for arkworks' byte-oriented Pedersen; we only use its parameters to source bases.
 pub type Pedersen<G> = PedersenCommitment<G, ReencryptionWindow>;
 
 /// Σ‑protocol proof object.
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
-#[allow(non_snake_case)]
 pub struct ReencryptionProof<G: CurveGroup, const N: usize> {
     /// Commitment to random vector t: blinding_factor_commitment = com(t; t_s).
     pub blinding_factor_commitment: G,
@@ -109,7 +124,6 @@ pub struct ReencryptionProof<G: CurveGroup, const N: usize> {
 /// - `rng`: RNG.
 ///
 /// **Returns:** `ReencryptionProof`.
-#[allow(non_snake_case)]
 pub fn prove<G, const N: usize>(
     public_key: &G,
     pedersen_params: &Parameters<G>,
@@ -132,8 +146,20 @@ where
 
     let powers: [G::ScalarField; N] = compute_powers_sequence_with_index_1(perm_power_challenge);
 
-    // Compute aggregators C^a and C'^a where a_i = x^(i+1) (zero-based loop)
-    let input_ciphertext_aggregator = msm_ciphertexts(input_ciphertexts, &powers);
+    // Normalize input ciphertexts to affine form before MSM
+    // This ensures consistency with the gadget implementation
+    let normalized_input_ciphertexts: [ElGamalCiphertext<G>; N] =
+        std::array::from_fn(|i| ElGamalCiphertext {
+            c1: input_ciphertexts[i].c1.into_affine().into(),
+            c2: input_ciphertexts[i].c2.into_affine().into(),
+        });
+
+    // Compute aggregators C^a using normalized ciphertexts
+    let mut input_ciphertext_aggregator = msm_ciphertexts(&normalized_input_ciphertexts, &powers);
+
+    // Normalize the aggregator to ensure consistent coordinates with gadget
+    input_ciphertext_aggregator.c1 = input_ciphertext_aggregator.c1.into_affine().into();
+    input_ciphertext_aggregator.c2 = input_ciphertext_aggregator.c2.into_affine().into();
 
     // Absorb public inputs into transcript
     absorb_public_inputs(
@@ -162,12 +188,6 @@ where
         blinding_factor_for_blinding_factor_commitment,
     );
 
-    tracing::debug!(
-        target: LOG_TARGET,
-        blinding_factor_commitment = ?blinding_factor_commitment,
-        "Computed blinding factor commitment"
-    );
-
     // blinding_rerandomization_commitment = E_pk(1; ciphertext_masking_rerand) · ∏ (C'_i)^{t_i}
     // This is T_grp = E_pk(1;t_ρ) · ∏_{i=1}^N (C'_i)^{t_i}
     let blinding_rerandomization_commitment: ElGamalCiphertext<G> = encrypt_one_and_combine(
@@ -175,12 +195,6 @@ where
         ciphertext_masking_rerand,
         output_ciphertexts,
         &blinding_factors,
-    );
-
-    tracing::debug!(
-        target: LOG_TARGET,
-        ?blinding_rerandomization_commitment,
-        "Computed blinding rerandomization commitment"
     );
 
     // Absorb commitments and derive challenge
@@ -191,7 +205,10 @@ where
     blinding_rerandomization_commitment
         .c2
         .curve_absorb(transcript);
-    let challenge: G::ScalarField = transcript.squeeze_field_elements(1)[0];
+    // Squeeze challenge in base field for consistency with circuit
+    let c_fq: G::BaseField = transcript.squeeze_field_elements(1)[0];
+    // Convert to scalar field by interpreting bits as little-endian integer mod r
+    let challenge: G::ScalarField = fq_to_fr::<G>(c_fq);
     tracing::debug!(
         target: LOG_TARGET,
         challenge = ?challenge,
@@ -260,12 +277,58 @@ where
             perm_power_challenge,
         );
 
-    // Compute aggregators C^a and C'^a where a_i = x^(i+1) (zero-based loop)
-    let input_ciphertext_aggregator =
+    // Trace the powers vector for debugging
+    tracing::trace!(
+        target: LOG_TARGET,
+        "Native verify: perm_power_challenge = {:?}",
+        perm_power_challenge
+    );
+    tracing::trace!(
+        target: LOG_TARGET,
+        "Native verify: power_perm_commitment = {:?}",
+        power_perm_commitment
+    );
+
+    // Normalize input ciphertexts to affine form before MSM
+    // This ensures consistency with the gadget implementation which uses affine coordinates
+    let normalized_input_ciphertexts: [ElGamalCiphertext<G>; N] =
+        std::array::from_fn(|i| ElGamalCiphertext {
+            c1: input_ciphertexts[i].c1.into_affine().into(),
+            c2: input_ciphertexts[i].c2.into_affine().into(),
+        });
+
+    // Log normalized input ciphertexts for debugging
+    for (i, ct) in normalized_input_ciphertexts.iter().enumerate() {
+        tracing::trace!(
+            target: LOG_TARGET,
+            "Native verify: normalized_input_ciphertexts[{}].c1 = {:?}",
+            i,
+            ct.c1
+        );
+    }
+
+    // Compute aggregators C^a using normalized ciphertexts
+    let mut input_ciphertext_aggregator =
         crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
-            input_ciphertexts,
+            &normalized_input_ciphertexts,
             &powers,
         );
+
+    // Normalize the aggregator to ensure consistent coordinates with gadget
+    input_ciphertext_aggregator.c1 = input_ciphertext_aggregator.c1.into_affine().into();
+    input_ciphertext_aggregator.c2 = input_ciphertext_aggregator.c2.into_affine().into();
+
+    // Trace the input_ciphertext_aggregator
+    tracing::trace!(
+        target: LOG_TARGET,
+        "Native verify: input_ciphertext_aggregator.c1 = {:?}",
+        input_ciphertext_aggregator.c1
+    );
+    tracing::trace!(
+        target: LOG_TARGET,
+        "Native verify: input_ciphertext_aggregator.c2 = {:?}",
+        input_ciphertext_aggregator.c2
+    );
 
     // Rebuild transcript
     absorb_public_inputs(
@@ -293,7 +356,10 @@ where
         .curve_absorb(transcript);
 
     // Derive challenge
-    let challenge: G::ScalarField = transcript.squeeze_field_elements(1)[0];
+    // Squeeze challenge in base field for consistency with circuit
+    let c_fq: G::BaseField = transcript.squeeze_field_elements(1)[0];
+    // Convert to scalar field by interpreting bits as little-endian integer mod r
+    let challenge: G::ScalarField = fq_to_fr::<G>(c_fq);
 
     tracing::debug!(
         target: LOG_TARGET,
@@ -482,17 +548,15 @@ mod tests {
     }
 
     /// Test instance with all necessary data for a complete test
-    #[allow(non_snake_case)]
     struct SigmaTestInstance<const N: usize> {
         public_key: G1Projective,
         pedersen_params: Parameters<G1Projective>,
-        C_in: [ElGamalCiphertext<G1Projective>; N],
-        C_out: [ElGamalCiphertext<G1Projective>; N],
-        _pi: [usize; N],
-        x: Fr,
-        b: [Fr; N],
-        sB: Fr,
-        cB: G1Projective,
+        input_ciphertexts: [ElGamalCiphertext<G1Projective>; N],
+        output_ciphertexts: [ElGamalCiphertext<G1Projective>; N],
+        fiat_shamir_challenge: Fr,
+        permuted_power_vector: [Fr; N],
+        pedersen_blinding_factor: Fr,
+        power_vector_commitment: G1Projective,
         rerandomization_scalars: [Fr; N], // Output-indexed rerandomization scalars ρ_i
     }
 
@@ -581,9 +645,10 @@ mod tests {
 
         // Verify the shuffle relation holds before returning the instance
         assert!(
-            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<G1Projective, N>(
-                &public_key, &c_in, &c_out, x, &b, &rerandomization_scalars,
-            ),
+            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<
+                G1Projective,
+                N,
+            >(&public_key, &c_in, &c_out, x, &b, &rerandomization_scalars,),
             "Shuffle relation must hold for test instance (seed={})",
             seed
         );
@@ -592,13 +657,12 @@ mod tests {
         SigmaTestInstance {
             public_key,
             pedersen_params,
-            C_in: c_in,
-            C_out: c_out,
-            _pi: pi,
-            x,
-            b,
-            sB: s_b,
-            cB: c_b,
+            input_ciphertexts: c_in,
+            output_ciphertexts: c_out,
+            fiat_shamir_challenge: x,
+            permuted_power_vector: b,
+            pedersen_blinding_factor: s_b,
+            power_vector_commitment: c_b,
             rerandomization_scalars,
         }
     }
@@ -621,12 +685,12 @@ mod tests {
         let proof = prove::<G1Projective, DECK_SIZE>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
-            &inst.b,
-            inst.sB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
+            &inst.permuted_power_vector,
+            inst.pedersen_blinding_factor,
             &inst.rerandomization_scalars,
             &mut prover_transcript,
             &mut rng,
@@ -638,10 +702,10 @@ mod tests {
         assert!(verify::<G1Projective, DECK_SIZE>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
             &proof,
             &mut verifier_transcript,
         ));
@@ -665,12 +729,12 @@ mod tests {
         let proof = prove::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
-            &inst.b,
-            inst.sB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
+            &inst.permuted_power_vector,
+            inst.pedersen_blinding_factor,
             &inst.rerandomization_scalars,
             &mut prover_transcript,
             &mut rng,
@@ -681,10 +745,10 @@ mod tests {
         assert!(verify::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
             &proof,
             &mut verifier_transcript,
         ));
@@ -712,12 +776,12 @@ mod tests {
         let proof1 = prove::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
-            &inst.b,
-            inst.sB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
+            &inst.permuted_power_vector,
+            inst.pedersen_blinding_factor,
             &inst.rerandomization_scalars,
             &mut transcript1,
             &mut fixed_rng,
@@ -735,12 +799,12 @@ mod tests {
         let proof2 = prove::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
-            &inst.b,
-            inst.sB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
+            &inst.permuted_power_vector,
+            inst.pedersen_blinding_factor,
             &inst.rerandomization_scalars,
             &mut transcript2,
             &mut fixed_rng2,
@@ -754,10 +818,10 @@ mod tests {
         assert!(verify::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
             &proof1,
             &mut verifier_transcript1,
         ));
@@ -767,10 +831,10 @@ mod tests {
         assert!(verify::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
             &proof2,
             &mut verifier_transcript2,
         ));
@@ -799,12 +863,12 @@ mod tests {
             let proof = prove::<G1Projective, N>(
                 &inst.public_key,
                 &inst.pedersen_params,
-                &inst.C_in,
-                &inst.C_out,
-                inst.x,
-                &inst.cB,
-                &inst.b,
-                inst.sB,
+                &inst.input_ciphertexts,
+                &inst.output_ciphertexts,
+                inst.fiat_shamir_challenge,
+                &inst.power_vector_commitment,
+                &inst.permuted_power_vector,
+                inst.pedersen_blinding_factor,
                 &inst.rerandomization_scalars,
                 &mut prover_transcript,
                 &mut rng,
@@ -816,10 +880,10 @@ mod tests {
                 verify::<G1Projective, N>(
                     &inst.public_key,
                     &inst.pedersen_params,
-                    &inst.C_in,
-                    &inst.C_out,
-                    inst.x,
-                    &inst.cB,
+                    &inst.input_ciphertexts,
+                    &inst.output_ciphertexts,
+                    inst.fiat_shamir_challenge,
+                    &inst.power_vector_commitment,
                     &proof,
                     &mut verifier_transcript,
                 ),
@@ -847,8 +911,7 @@ mod tests {
         let x = Fr::from(2u64);
         let g = G1Projective::generator();
 
-        #[allow(non_snake_case)]
-        let C_out: [ElGamalCiphertext<G1Projective>; N] = core::array::from_fn(|i| {
+        let output_ciphertexts: [ElGamalCiphertext<G1Projective>; N] = core::array::from_fn(|i| {
             let r = Fr::rand(&mut rng);
             ElGamalCiphertext {
                 c1: g * r,
@@ -861,8 +924,10 @@ mod tests {
             crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1(
                 x,
             );
-        let agg =
-            crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(&C_out, &powers);
+        let agg = crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
+            &output_ciphertexts,
+            &powers,
+        );
 
         // Manually compute expected
         let mut expected = ElGamalCiphertext {
@@ -871,8 +936,8 @@ mod tests {
         };
         let mut x_power = x;
         for i in 0..N {
-            expected.c1 += C_out[i].c1 * x_power;
-            expected.c2 += C_out[i].c2 * x_power;
+            expected.c1 += output_ciphertexts[i].c1 * x_power;
+            expected.c2 += output_ciphertexts[i].c2 * x_power;
             x_power *= x;
         }
 
@@ -881,16 +946,18 @@ mod tests {
 
         // Test msm_ciphertexts
         let scalars = [Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-        let msm_result =
-            crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(&C_out, &scalars);
+        let msm_result = crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
+            &output_ciphertexts,
+            &scalars,
+        );
 
         let mut expected_msm = ElGamalCiphertext {
             c1: G1Projective::zero(),
             c2: G1Projective::zero(),
         };
         for i in 0..N {
-            expected_msm.c1 += C_out[i].c1 * scalars[i];
-            expected_msm.c2 += C_out[i].c2 * scalars[i];
+            expected_msm.c1 += output_ciphertexts[i].c1 * scalars[i];
+            expected_msm.c2 += output_ciphertexts[i].c2 * scalars[i];
         }
 
         assert_eq!(msm_result.c1, expected_msm.c1);
@@ -915,12 +982,12 @@ mod tests {
         let proof = prove::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
-            &inst.b,
-            inst.sB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
+            &inst.permuted_power_vector,
+            inst.pedersen_blinding_factor,
             &inst.rerandomization_scalars,
             &mut prover_transcript,
             &mut rng,
@@ -941,10 +1008,10 @@ mod tests {
         assert!(verify::<G1Projective, N>(
             &inst.public_key,
             &inst.pedersen_params,
-            &inst.C_in,
-            &inst.C_out,
-            inst.x,
-            &inst.cB,
+            &inst.input_ciphertexts,
+            &inst.output_ciphertexts,
+            inst.fiat_shamir_challenge,
+            &inst.power_vector_commitment,
             &proof_deserialized,
             &mut verifier_transcript,
         ));
@@ -1005,7 +1072,10 @@ mod tests {
 
         // Verify the shuffle relation holds before creating the proof
         assert!(
-            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<G1Projective, 4>(
+            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<
+                G1Projective,
+                4,
+            >(
                 &keys.public_key,
                 &input_ciphertexts,
                 &output_ciphertexts,
@@ -1097,7 +1167,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Input ciphertexts created:");
         for (i, ct) in input_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_in[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  input_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Define permutation: [1, 2, 3, 0] means π(i) = pi[i] (0-based indexing for array access)
@@ -1117,7 +1187,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Output ciphertexts after permutation:");
         for (i, ct) in output_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_out[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  output_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Verify the permutation is correct
@@ -1293,7 +1363,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Input ciphertexts created:");
         for (i, ct) in input_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_in[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  input_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Define permutation: [1, 2, 3, 0] means π(i) = pi[i]
@@ -1330,7 +1400,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Output ciphertexts after permutation and rerandomization:");
         for (i, ct) in output_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_out[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  output_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Use a fixed challenge x for determinism
@@ -1458,7 +1528,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Input ciphertexts created:");
         for (i, ct) in input_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_in[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  input_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Define permutation: [1, 2, 3, 0] means π(i) = pi[i]
@@ -1499,7 +1569,7 @@ mod tests {
 
         tracing::info!(target: TEST_TARGET, "Output ciphertexts after permutation and rerandomization:");
         for (i, ct) in output_ciphertexts.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  C_out[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
+            tracing::info!(target: TEST_TARGET, "  output_ciphertexts[{}]: c1={:?}, c2={:?}", i, ct.c1, ct.c2);
         }
 
         // Use a fixed challenge x for determinism
@@ -1520,7 +1590,10 @@ mod tests {
         // VERIFY THE SHUFFLE RELATION BEFORE RUNNING THE PROTOCOL
         tracing::info!(target: TEST_TARGET, "========== VERIFYING SHUFFLE RELATION ==========");
         assert!(
-            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<G1Projective, 4>(
+            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<
+                G1Projective,
+                4,
+            >(
                 &keys.public_key,
                 &input_ciphertexts,
                 &output_ciphertexts,
