@@ -6,8 +6,9 @@
 //! - Reencryption protocol for proving re-encryption correctness
 //! - SNARK proof for verifying shuffled permutation
 
-use super::bayer_groth_permutation::bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript};
-use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+use super::bayer_groth_permutation::bg_setup::{
+    new_bayer_groth_transcript_with_poseidon, BayerGrothSetupParameters,
+};
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
     PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionPublicInput,
@@ -19,6 +20,7 @@ use super::rs_shuffle::{
     circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessData,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
+use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
 use ark_crypto_primitives::commitment::CommitmentScheme;
 use ark_crypto_primitives::sponge::Absorb;
@@ -51,7 +53,15 @@ fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
     domain: Vec<u8>,
-) -> RSShuffleWithBayerGrothLinkCircuit<G::BaseField, G, GV, N, LEVELS>
+) -> RSShuffleWithBayerGrothLinkCircuit<
+    G::BaseField,
+    G,
+    GV,
+    ark_crypto_primitives::sponge::poseidon::PoseidonSponge<G::BaseField>,
+    ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+    N,
+    LEVELS,
+>
 where
     G: CurveGroup,
     G::Config: CurveConfig,
@@ -74,7 +84,15 @@ where
         std::array::from_fn(|i| G::BaseField::from(final_sorted[i].idx as u64));
 
     // Create and return the circuit using the new method
-    RSShuffleWithBayerGrothLinkCircuit::<G::BaseField, G, GV, N, LEVELS>::new(
+    RSShuffleWithBayerGrothLinkCircuit::<
+        G::BaseField,
+        G,
+        GV,
+        ark_crypto_primitives::sponge::poseidon::PoseidonSponge<G::BaseField>,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        N,
+        LEVELS,
+    >::new(
         seed,
         bg_setup_params.c_perm,
         bg_setup_params.c_power,
@@ -172,7 +190,11 @@ where
     G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     G::BaseField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<
+            G::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<
@@ -221,27 +243,35 @@ where
     // NOTE: Using fixed seeds to ensure consistency between prover and verifier.
     // In production, these would be shared public parameters.
     let mut deck_rng = StdRng::seed_from_u64(42);
-    let perm_params = PedersenDeck::<G>::setup(&mut deck_rng).map_err(|e| -> Box<dyn std::error::Error> {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to setup DeckHashWindow Pedersen parameters: {:?}", e),
-        ))
-    })?;
-    
+    let perm_params =
+        PedersenDeck::<G>::setup(&mut deck_rng).map_err(|e| -> Box<dyn std::error::Error> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "Failed to setup DeckHashWindow Pedersen parameters: {:?}",
+                    e
+                ),
+            ))
+        })?;
+
     let mut power_rng = StdRng::seed_from_u64(43);
-    let power_params = PedersenReenc::<G>::setup(&mut power_rng).map_err(|e| -> Box<dyn std::error::Error> {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to setup ReencryptionWindow Pedersen parameters: {:?}", e),
-        ))
-    })?;
+    let power_params =
+        PedersenReenc::<G>::setup(&mut power_rng).map_err(|e| -> Box<dyn std::error::Error> {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!(
+                    "Failed to setup ReencryptionWindow Pedersen parameters: {:?}",
+                    e
+                ),
+            ))
+        })?;
 
     // Step 4: Run Bayer-Groth setup to generate setup parameters
     tracing::debug!(target: LOG_TARGET, "Step 4: Running Bayer-Groth setup");
     let blinding_r = <G::Config as CurveConfig>::ScalarField::rand(rng);
     let blinding_s = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
-    let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(&config.domain);
+    let mut bg_transcript = new_bayer_groth_transcript_with_poseidon::<G::BaseField>(&config.domain);
     let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol::<G, N>(
         &perm_params,
         &power_params,
@@ -343,7 +373,11 @@ where
     G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand + Absorb,
     G::BaseField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<
+            G::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<PublicInput = PermutationPublicInput<G, GV, N, LEVELS>>,
@@ -375,7 +409,10 @@ where
         PedersenReenc::<G>::setup(&mut power_rng).map_err(|e| -> Box<dyn std::error::Error> {
             Box::new(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("Failed to setup ReencryptionWindow Pedersen parameters: {:?}", e),
+                format!(
+                    "Failed to setup ReencryptionWindow Pedersen parameters: {:?}",
+                    e
+                ),
             ))
         })?;
 
@@ -444,7 +481,11 @@ where
     G::Config: CurveConfig,
     <G::Config as CurveConfig>::ScalarField: UniformRand + Absorb,
     G::BaseField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<
+            G::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     IP: ProofSystem<
@@ -519,7 +560,13 @@ mod tests {
         E: Pairing,
         G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<G::BaseField>,
         G::Config: CurveConfig<BaseField = E::ScalarField>,
-        GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+        GV: CurveVar<G, G::BaseField>
+            + CurveAbsorbGadget<
+                G::BaseField,
+                ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
+                    G::BaseField,
+                >,
+            >,
         for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
         <G::Config as CurveConfig>::ScalarField: UniformRand,
         G::BaseField: PrimeField + Absorb,
@@ -545,7 +592,7 @@ mod tests {
         // Create Pedersen parameters for test key generation
         use ark_std::rand::SeedableRng;
         use rand::rngs::StdRng;
-        
+
         let mut deck_rng = StdRng::seed_from_u64(42);
         let perm_params = PedersenDeck::<G>::setup(&mut deck_rng)
             .expect("Failed to setup DeckHashWindow Pedersen parameters");
@@ -553,7 +600,7 @@ mod tests {
         let power_params = PedersenReenc::<G>::setup(&mut power_rng)
             .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
-        let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
+        let mut bg_transcript = new_bayer_groth_transcript_with_poseidon::<G::BaseField>(b"test");
         let (bg_setup_params, _) = bg_transcript.run_protocol::<G, N>(
             &perm_params,
             &power_params,

@@ -127,7 +127,6 @@ pub fn apply_permutation<C: CurveGroup, const N: usize>(
     core::array::from_fn(|i| input_deck[permutation[i]].clone())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,7 +157,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_shuffle_and_rerandomize() {
         let mut rng = test_rng();
@@ -168,7 +166,7 @@ mod tests {
         const N: usize = 4;
         let (input_deck, _) =
             generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
-        
+
         // Use a simple test permutation instead of generating one
         let perm = [2, 0, 3, 1]; // A fixed permutation for testing
 

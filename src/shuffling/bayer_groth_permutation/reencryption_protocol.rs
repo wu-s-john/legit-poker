@@ -54,7 +54,7 @@ use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_crypto_primitives::{
     commitment::pedersen::{Commitment as PedersenCommitment, Parameters},
-    sponge::{poseidon::PoseidonSponge, CryptographicSponge},
+    sponge::CryptographicSponge,
 };
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -124,7 +124,7 @@ pub struct ReencryptionProof<G: CurveGroup, const N: usize> {
 /// - `rng`: RNG.
 ///
 /// **Returns:** `ReencryptionProof`.
-pub fn prove<G, const N: usize>(
+pub fn prove<G, RO, const N: usize>(
     public_key: &G,
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
@@ -134,13 +134,15 @@ pub fn prove<G, const N: usize>(
     perm_power_vector: &[G::ScalarField; N],
     power_perm_blinding_factor: G::ScalarField, // We need this blinding factor for commitments
     rerandomization_scalars: &[G::ScalarField; N], // These are the rerandomization scalars that is used to reencrypt ciphertexts
-    transcript: &mut PoseidonSponge<G::BaseField>,
+    transcript: &mut RO,
     rng: &mut impl Rng,
 ) -> ReencryptionProof<G, N>
 where
     G::BaseField: PrimeField,
     G::ScalarField: PrimeField,
-    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    G: CurveGroup,
+    RO: CryptographicSponge,
+    G: CurveAbsorb<G::BaseField, RO>,
 {
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive proof generation");
 
@@ -206,7 +208,7 @@ where
         .c2
         .curve_absorb(transcript);
     // Squeeze challenge in base field for consistency with circuit
-    let c_fq: G::BaseField = transcript.squeeze_field_elements(1)[0];
+    let c_fq: G::BaseField = transcript.squeeze_field_elements::<G::BaseField>(1)[0];
     // Convert to scalar field by interpreting bits as little-endian integer mod r
     let challenge: G::ScalarField = fq_to_fr::<G>(c_fq);
     tracing::debug!(
@@ -255,7 +257,7 @@ where
 /// where C^a = ∏_j C_j^{x^j} is the input ciphertext aggregator.
 ///
 /// **Returns:** true iff both hold.
-pub fn verify<G: CurveGroup, const N: usize>(
+pub fn verify<G: CurveGroup, RO, const N: usize>(
     public_key: &G,
     pedersen_params: &Parameters<G>,
     input_ciphertexts: &[ElGamalCiphertext<G>; N],
@@ -263,12 +265,13 @@ pub fn verify<G: CurveGroup, const N: usize>(
     perm_power_challenge: G::ScalarField,
     power_perm_commitment: &G,
     proof: &ReencryptionProof<G, N>,
-    transcript: &mut PoseidonSponge<G::BaseField>,
+    transcript: &mut RO,
 ) -> bool
 where
     G::BaseField: PrimeField + Absorb,
     G::ScalarField: PrimeField + Absorb,
-    G: CurveAbsorb<G::BaseField>,
+    RO: CryptographicSponge,
+    G: CurveAbsorb<G::BaseField, RO>,
 {
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
 
@@ -357,7 +360,7 @@ where
 
     // Derive challenge
     // Squeeze challenge in base field for consistency with circuit
-    let c_fq: G::BaseField = transcript.squeeze_field_elements(1)[0];
+    let c_fq: G::BaseField = transcript.squeeze_field_elements::<G::BaseField>(1)[0];
     // Convert to scalar field by interpreting bits as little-endian integer mod r
     let challenge: G::ScalarField = fq_to_fr::<G>(c_fq);
 
@@ -481,14 +484,15 @@ where
     result
 }
 
-fn absorb_public_inputs<G: CurveGroup>(
-    transcript: &mut PoseidonSponge<G::BaseField>,
+fn absorb_public_inputs<G: CurveGroup, RO>(
+    transcript: &mut RO,
     c_aggregator: &ElGamalCiphertext<G>,
     c_b: &G,
 ) where
     G::BaseField: PrimeField,
     G::ScalarField: PrimeField,
-    G: CurveAbsorb<G::BaseField>,
+    RO: CryptographicSponge,
+    G: CurveAbsorb<G::BaseField, RO>,
 {
     // Absorb aggregated input ciphertexts (c1 + c2)
     let c_in_aggregate = c_aggregator.c1 + c_aggregator.c2;
@@ -520,6 +524,7 @@ mod tests {
     use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::CommitmentScheme;
+    use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
     use ark_ec::PrimeGroup;
     use ark_ff::{Field, UniformRand, Zero};
 
@@ -682,7 +687,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         // Generate proof with compile-time size checking
-        let proof = prove::<G1Projective, DECK_SIZE>(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, DECK_SIZE>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -699,7 +704,7 @@ mod tests {
         // Verify with fresh transcript
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
-        assert!(verify::<G1Projective, DECK_SIZE>(
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, DECK_SIZE>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -726,7 +731,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
         let mut prover_transcript = PoseidonSponge::new(&config);
 
-        let proof = prove::<G1Projective, N>(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -742,7 +747,7 @@ mod tests {
 
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
-        assert!(verify::<G1Projective, N>(
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -773,7 +778,7 @@ mod tests {
 
         // Use fixed randomness for determinism
         let mut fixed_rng = test_rng();
-        let proof1 = prove::<G1Projective, N>(
+        let proof1 = prove::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -796,7 +801,7 @@ mod tests {
         for _ in 0..100 {
             fixed_rng2.next_u32();
         }
-        let proof2 = prove::<G1Projective, N>(
+        let proof2 = prove::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -815,7 +820,7 @@ mod tests {
         // Verify both proofs
         let mut verifier_transcript1 = PoseidonSponge::new(&config);
 
-        assert!(verify::<G1Projective, N>(
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -828,7 +833,7 @@ mod tests {
 
         let mut verifier_transcript2 = PoseidonSponge::new(&config);
 
-        assert!(verify::<G1Projective, N>(
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -860,7 +865,7 @@ mod tests {
             let config = crate::config::poseidon_config::<Fq>();
             let mut prover_transcript = PoseidonSponge::new(&config);
 
-            let proof = prove::<G1Projective, N>(
+            let proof = prove::<G1Projective, PoseidonSponge<Fq>, N>(
                 &inst.public_key,
                 &inst.pedersen_params,
                 &inst.input_ciphertexts,
@@ -877,7 +882,7 @@ mod tests {
             let mut verifier_transcript = PoseidonSponge::new(&config);
 
             assert!(
-                verify::<G1Projective, N>(
+                verify::<G1Projective, PoseidonSponge<Fq>, N>(
                     &inst.public_key,
                     &inst.pedersen_params,
                     &inst.input_ciphertexts,
@@ -979,7 +984,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
         let mut prover_transcript = PoseidonSponge::new(&config);
 
-        let proof = prove::<G1Projective, N>(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -1005,7 +1010,7 @@ mod tests {
         // Verify deserialized proof
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
-        assert!(verify::<G1Projective, N>(
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, N>(
             &inst.public_key,
             &inst.pedersen_params,
             &inst.input_ciphertexts,
@@ -1089,7 +1094,7 @@ mod tests {
         // Prove
         let config = crate::config::poseidon_config::<Fq>();
         let mut prover_transcript = PoseidonSponge::new(&config);
-        let proof = prove(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1105,7 +1110,7 @@ mod tests {
 
         // Verify
         let mut verifier_transcript = PoseidonSponge::new(&config);
-        let ok = verify(
+        let ok = verify::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1270,7 +1275,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING PROOF GENERATION ==========");
-        let proof = prove(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1295,7 +1300,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING VERIFICATION ==========");
-        let ok = verify(
+        let ok = verify::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1429,7 +1434,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING PROOF GENERATION ==========");
-        let proof = prove(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1460,7 +1465,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING VERIFICATION ==========");
-        let ok = verify(
+        let ok = verify::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1616,7 +1621,7 @@ mod tests {
         let mut prover_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING PROOF GENERATION ==========");
-        let proof = prove(
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,
@@ -1647,7 +1652,7 @@ mod tests {
         let mut verifier_transcript = PoseidonSponge::new(&config);
 
         tracing::info!(target: TEST_TARGET, "========== STARTING VERIFICATION ==========");
-        let ok = verify(
+        let ok = verify::<G1Projective, PoseidonSponge<Fq>, 4>(
             &keys.public_key,
             &pedersen_params,
             &input_ciphertexts,

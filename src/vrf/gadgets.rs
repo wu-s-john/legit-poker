@@ -72,7 +72,7 @@ pub fn generate_nonce_var<C, GG>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
 {
@@ -132,7 +132,7 @@ pub fn generate_challenge_var<C, GG>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
 {
@@ -165,7 +165,7 @@ pub fn beta_from_gamma_var<C, GG>(
 ) -> Result<FpVar<ConstraintF<C>>, SynthesisError>
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     ConstraintF<C>: PrimeField + Absorb,
 {
     let config = poseidon_config::<ConstraintF<C>>();
@@ -219,7 +219,7 @@ pub fn prove_vrf_gadget<C, GG>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     for<'a> &'a GG: ark_r1cs_std::groups::GroupOpsBounds<'a, C, GG>,

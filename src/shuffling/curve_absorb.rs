@@ -6,7 +6,7 @@
 
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar,
-    poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge},
+    poseidon::PoseidonSponge,
     CryptographicSponge,
 };
 use ark_ec::CurveGroup;
@@ -14,23 +14,23 @@ use ark_ff::PrimeField;
 use ark_relations::gr1cs::SynthesisError;
 
 /// Trait for absorbing native elliptic curve points into a sponge
-pub trait CurveAbsorb<F: PrimeField> {
+pub trait CurveAbsorb<F: PrimeField, RO: CryptographicSponge = PoseidonSponge<F>> {
     /// Absorb this curve point into the given sponge
-    fn curve_absorb(&self, sponge: &mut PoseidonSponge<F>);
+    fn curve_absorb(&self, sponge: &mut RO);
 }
 
 /// Trait for absorbing circuit elliptic curve variables into a sponge
-pub trait CurveAbsorbGadget<F: PrimeField> {
+pub trait CurveAbsorbGadget<F: PrimeField, ROVar> {
     /// Absorb this curve variable into the given sponge variable
-    fn curve_absorb_gadget(&self, sponge: &mut PoseidonSpongeVar<F>) -> Result<(), SynthesisError>;
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError>;
 }
 
 // ============================================================================
 // Native implementation for BN254::G1Projective using Fq (base field)
 // ============================================================================
 
-impl CurveAbsorb<ark_bn254::Fq> for ark_bn254::G1Projective {
-    fn curve_absorb(&self, sponge: &mut PoseidonSponge<ark_bn254::Fq>) {
+impl<RO: CryptographicSponge> CurveAbsorb<ark_bn254::Fq, RO> for ark_bn254::G1Projective {
+    fn curve_absorb(&self, sponge: &mut RO) {
         // Convert to affine representation
         let affine = self.into_affine();
         // Use the Absorb trait implementation for G1Affine which works with Fq
@@ -43,8 +43,8 @@ impl CurveAbsorb<ark_bn254::Fq> for ark_bn254::G1Projective {
 // // This is needed for sigma protocols that operate over the scalar field
 // // ============================================================================
 
-// impl CurveAbsorb<ark_bn254::Fr> for ark_bn254::G1Projective {
-//     fn curve_absorb(&self, sponge: &mut PoseidonSponge<ark_bn254::Fr>) {
+// impl<RO: CryptographicSponge> CurveAbsorb<ark_bn254::Fr, RO> for ark_bn254::G1Projective {
+//     fn curve_absorb(&self, sponge: &mut RO) {
 //         // Convert to affine representation
 //         let affine = self.into_affine();
 //         // Use the Absorb trait implementation for G1Affine which works with Fr
@@ -57,8 +57,8 @@ impl CurveAbsorb<ark_bn254::Fq> for ark_bn254::G1Projective {
 // Note: Grumpkin's base field is BN254::Fr (scalar field of BN254)
 // ============================================================================
 
-impl CurveAbsorb<ark_grumpkin::Fq> for ark_grumpkin::Projective {
-    fn curve_absorb(&self, sponge: &mut PoseidonSponge<ark_grumpkin::Fq>) {
+impl<RO: CryptographicSponge> CurveAbsorb<ark_grumpkin::Fq, RO> for ark_grumpkin::Projective {
+    fn curve_absorb(&self, sponge: &mut RO) {
         // Convert to affine representation
         let affine = self.into_affine();
         // Use the Absorb trait implementation for Grumpkin Affine
@@ -72,13 +72,12 @@ impl CurveAbsorb<ark_grumpkin::Fq> for ark_grumpkin::Projective {
 
 use ark_r1cs_std::{fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar};
 
-impl CurveAbsorbGadget<ark_bn254::Fq>
+impl<ROVar> CurveAbsorbGadget<ark_bn254::Fq, ROVar>
     for ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fq, PoseidonSponge<ark_bn254::Fq>>,
 {
-    fn curve_absorb_gadget(
-        &self,
-        sponge: &mut PoseidonSpongeVar<ark_bn254::Fq>,
-    ) -> Result<(), SynthesisError> {
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
         // Convert to affine representation in-circuit
         let affine = self.to_affine()?;
         // Use the existing AbsorbGadget implementation for the affine variable
@@ -93,13 +92,12 @@ impl CurveAbsorbGadget<ark_bn254::Fq>
 // Grumpkin's base field is BN254::Fr
 // ============================================================================
 
-impl CurveAbsorbGadget<ark_bn254::Fr>
+impl<ROVar> CurveAbsorbGadget<ark_bn254::Fr, ROVar>
     for ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fr, PoseidonSponge<ark_bn254::Fr>>,
 {
-    fn curve_absorb_gadget(
-        &self,
-        sponge: &mut PoseidonSpongeVar<ark_bn254::Fr>,
-    ) -> Result<(), SynthesisError> {
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
         // Convert to affine and absorb
         use ark_r1cs_std::convert::ToConstraintFieldGadget;
         let affine = self.to_affine()?;
@@ -114,21 +112,19 @@ impl CurveAbsorbGadget<ark_bn254::Fr>
 // ============================================================================
 
 /// Absorb a native curve point into a sponge using CurveAbsorb trait
-pub fn absorb_curve_point<G, F>(sponge: &mut PoseidonSponge<F>, point: &G)
+pub fn absorb_curve_point<G, F, RO>(sponge: &mut RO, point: &G)
 where
-    G: CurveAbsorb<F>,
+    G: CurveAbsorb<F, RO>,
     F: PrimeField,
+    RO: CryptographicSponge,
 {
     point.curve_absorb(sponge);
 }
 
 /// Absorb a circuit curve variable into a sponge using CurveAbsorbGadget trait
-pub fn absorb_curve_var<GG, F>(
-    sponge: &mut PoseidonSpongeVar<F>,
-    point: &GG,
-) -> Result<(), SynthesisError>
+pub fn absorb_curve_var<GG, F, ROVar>(sponge: &mut ROVar, point: &GG) -> Result<(), SynthesisError>
 where
-    GG: CurveAbsorbGadget<F>,
+    GG: CurveAbsorbGadget<F, ROVar>,
     F: PrimeField,
 {
     point.curve_absorb_gadget(sponge)
@@ -142,6 +138,7 @@ where
 mod tests {
     use super::*;
     use ark_bn254::{Fq, G1Projective};
+    use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
     use ark_ff::UniformRand;
     use ark_r1cs_std::GR1CSVar;
     use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};

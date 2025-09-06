@@ -26,7 +26,6 @@ impl<C: CurveGroup> ChaumPedersenProof<C>
 where
     C::ScalarField: PrimeField + Absorb,
     C::BaseField: PrimeField,
-    C: CurveAbsorb<C::BaseField>,
 {
     /// Generate a non-interactive Chaum-Pedersen proof deterministically
     ///
@@ -38,13 +37,17 @@ where
     /// * `h` - Second base point
     /// * `alpha` - First public value: g^secret
     /// * `beta` - Second public value: h^secret
-    pub fn prove<R: Rng>(
-        sponge: &mut PoseidonSponge<C::BaseField>,
+    pub fn prove<R: Rng, RO>(
+        sponge: &mut RO,
         secret: C::ScalarField,
         g: C,
         h: C,
         rng: &mut R,
-    ) -> Self {
+    ) -> Self
+    where
+        RO: CryptographicSponge,
+        C: CurveAbsorb<C::BaseField, RO>,
+    {
         // Step 1: Generate deterministic witness
         let w = C::ScalarField::rand(rng);
 
@@ -69,14 +72,11 @@ where
     /// * `h` - Second base point
     /// * `alpha` - First public value (should be g^secret)
     /// * `beta` - Second public value (should be h^secret)
-    pub fn verify(
-        &self,
-        sponge: &mut PoseidonSponge<C::BaseField>,
-        g: C,
-        h: C,
-        alpha: C,
-        beta: C,
-    ) -> bool {
+    pub fn verify<RO>(&self, sponge: &mut RO, g: C, h: C, alpha: C, beta: C) -> bool
+    where
+        RO: CryptographicSponge,
+        C: CurveAbsorb<C::BaseField, RO>,
+    {
         tracing::debug!(target: LOG_TARGET, "Starting Chaum-Pedersen verification (native)");
 
         // Recompute the challenge from commitments
@@ -105,14 +105,11 @@ where
     }
 
     /// Compute the Fiat-Shamir challenge from commitments
-    fn compute_challenge(
-        sponge: &mut PoseidonSponge<C::BaseField>,
-        t_g: C,
-        t_h: C,
-    ) -> C::ScalarField
+    fn compute_challenge<RO>(sponge: &mut RO, t_g: C, t_h: C) -> C::ScalarField
     where
         C::BaseField: PrimeField,
-        C: CurveAbsorb<C::BaseField>,
+        RO: CryptographicSponge,
+        C: CurveAbsorb<C::BaseField, RO>,
     {
         tracing::debug!(target: LOG_TARGET, "Computing Fiat-Shamir challenge (native)");
 
@@ -125,9 +122,9 @@ where
         t_h.curve_absorb(sponge);
 
         // Generate challenge in base field
-        let challenge_base: C::BaseField = sponge.squeeze_field_elements(1)[0];
+        let challenge_base: C::BaseField = sponge.squeeze_field_elements::<C::BaseField>(1)[0];
         tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base);
-        
+
         // Convert to scalar field - must match circuit's embed_to_emulated behavior
         // For curves where base field != scalar field, we need proper conversion
         let challenge_bytes = challenge_base.into_bigint().to_bytes_le();
@@ -138,19 +135,20 @@ where
 }
 
 /// Batch verification for multiple Chaum-Pedersen proofs with the same bases
-pub fn batch_verify_chaum_pedersen<C, R>(
+pub fn batch_verify_chaum_pedersen<C, RO, R>(
     proofs: &[ChaumPedersenProof<C>],
     g: C,
     h: C,
     alphas: &[C],
     betas: &[C],
     rng: &mut R,
+    mut sponge_factory: impl FnMut() -> RO,
 ) -> bool
 where
-    C: CurveGroup,
+    C: CurveGroup + CurveAbsorb<C::BaseField, RO>,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
-    C: CurveAbsorb<C::BaseField>,
+    RO: CryptographicSponge,
     R: Rng,
 {
     if proofs.len() != alphas.len() || proofs.len() != betas.len() || proofs.is_empty() {
@@ -171,8 +169,7 @@ where
 
     for i in 0..proofs.len() {
         let rho = rhos[i];
-        let config = poseidon_config::<C::BaseField>();
-        let mut sponge = PoseidonSponge::<C::BaseField>::new(&config);
+        let mut sponge = sponge_factory();
         let challenge =
             ChaumPedersenProof::<C>::compute_challenge(&mut sponge, proofs[i].t_g, proofs[i].t_h);
 
@@ -193,6 +190,27 @@ where
     let rhs2 = acc_th + acc_beta;
 
     lhs1 == rhs1 && lhs2 == rhs2
+}
+
+/// Convenience function for batch verification using PoseidonSponge
+pub fn batch_verify_chaum_pedersen_with_poseidon<C, R>(
+    proofs: &[ChaumPedersenProof<C>],
+    g: C,
+    h: C,
+    alphas: &[C],
+    betas: &[C],
+    rng: &mut R,
+) -> bool
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField, PoseidonSponge<C::BaseField>>,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    R: Rng,
+{
+    let config = poseidon_config::<C::BaseField>();
+    batch_verify_chaum_pedersen(proofs, g, h, alphas, betas, rng, || {
+        PoseidonSponge::<C::BaseField>::new(&config)
+    })
 }
 
 #[cfg(test)]
@@ -261,14 +279,14 @@ mod tests {
 
         // Batch verification should succeed
         assert!(
-            batch_verify_chaum_pedersen(&proofs, g, h, &alphas, &betas, &mut rng),
+            batch_verify_chaum_pedersen_with_poseidon(&proofs, g, h, &alphas, &betas, &mut rng),
             "Batch verification of valid proofs should succeed"
         );
 
         // Tamper with one proof
         alphas[2] = g * ScalarField::rand(&mut rng);
         assert!(
-            !batch_verify_chaum_pedersen(&proofs, g, h, &alphas, &betas, &mut rng),
+            !batch_verify_chaum_pedersen_with_poseidon(&proofs, g, h, &alphas, &betas, &mut rng),
             "Batch verification with tampered proof should fail"
         );
     }

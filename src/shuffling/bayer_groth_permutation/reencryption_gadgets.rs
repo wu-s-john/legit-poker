@@ -25,9 +25,7 @@ use ark_std::{borrow::Borrow, vec::Vec};
 use tracing::instrument;
 
 use super::reencryption_protocol::ReencryptionProof;
-use ark_crypto_primitives::sponge::{
-    constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
-};
+use ark_crypto_primitives::sponge::{constraints::CryptographicSpongeVar, CryptographicSponge};
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::reencryption_gadgets";
 
@@ -133,15 +131,17 @@ where
 
 /// Absorb public inputs into the transcript (in-circuit version)
 /// Mirrors the native absorb_public_inputs function
-fn absorb_public_inputs_gadget<G, GG>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
+fn absorb_public_inputs_gadget<G, GG, S, ROVar>(
+    transcript: &mut ROVar,
     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
     b_vector_commitment: &GG,
 ) -> Result<(), SynthesisError>
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    S: CryptographicSponge,
+    ROVar: CryptographicSpongeVar<G::BaseField, S>,
+    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField, ROVar>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
     // Absorb aggregated input ciphertexts (matching native absorb_public_inputs)
@@ -169,8 +169,8 @@ where
 /// Compute the Fiat-Shamir challenge in-circuit
 /// This mirrors the native absorption strategy for efficiency
 #[instrument(level = "trace", skip_all, fields(N = N))]
-fn compute_challenge_gadget<G, GG, FV, const N: usize>(
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
+fn compute_challenge_gadget<G, GG, FV, S, ROVar, const N: usize>(
+    transcript: &mut ROVar,
     input_ciphertext_aggregator: &ElGamalCiphertextVar<G, GG>,
     permutation_power_vector_commitment: &GG,
     proof: &ReencryptionProofVar<G, GG, FV, N>,
@@ -178,12 +178,14 @@ fn compute_challenge_gadget<G, GG, FV, const N: usize>(
 where
     G: CurveGroup,
     G::BaseField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    S: CryptographicSponge,
+    ROVar: CryptographicSpongeVar<G::BaseField, S>,
+    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField, ROVar>,
     FV: FieldVar<G::ScalarField, G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
 {
     // Absorb public inputs (matching native verify)
-    absorb_public_inputs_gadget(
+    absorb_public_inputs_gadget::<G, GG, S, ROVar>(
         transcript,
         input_ciphertext_aggregator,
         permutation_power_vector_commitment,
@@ -237,9 +239,9 @@ where
 ///
 /// The challenge is computed using the provided transcript for efficiency.
 #[instrument(target = LOG_TARGET, level = "trace", skip_all)]
-pub fn verify_gadget<G, GG, FV, const N: usize>(
+pub fn verify_gadget<G, GG, FV, S, ROVar, const N: usize>(
     _cs: ConstraintSystemRef<G::BaseField>,
-    transcript: &mut PoseidonSpongeVar<G::BaseField>,
+    transcript: &mut ROVar,
     public_key: &GG,                  // ElGamal PK = x·G
     pedersen_blinding_base: &GG,      // H for Pedersen commitment
     pedersen_message_bases: &[GG; N], // [G_1, ..., G_N] for Pedersen commitment
@@ -253,7 +255,9 @@ where
     G: CurveGroup,
     G::BaseField: PrimeField,
     G::ScalarField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField> + Clone,
+    S: CryptographicSponge,
+    ROVar: CryptographicSpongeVar<G::BaseField, S>,
+    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField, ROVar> + Clone,
     FV: FieldVar<G::ScalarField, G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
     for<'a> &'a FV: FieldOpsBounds<'a, G::ScalarField, FV>,
@@ -314,7 +318,7 @@ where
 
     // Compute the Fiat-Shamir challenge using the provided transcript
     // Updated to match native: only uses input aggregator, not output
-    let challenge_c = compute_challenge_gadget::<G, GG, FV, N>(
+    let challenge_c = compute_challenge_gadget::<G, GG, FV, S, ROVar, N>(
         transcript,
         &input_ciphertext_aggregator,
         power_perm_commitment,
@@ -416,7 +420,7 @@ where
     G: CurveGroup,
     G::BaseField: PrimeField,
     G::ScalarField: PrimeField,
-    GG: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GG: CurveVar<G, G::BaseField>,
     FV: FieldVar<G::ScalarField, G::BaseField>,
     for<'a> &'a GG: GroupOpsBounds<'a, G, GG>,
     for<'a> GG: std::ops::Mul<&'a FV, Output = GG>,
@@ -521,7 +525,7 @@ mod tests {
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
     use ark_crypto_primitives::commitment::CommitmentScheme;
-    use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
+    use ark_crypto_primitives::sponge::poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge};
     use ark_crypto_primitives::sponge::CryptographicSponge;
     use ark_ec::PrimeGroup;
     use ark_r1cs_std::fields::emulated_fp::EmulatedFpVar;
@@ -735,7 +739,14 @@ mod tests {
         let mut transcript = PoseidonSpongeVar::new(cs.clone(), &config);
 
         // Verify in-circuit
-        let ok = verify_gadget::<G1Projective, G1Var, EmulatedFpVar<Fr, Fq>, N>(
+        let ok = verify_gadget::<
+            G1Projective,
+            G1Var,
+            EmulatedFpVar<Fr, Fq>,
+            PoseidonSponge<Fq>,
+            PoseidonSpongeVar<Fq>,
+            N,
+        >(
             cs.clone(),
             &mut transcript,
             &pk_var,

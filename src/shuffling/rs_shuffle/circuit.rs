@@ -5,7 +5,9 @@ use super::rs_shuffle_gadget::{
     rs_shuffle_indices, rs_shuffle_with_bayer_groth_linking_proof, rs_shuffle_with_reencryption,
 };
 use super::{LEVELS, N};
-use crate::bayer_groth_permutation::bg_setup_gadget::BayerGrothTranscriptGadget;
+use crate::bayer_groth_permutation::bg_setup_gadget::{
+    new_bayer_groth_transcript_gadget_with_poseidon,
+};
 use crate::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::rs_shuffle::{SortedRowVar, UnsortedRowVar};
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
@@ -139,11 +141,20 @@ where
 /// 1. RS shuffle correctness (indices are properly shuffled)
 /// 2. Bayer-Groth permutation equality proof
 /// 3. Linking between the shuffle and permutation proof
-pub struct RSShuffleWithBayerGrothLinkCircuit<F, C, CV, const N: usize, const LEVELS: usize>
-where
+pub struct RSShuffleWithBayerGrothLinkCircuit<
+    F,
+    C,
+    CV,
+    RO,
+    ROVar,
+    const N: usize,
+    const LEVELS: usize,
+> where
     F: PrimeField,
     C: CurveGroup<BaseField = F>,
     CV: CurveVar<C, F>,
+    RO: ark_crypto_primitives::sponge::CryptographicSponge,
+    ROVar: ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar<F, RO>,
 {
     // ============ Public Inputs ============
     /// RS shuffle challenge alpha
@@ -171,15 +182,17 @@ where
     /// Domain for transcript (Fiat-Shamir)
     pub domain: Vec<u8>,
 
-    _phantom: PhantomData<CV>,
+    _phantom: PhantomData<(CV, RO, ROVar)>,
 }
 
-impl<F, C, CV, const N: usize, const LEVELS: usize>
-    RSShuffleWithBayerGrothLinkCircuit<F, C, CV, N, LEVELS>
+impl<F, C, CV, RO, ROVar, const N: usize, const LEVELS: usize>
+    RSShuffleWithBayerGrothLinkCircuit<F, C, CV, RO, ROVar, N, LEVELS>
 where
     F: PrimeField,
     C: CurveGroup<BaseField = F>,
     CV: CurveVar<C, F>,
+    RO: ark_crypto_primitives::sponge::CryptographicSponge,
+    ROVar: ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar<F, RO>,
 {
     /// Create a new RSShuffleWithBayerGrothLinkCircuit instance
     pub fn new(
@@ -390,13 +403,20 @@ where
     }
 }
 
-impl<C, CV, const N: usize, const LEVELS: usize> ConstraintSynthesizer<C::BaseField>
-    for RSShuffleWithBayerGrothLinkCircuit<C::BaseField, C, CV, N, LEVELS>
+impl<C, CV, RO, ROVar, const N: usize, const LEVELS: usize> ConstraintSynthesizer<C::BaseField>
+    for RSShuffleWithBayerGrothLinkCircuit<C::BaseField, C, CV, RO, ROVar, N, LEVELS>
 where
     C: CurveGroup,
     C::BaseField: PrimeField + Absorb,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField> + Clone,
+    RO: ark_crypto_primitives::sponge::CryptographicSponge,
+    ROVar: ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar<C::BaseField, RO>,
+    CV: CurveVar<C, C::BaseField> 
+        + CurveAbsorbGadget<
+            C::BaseField, 
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>
+        > 
+        + Clone,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     fn generate_constraints(
@@ -487,26 +507,40 @@ where
                 // ============ Step 4: Create Transcript Gadget ============
                 tracing::debug!(target: LOG_TARGET, "Creating transcript gadget");
 
-                let mut transcript_gadget =
-                    BayerGrothTranscriptGadget::new(cs.clone(), &self.domain)?;
+                // Create transcript gadget using the new_with_poseidon helper
+                // Since new_with_poseidon returns a specific type with PoseidonSponge/PoseidonSpongeVar,
+                // we need to ensure RO and ROVar match those types
+                let mut transcript_gadget = new_bayer_groth_transcript_gadget_with_poseidon::<C::BaseField>(
+                    cs.clone(),
+                    &self.domain,
+                )?;
 
                 // ============ Step 5: Run Combined Protocol ============
                 tracing::debug!(target: LOG_TARGET, "Running RS shuffle + Bayer-Groth protocol");
 
-                let (_proof_point, _bg_params) =
-                    rs_shuffle_with_bayer_groth_linking_proof::<C::BaseField, C, CV, N, LEVELS>(
-                        cs.clone(),
-                        &alpha_var,
-                        &c_perm_var,
-                        &c_power_var,
-                        &generator_var,
-                        &permutation_vars,
-                        &witness_var,
-                        &indices_init_vars,
-                        &indices_after_shuffle_vars,
-                        &blinding_factors_var,
-                        &mut transcript_gadget,
-                    )?;
+                let (_proof_point, _bg_params) = rs_shuffle_with_bayer_groth_linking_proof::<
+                    C::BaseField,
+                    C,
+                    CV,
+                    ark_crypto_primitives::sponge::poseidon::PoseidonSponge<C::BaseField>,
+                    ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
+                        C::BaseField,
+                    >,
+                    N,
+                    LEVELS,
+                >(
+                    cs.clone(),
+                    &alpha_var,
+                    &c_perm_var,
+                    &c_power_var,
+                    &generator_var,
+                    &permutation_vars,
+                    &witness_var,
+                    &indices_init_vars,
+                    &indices_after_shuffle_vars,
+                    &blinding_factors_var,
+                    &mut transcript_gadget,
+                )?;
 
                 // The proof_point and bg_params are now constrained by the gadget
                 // No additional constraints needed as the gadget handles all verification

@@ -106,7 +106,8 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField>,
+    CV: CurveVar<C, C::BaseField>
+        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
 {
     tracing::debug!(target: LOG_TARGET, "Computing Fiat-Shamir challenge in-circuit");
 
@@ -138,7 +139,8 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField>,
+    CV: CurveVar<C, C::BaseField>
+        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     /// Verify a Chaum-Pedersen proof in-circuit
@@ -201,6 +203,23 @@ where
         tracing::debug!(target: LOG_TARGET, "Final verification result: {:?}", result.value().ok());
 
         Ok(result)
+    }
+
+    /// Verify a Chaum-Pedersen proof in-circuit with PoseidonSponge
+    /// This is a convenience function for backward compatibility and tests
+    #[instrument(target = LOG_TARGET, level = "debug", skip_all)]
+    pub fn verify_gadget_with_poseidon(
+        &self,
+        cs: ConstraintSystemRef<C::BaseField>,
+        g: &CV,
+        h: &CV,
+        alpha: &CV,
+        beta: &CV,
+    ) -> Result<Boolean<C::BaseField>, SynthesisError>
+    where
+        CV: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
+    {
+        self.verify_gadget(cs, g, h, alpha, beta)
     }
 }
 
@@ -288,9 +307,14 @@ mod tests {
             AllocationMode::Witness,
         )?;
 
-        // Verify in circuit
-        let circuit_valid =
-            proof_var.verify_gadget(cs.clone(), &g_var, &h_var, &alpha_var, &beta_var)?;
+        // Verify in circuit using the convenience function with PoseidonSponge
+        let circuit_valid = proof_var.verify_gadget_with_poseidon(
+            cs.clone(),
+            &g_var,
+            &h_var,
+            &alpha_var,
+            &beta_var,
+        )?;
 
         // Enforce that verification passed
         circuit_valid.enforce_equal(&Boolean::constant(true))?;

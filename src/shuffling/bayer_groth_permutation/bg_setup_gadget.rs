@@ -3,6 +3,7 @@
 use crate::{shuffling::curve_absorb::CurveAbsorbGadget, track_constraints};
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
+    poseidon::PoseidonSponge, CryptographicSponge,
 };
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField};
@@ -36,16 +37,24 @@ pub struct BayerGrothSetupParametersGadget<ScalarField: PrimeField, F: PrimeFiel
 }
 
 /// SNARK gadget version of Bayer-Groth transcript for in-circuit Fiat-Shamir
-pub struct BayerGrothTranscriptGadget<F: PrimeField> {
-    sponge: PoseidonSpongeVar<F>,
+pub struct BayerGrothTranscriptGadget<
+    F: PrimeField,
+    S: CryptographicSponge = PoseidonSponge<F>,
+    ROVar: CryptographicSpongeVar<F, S> = PoseidonSpongeVar<F>,
+> {
+    sponge: ROVar,
+    _phantom: ark_std::marker::PhantomData<(F, S)>,
 }
 
-impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
+impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
+    BayerGrothTranscriptGadget<F, S, ROVar>
+{
     /// Create a new transcript gadget with domain separation
-    pub fn new(cs: ConstraintSystemRef<F>, domain: &[u8]) -> Result<Self, SynthesisError> {
-        let config = crate::config::poseidon_config::<F>();
-        let mut sponge = PoseidonSpongeVar::new(cs.clone(), &config);
-
+    pub fn new(
+        cs: ConstraintSystemRef<F>,
+        domain: &[u8],
+        mut sponge: ROVar,
+    ) -> Result<Self, SynthesisError> {
         // Domain separation - convert domain bytes to field elements for absorption
         let domain_bytes = domain
             .iter()
@@ -53,13 +62,16 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
             .collect::<Result<Vec<_>, _>>()?;
         sponge.absorb(&domain_bytes)?;
 
-        Ok(Self { sponge })
+        Ok(Self {
+            sponge,
+            _phantom: ark_std::marker::PhantomData,
+        })
     }
 
     /// Absorb the commitment to the permutation vector using CurveAbsorbGadget
     fn absorb_perm_vector_commitment<CG>(&mut self, c_perm: &CG) -> Result<(), SynthesisError>
     where
-        CG: CurveAbsorbGadget<F>,
+        CG: CurveAbsorbGadget<F, ROVar>,
     {
         c_perm.curve_absorb_gadget(&mut self.sponge)?;
 
@@ -96,7 +108,7 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
         c_power: &CG,
     ) -> Result<(), SynthesisError>
     where
-        CG: CurveAbsorbGadget<F>,
+        CG: CurveAbsorbGadget<F, ROVar>,
     {
         c_power.curve_absorb_gadget(&mut self.sponge)?;
 
@@ -153,7 +165,7 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
     where
         C: CurveGroup,
         C::BaseField: PrimeField,
-        CG: CurveAbsorbGadget<F> + Clone + ToBitsGadget<F> + GR1CSVar<F, Value = C>,
+        CG: CurveAbsorbGadget<F, ROVar> + Clone + ToBitsGadget<F> + GR1CSVar<F, Value = C>,
         for<'a> &'a CG: GroupOpsBounds<'a, C, CG>,
     {
         // Log the commitment values if available
@@ -231,4 +243,20 @@ impl<F: PrimeField> BayerGrothTranscriptGadget<F> {
             })
         })
     }
+}
+
+/// Create a new transcript gadget with PoseidonSponge for backward compatibility
+pub fn new_bayer_groth_transcript_gadget_with_poseidon<F>(
+    cs: ConstraintSystemRef<F>,
+    domain: &[u8],
+) -> Result<
+    BayerGrothTranscriptGadget<F, PoseidonSponge<F>, PoseidonSpongeVar<F>>,
+    SynthesisError,
+>
+where
+    F: PrimeField,
+{
+    let config = crate::config::poseidon_config::<F>();
+    let sponge = PoseidonSpongeVar::new(cs.clone(), &config);
+    BayerGrothTranscriptGadget::new(cs, domain, sponge)
 }

@@ -29,11 +29,7 @@ impl BettingRound {
     }
 
     /// Process a player's action
-    pub fn process_action(
-        &mut self,
-        player_id: &str,
-        action: PlayerAction,
-    ) -> Result<(), String> {
+    pub fn process_action(&mut self, player_id: &str, action: PlayerAction) -> Result<(), String> {
         if !self.active_players.contains(&player_id.to_string()) {
             return Err("Player not active in this round".to_string());
         }
@@ -50,7 +46,10 @@ impl BettingRound {
             }
             PlayerAction::Raise(amount) => {
                 if amount < self.min_bet {
-                    return Err(format!("Raise amount {} is less than minimum bet {}", amount, self.min_bet));
+                    return Err(format!(
+                        "Raise amount {} is less than minimum bet {}",
+                        amount, self.min_bet
+                    ));
                 }
                 self.current_bets.insert(player_id.to_string(), amount);
                 self.pot += amount;
@@ -152,7 +151,7 @@ mod tests {
             "player2".to_string(),
             "player3".to_string(),
         ];
-        
+
         let mut round = BettingRound::new(10, players);
 
         // Player 1 calls
@@ -160,7 +159,9 @@ mod tests {
         assert_eq!(round.pot, 10);
 
         // Player 2 raises
-        round.process_action("player2", PlayerAction::Raise(20)).unwrap();
+        round
+            .process_action("player2", PlayerAction::Raise(20))
+            .unwrap();
         assert_eq!(round.pot, 30);
         assert_eq!(round.min_bet, 20);
 
@@ -173,10 +174,10 @@ mod tests {
     #[test]
     fn test_pot_calculation() {
         let mut round = BettingRound::new(10, vec!["p1".to_string(), "p2".to_string()]);
-        
+
         round.process_action("p1", PlayerAction::Call).unwrap();
         round.process_action("p2", PlayerAction::Call).unwrap();
-        
+
         let pots = round.calculate_pots();
         assert_eq!(pots.len(), 1);
         assert_eq!(pots[0].amount, 20);

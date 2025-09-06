@@ -30,27 +30,28 @@ pub struct BayerGrothSetupParameters<F: PrimeField, G: CurveGroup, const N: usiz
 }
 
 /// Transcript for Bayer-Groth permutation proof using Fiat-Shamir
-pub struct BayerGrothTranscript<F: PrimeField> {
-    sponge: PoseidonSponge<F>,
+pub struct BayerGrothTranscript<F: PrimeField, RO: CryptographicSponge> {
+    sponge: RO,
+    _phantom: ark_std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField> BayerGrothTranscript<F> {
+impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
     /// Create a new transcript with domain separation
-    pub fn new(domain: &[u8]) -> Self {
-        let config = crate::config::poseidon_config::<F>();
-        let mut sponge = PoseidonSponge::new(&config);
-
+    pub fn new(domain: &[u8], mut sponge: RO) -> Self {
         // Domain separation
         sponge.absorb(&domain);
 
-        Self { sponge }
+        Self {
+            sponge,
+            _phantom: ark_std::marker::PhantomData,
+        }
     }
 
     /// Absorb the commitment to the permutation vector using CurveAbsorb trait for consistency
     /// This ensures identical absorption with the circuit implementation
     fn absorb_perm_vector_commitment<G>(&mut self, c_perm: &G)
     where
-        G: CurveAbsorb<F>,
+        G: CurveAbsorb<F, RO>,
     {
         c_perm.curve_absorb(&mut self.sponge);
 
@@ -61,7 +62,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// Returns perm_power_challenge which is used to compute the power vector
     fn derive_perm_power_challenge(&mut self) -> F {
         // Squeeze one field element
-        let elements = self.sponge.squeeze_field_elements(1);
+        let elements = self.sponge.squeeze_field_elements::<F>(1);
 
         let mut perm_power_challenge: F = elements[0];
 
@@ -79,7 +80,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// This ensures identical absorption with the circuit implementation
     fn absorb_perm_power_vector_commitment<G>(&mut self, c_power: &G)
     where
-        G: CurveAbsorb<F>,
+        G: CurveAbsorb<F, RO>,
     {
         c_power.curve_absorb(&mut self.sponge);
 
@@ -89,7 +90,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     /// Derive final challenges for permutation equality check
     /// Returns (mixing_challenge_y, offset_challenge_z)
     fn derive_perm_challenges_y_z(&mut self) -> (F, F) {
-        let elements = self.sponge.squeeze_field_elements(2);
+        let elements = self.sponge.squeeze_field_elements::<F>(2);
         let mixing_challenge_y = elements[0];
         let offset_challenge_z = elements[1];
 
@@ -139,7 +140,7 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
         [G::ScalarField; N],
     )
     where
-        G: CurveGroup<BaseField = F> + CurveAbsorb<F>,
+        G: CurveGroup<BaseField = F> + CurveAbsorb<F, RO>,
         G::ScalarField: PrimeField,
         F: PrimeField,
     {
@@ -153,11 +154,10 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
 
         // Step 1: Compute Pedersen commitment to permutation vector using DeckHashWindow parameters
         // This uses a linearly homomorphic commitment over scalar field elements
-        let c_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
-            perm_params,
-            &perm_vector,
-            prover_blinding_r,
-        );
+        let c_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<
+            G,
+            N,
+        >(perm_params, &perm_vector, prover_blinding_r);
 
         // Step 2: Absorb commitment to permutation vector
         self.absorb_perm_vector_commitment(&c_perm);
@@ -177,11 +177,12 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
 
         // Step 5: Compute Pedersen commitment to power vector using ReencryptionWindow parameters
         // The power vector contains scalar field elements x^π(i), so we use the linearly homomorphic commitment
-        let c_power_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
-            power_params,
-            &perm_power_vector,
-            prover_blinding_s,
-        );
+        let c_power_perm =
+            crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
+                power_params,
+                &perm_power_vector,
+                prover_blinding_s,
+            );
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);
@@ -211,12 +212,23 @@ impl<F: PrimeField> BayerGrothTranscript<F> {
     }
 }
 
+/// Create a new transcript with PoseidonSponge for backward compatibility
+pub fn new_bayer_groth_transcript_with_poseidon<F>(
+    domain: &[u8],
+) -> BayerGrothTranscript<F, PoseidonSponge<F>>
+where
+    F: PrimeField,
+{
+    let config = crate::config::poseidon_config::<F>();
+    let sponge = PoseidonSponge::new(&config);
+    BayerGrothTranscript::new(domain, sponge)
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::*;
     use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
-    use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::BayerGrothTranscriptGadget;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::{
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
@@ -248,7 +260,7 @@ mod tests {
 
         // Run protocol twice with same inputs
         // Transcript operates over base field (Fq)
-        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript1 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
 
         let _generator = G1Projective::generator();
 
@@ -260,7 +272,7 @@ mod tests {
             prover_blinding_s,
         );
 
-        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript2 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
         let (output2, perm_power_vector2) = transcript2.run_protocol::<G1Projective, 5>(
             &perm_params,
             &power_params,
@@ -304,7 +316,7 @@ mod tests {
                 .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
         // Run with different permutations
-        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript1 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
         let (output1, _) = transcript1.run_protocol::<G1Projective, 3>(
             &perm_params,
             &power_params,
@@ -313,7 +325,7 @@ mod tests {
             prover_blinding_s,
         );
 
-        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript2 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
         let (output2, _) = transcript2.run_protocol::<G1Projective, 3>(
             &perm_params,
             &power_params,
@@ -331,7 +343,11 @@ mod tests {
         let perm = [3, 1, 4, 2, 5];
         let perm_power_challenge = Fr::from(2u64);
 
-        let power_vector = crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector(&perm, perm_power_challenge);
+        let power_vector =
+            crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector(
+                &perm,
+                perm_power_challenge,
+            );
 
         // Verify power_vector[i] = x^π(i)
         assert_eq!(power_vector[0], Fr::from(8u64)); // 2^3 = 8
@@ -344,7 +360,7 @@ mod tests {
     #[test]
     fn test_perm_power_challenge_nonzero() {
         // Test that perm_power_challenge is always non-zero
-        let mut transcript = BayerGrothTranscript::<Fq>::new(b"test");
+        let mut transcript = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test");
 
         // Even if the sponge would produce zero, we should get one
         for _ in 0..10 {
@@ -391,7 +407,7 @@ mod tests {
         // Run with first set of blinding factors
         let blinding_r1 = Fr::rand(&mut rng);
         let blinding_s1 = Fr::rand(&mut rng);
-        let mut transcript1 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript1 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
         let (output1, _) = transcript1.run_protocol::<G1Projective, 5>(
             &perm_params,
             &power_params,
@@ -403,7 +419,7 @@ mod tests {
         // Run with different blinding factors but same permutation
         let blinding_r2 = Fr::rand(&mut rng);
         let blinding_s2 = Fr::rand(&mut rng);
-        let mut transcript2 = BayerGrothTranscript::<Fq>::new(b"test-domain");
+        let mut transcript2 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
         let (output2, _) = transcript2.run_protocol::<G1Projective, 5>(
             &perm_params,
             &power_params,
@@ -451,8 +467,10 @@ mod tests {
         let c_power_var = G1Var::new_variable(cs.clone(), || Ok(c_power), AllocationMode::Witness)?;
 
         // Create gadget transcript and run protocol
-        let mut gadget_transcript =
-            BayerGrothTranscriptGadget::<ark_bn254::Fq>::new(cs.clone(), b"test-domain")?;
+        let mut gadget_transcript = crate::shuffling::bayer_groth_permutation::bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon::<ark_bn254::Fq>(
+            cs.clone(),
+            b"test-domain",
+        )?;
         let gadget_output = gadget_transcript.run_protocol::<G1Projective, G1Var>(
             cs.clone(),
             &c_perm_var,
@@ -513,7 +531,7 @@ mod tests {
         let c_perm = G1Projective::rand(&mut rng);
 
         // Initialize Fiat-Shamir transcript (operates over base field)
-        let mut transcript = BayerGrothTranscript::<Fq>::new(b"BayerGroth-Test");
+        let mut transcript = new_bayer_groth_transcript_with_poseidon::<Fq>(b"BayerGroth-Test");
 
         // Step 1: Absorb commitment to permutation vector and derive power challenge
         transcript.absorb_perm_vector_commitment(&c_perm);
@@ -529,7 +547,10 @@ mod tests {
             .try_into()
             .expect("Permutation should have exactly 52 elements");
         let perm_power_vector_vals =
-            crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector::<Fr, N>(&perm, perm_power_challenge_val);
+            crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector::<Fr, N>(
+                &perm,
+                perm_power_challenge_val,
+            );
         let perm_power_vector_vals_vec: Vec<Fr> = perm_power_vector_vals.to_vec();
 
         // Simulate external commitment to power vector

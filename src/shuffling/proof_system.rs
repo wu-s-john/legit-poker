@@ -20,7 +20,7 @@
 //! ```
 
 use super::bayer_groth_permutation::{
-    bg_setup::{BayerGrothSetupParameters, BayerGrothTranscript},
+    bg_setup::{new_bayer_groth_transcript_with_poseidon, BayerGrothSetupParameters},
     reencryption_protocol::{prove, verify},
 };
 
@@ -244,7 +244,10 @@ where
         + CurveAbsorb<E::ScalarField>
         + ToConstraintField<E::ScalarField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<
+        E::ScalarField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
+    >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     E::ScalarField: PrimeField + Absorb,
@@ -276,7 +279,15 @@ where
             std::array::from_fn(|i| E::ScalarField::from(final_sorted[i].idx as u64));
 
         // Create the circuit
-        let circuit = RSShuffleWithBayerGrothLinkCircuit::<E::ScalarField, G, GV, N, LEVELS>::new(
+        let circuit = RSShuffleWithBayerGrothLinkCircuit::<
+            E::ScalarField,
+            G,
+            GV,
+            ark_crypto_primitives::sponge::poseidon::PoseidonSponge<E::ScalarField>,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
+            N,
+            LEVELS,
+        >::new(
             public_input.seed,
             public_input.bg_setup_params.c_perm,
             public_input.bg_setup_params.c_power,
@@ -328,7 +339,10 @@ where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
     G::BaseField: PrimeField,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<E::ScalarField>,
+    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<
+        E::ScalarField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
+    >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, E::ScalarField>,
 {
     /// Verify a proof using the raw (unprepared) verifying key
@@ -569,7 +583,15 @@ fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
     domain: Vec<u8>,
-) -> RSShuffleWithBayerGrothLinkCircuit<G::BaseField, G, GV, N, LEVELS>
+) -> RSShuffleWithBayerGrothLinkCircuit<
+    G::BaseField,
+    G,
+    GV,
+    ark_crypto_primitives::sponge::poseidon::PoseidonSponge<G::BaseField>,
+    ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+    N,
+    LEVELS,
+>
 where
     G: CurveGroup,
     G::Config: CurveConfig,
@@ -592,7 +614,15 @@ where
         std::array::from_fn(|i| G::BaseField::from(final_sorted[i].idx as u64));
 
     // Create and return the circuit using the new method
-    RSShuffleWithBayerGrothLinkCircuit::<G::BaseField, G, GV, N, LEVELS>::new(
+    RSShuffleWithBayerGrothLinkCircuit::<
+        G::BaseField,
+        G,
+        GV,
+        ark_crypto_primitives::sponge::poseidon::PoseidonSponge<G::BaseField>,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        N,
+        LEVELS,
+    >::new(
         seed,
         bg_setup_params.c_perm,
         bg_setup_params.c_power,
@@ -615,7 +645,10 @@ where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<G::BaseField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<
+        G::BaseField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+    >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     G::BaseField: PrimeField + Absorb,
@@ -650,7 +683,7 @@ where
     let power_params = PedersenCommitment::<G, ReencryptionWindow>::setup(&mut power_rng)
         .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
-    let mut bg_transcript = BayerGrothTranscript::<G::BaseField>::new(b"test");
+    let mut bg_transcript = new_bayer_groth_transcript_with_poseidon::<G::BaseField>(b"test");
     let (bg_setup_params, _) =
         bg_transcript.run_protocol::<G, N>(&perm_params, &power_params, &dummy_permutation, blinding_r, blinding_s);
 

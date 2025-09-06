@@ -276,7 +276,10 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField>,
+    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<
+        C::BaseField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
+    >,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     // Compute h = aggregated_public_key + player_public_key
@@ -317,7 +320,10 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<C::BaseField>,
+    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<
+        C::BaseField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
+    >,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     tracing::debug!(target: LOG_TARGET, "Combining {} blinding contributions in-circuit", blinding_contributions.len());

@@ -3,7 +3,10 @@
 //! This module contains all the shared functionality used by both
 //! bayer_groth_demo.rs and game_demo.rs to avoid code duplication.
 
-use ark_crypto_primitives::sponge::Absorb;
+use ark_crypto_primitives::sponge::{
+    poseidon::constraints::PoseidonSpongeVar,
+    Absorb,
+};
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
@@ -90,7 +93,10 @@ pub fn setup_game_config<G, GV, const N: usize, const LEVELS: usize>(
     shuffler_public_keys: &[G],
     domain: Vec<u8>,
 ) -> ShufflingConfig<
-    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>,
+    DummyProofSystem<
+        PermutationPublicInput<G, GV, N, LEVELS>,
+        PermutationWitness<G, GV, N, LEVELS>,
+    >,
     ReencryptionProofSystem<G, N>,
     G,
 >
@@ -151,7 +157,7 @@ where
     G::Config: CurveConfig,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     G::BaseField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField>,
+    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     IP: ProofSystem<
         PublicInput = PermutationPublicInput<G, GV, N, LEVELS>,

@@ -566,7 +566,15 @@ where
 /// # Returns
 /// - `Ok((CV, BayerGrothSetupParametersGadget<F, CV>))`: A tuple containing the complete proof point (including randomness factor) and the Bayer-Groth parameters
 /// - `Err(SynthesisError)`: If any constraint fails
-pub fn rs_shuffle_with_bayer_groth_linking_proof<F, C, CV, const N: usize, const LEVELS: usize>(
+pub fn rs_shuffle_with_bayer_groth_linking_proof<
+    F,
+    C,
+    CV,
+    RO,
+    ROVar,
+    const N: usize,
+    const LEVELS: usize,
+>(
     cs: ConstraintSystemRef<F>,
     // Public inputs
     alpha: &FpVar<F>,
@@ -582,12 +590,14 @@ pub fn rs_shuffle_with_bayer_groth_linking_proof<F, C, CV, const N: usize, const
         EmulatedFpVar<C::ScalarField, F>,
         EmulatedFpVar<C::ScalarField, F>,
     ), // (blinding_r, blinding_s)
-    transcript: &mut BayerGrothTranscriptGadget<F>,
+    transcript: &mut BayerGrothTranscriptGadget<F, RO, ROVar>,
 ) -> Result<(CV, BayerGrothSetupParametersGadget<C::ScalarField, F, CV>), SynthesisError>
 where
     F: PrimeField,
     C: CurveGroup,
-    CV: CurveVar<C, F> + CurveAbsorbGadget<F> + Clone,
+    RO: ark_crypto_primitives::sponge::CryptographicSponge,
+    ROVar: ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar<F, RO>,
+    CV: CurveVar<C, F> + CurveAbsorbGadget<F, ROVar> + Clone,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
     C::BaseField: PrimeField,
 {
@@ -657,18 +667,19 @@ mod tests {
     use super::*;
     use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
     use crate::shuffling::bayer_groth_permutation::{
-        bg_setup::BayerGrothTranscript,
+        bg_setup::{new_bayer_groth_transcript_with_poseidon, BayerGrothTranscript},
+        bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon,
         linking_rs_native::{
             compute_left_product, compute_left_product_for_permutation_check, compute_linear_blend,
             compute_right_product, compute_right_product_for_permutation_check,
         },
     };
-    use ark_crypto_primitives::commitment::{
-        pedersen::Commitment as PedersenCommitment,
-        CommitmentScheme,
-    };
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
     use ark_bn254::{Fr, G1Projective};
+    use ark_crypto_primitives::commitment::{
+        pedersen::Commitment as PedersenCommitment, CommitmentScheme,
+    };
+    use ark_crypto_primitives::sponge::poseidon::{constraints::PoseidonSpongeVar, PoseidonSponge};
     use ark_ec::PrimeGroup;
     use ark_ff::{Field, UniformRand};
     use ark_r1cs_std::{
@@ -759,7 +770,10 @@ mod tests {
 
         // Step 4: Run native Bayer-Groth protocol to get expected challenges
         let domain = b"test-rs-shuffle-bayer-groth";
-        let mut native_transcript = BayerGrothTranscript::new(domain);
+        let mut native_transcript: BayerGrothTranscript<
+            ark_bn254::Fq,
+            PoseidonSponge<ark_bn254::Fq>,
+        > = new_bayer_groth_transcript_with_poseidon::<ark_bn254::Fq>(domain);
 
         // Convert permutation to usize array for native protocol
         let perm_usize: [usize; N] = std::array::from_fn(|i| {
@@ -770,17 +784,24 @@ mod tests {
         // Create Pedersen parameters for the test
         use ark_std::rand::SeedableRng;
         use rand::rngs::StdRng;
-        
+
         let mut deck_rng = StdRng::seed_from_u64(42);
         let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
             .expect("Failed to setup DeckHashWindow Pedersen parameters");
         let mut power_rng = StdRng::seed_from_u64(43);
-        let power_params = PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
-            .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+                .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
         // Run native protocol with provided blinding factors
         let (native_params, native_perm_power_vector) = native_transcript
-            .run_protocol::<G1Projective, N>(&perm_params, &power_params, &perm_usize, blinding_r, blinding_s);
+            .run_protocol::<G1Projective, N>(
+                &perm_params,
+                &power_params,
+                &perm_usize,
+                blinding_r,
+                blinding_s,
+            );
 
         tracing::debug!(target: TEST_TARGET,
             perm_power_challenge = ?native_params.perm_power_challenge,
@@ -875,7 +896,11 @@ mod tests {
         let blinding_factors = (blinding_r_var, blinding_s_var);
 
         // Create transcript gadget
-        let mut transcript_gadget = BayerGrothTranscriptGadget::new(cs.clone(), domain)?;
+        let mut transcript_gadget: BayerGrothTranscriptGadget<
+            ark_bn254::Fq,
+            PoseidonSponge<ark_bn254::Fq>,
+            PoseidonSpongeVar<ark_bn254::Fq>,
+        > = new_bayer_groth_transcript_gadget_with_poseidon::<ark_bn254::Fq>(cs.clone(), domain)?;
 
         // Step 6: Compute expected proof point using native function (without blinding)
         let expected_proof_point = compute_expected_proof_point_native::<G1Projective, N>(
