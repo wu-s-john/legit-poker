@@ -514,6 +514,7 @@ where
 mod tests {
     use super::*;
     use crate::shuffling::bayer_groth_permutation::utils::extract_pedersen_bases as native_extract_bases;
+    use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
     use crate::shuffling::test_utils::{
         generate_random_ciphertexts, shuffle_and_rerandomize_random,
     };
@@ -583,13 +584,30 @@ mod tests {
         // Inputs: N ciphertexts
         let (c_in, _) = generate_random_ciphertexts::<G1Projective, N>(&public_key, &mut rng);
 
-        // Permute + rerandomize
-        let pi: [usize; N] = core::array::from_fn(|i| (i * 7 + 3) % N); // simple pseudorandom permutation
+        // Generate permutation using RS shuffle with a deterministic seed
+        // We use 10 levels which is good for up to 1024 elements
+        const LEVELS: usize = 10;
+        let seed = Fr::from(42u64); // Fixed seed for reproducible testing
+
+        // Create an index array to permute
+        let indices: [usize; N] = core::array::from_fn(|i| i);
+
+        // Apply RS shuffle to get the permutation
+        let (_witness_data, _num_samples, permuted_indices) =
+            apply_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &indices);
+
+        // Convert the permuted indices to a permutation array
+        // pi[i] tells us where element i should go
+        let mut pi = [0usize; N];
+        for (new_pos, &original_idx) in permuted_indices.iter().enumerate() {
+            pi[original_idx] = new_pos;
+        }
+
         let (c_out, rerand) =
             shuffle_and_rerandomize_random::<G1Projective, N>(&c_in, &pi, public_key, &mut rng);
 
         // FS exponent x and vectors a,b (we only need b and rho here)
-        let x = Fr::from(2u64);
+        let x = Fr::from(1000u64);
 
         // NEW algorithm: b[i] = x^{π(i)+1} (output-aligned with 1-based indexing)
         let b = crate::shuffling::bayer_groth_permutation::utils::compute_power_permutation_vector::<
