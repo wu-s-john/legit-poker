@@ -1460,7 +1460,7 @@ mod tests {
 
         // Generate re-encryption randomizations
         let rerandomizations: [<GrumpkinConfig as CurveConfig>::ScalarField; N] =
-            std::array::from_fn(|_| <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng));
+            crate::shuffling::encryption::generate_randomization_array::<GrumpkinConfig, N>(&mut rng);
 
         // Apply re-encryption natively
         let ct_final_native: [ElGamalCiphertext<GrumpkinProjective>; N] =

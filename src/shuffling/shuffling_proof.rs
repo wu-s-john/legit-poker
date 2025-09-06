@@ -229,7 +229,7 @@ where
     // Step 2: Generate re-encryption randomness and apply re-encryption
     tracing::debug!(target: LOG_TARGET, "Step 2: Generating re-encryption");
     let rerandomization_factors: [<G::Config as CurveConfig>::ScalarField; N] =
-        std::array::from_fn(|_| <G::Config as CurveConfig>::ScalarField::rand(rng));
+        crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
     let ct_output: [ElGamalCiphertext<G>; N] = std::array::from_fn(|i| {
         // Re-encrypt the shuffled ciphertext
         let r = rerandomization_factors[i];

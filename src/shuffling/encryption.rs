@@ -1,13 +1,35 @@
 use super::data_structures::*;
-use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ec::{CurveConfig, CurveGroup};
+use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::{convert::ToBitsGadget, fields::fp::FpVar, groups::CurveVar};
 use ark_relations::{
     gr1cs::{ConstraintSystemRef, SynthesisError},
     ns,
 };
+use ark_std::rand::Rng;
 
 const LOG_TARGET: &str = "shuffle::encryption";
+
+/// Generate an array of N random scalar field elements for rerandomization
+/// 
+/// This centralized function provides a consistent way to generate
+/// randomization arrays throughout the shuffling implementation.
+/// 
+/// # Type Parameters
+/// - `C`: The curve configuration
+/// - `N`: The size of the array to generate
+/// 
+/// # Returns
+/// An array of N random scalar field elements
+pub fn generate_randomization_array<C, const N: usize>(
+    rng: &mut impl Rng,
+) -> [<C as CurveConfig>::ScalarField; N]
+where
+    C: CurveConfig,
+    <C as CurveConfig>::ScalarField: UniformRand,
+{
+    std::array::from_fn(|_| <C as CurveConfig>::ScalarField::rand(rng))
+}
 
 /// ElGamal encryption operations
 pub struct ElGamalEncryption<C: CurveGroup> {

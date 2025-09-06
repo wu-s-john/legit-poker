@@ -231,7 +231,7 @@ where
 
     // Generate re-encryption randomizations (as curve's scalar field)
     let rerandomizations_scalar: [<C::Config as CurveConfig>::ScalarField; N] =
-        std::array::from_fn(|_| <C::Config as CurveConfig>::ScalarField::rand(rng));
+        zk_poker::shuffling::encryption::generate_randomization_array::<C::Config, N>(rng);
 
     // Convert curve scalar field values to pairing's scalar field for the circuit
     let rerandomizations: [E::ScalarField; N] = std::array::from_fn(|i| {

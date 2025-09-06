@@ -519,9 +519,7 @@ mod tests {
     use super::*;
     use crate::shuffling::bayer_groth_permutation::utils::extract_pedersen_bases as native_extract_bases;
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
-    use crate::shuffling::test_utils::{
-        generate_random_ciphertexts, shuffle_and_rerandomize_random,
-    };
+    use crate::shuffling::{generate_random_ciphertexts, shuffle_and_rerandomize_random};
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
     use ark_crypto_primitives::commitment::CommitmentScheme;

@@ -178,7 +178,7 @@ where
 
     // --- Commit phase: pick random blinds ---
     //These are the values t.
-    let blinding_factors: [G::ScalarField; N] = std::array::from_fn(|_| G::ScalarField::rand(rng));
+    let blinding_factors: [G::ScalarField; N] = crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
     let blinding_factor_for_blinding_factor_commitment = G::ScalarField::rand(rng); // Blinding factor used for the blinding commitment i.e. t_s
     let ciphertext_masking_rerand = G::ScalarField::rand(rng); // this is t_ρ
 
@@ -518,9 +518,7 @@ fn absorb_public_inputs<G: CurveGroup, RO>(
 mod tests {
     use super::*;
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
-    use crate::shuffling::test_utils::{
-        generate_random_ciphertexts, shuffle_and_rerandomize_random,
-    };
+    use crate::shuffling::{generate_random_ciphertexts, shuffle_and_rerandomize_random};
     use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::CommitmentScheme;
