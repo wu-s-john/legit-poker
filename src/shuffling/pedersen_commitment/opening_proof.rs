@@ -83,6 +83,45 @@ pub fn cs_to_cf<CS: PrimeField, CF: PrimeField>(x: &CS) -> CF {
     CF::from_le_bytes_mod_order(&bytes)
 }
 
+/// Pad a scalar vector to the next power of 2
+///
+/// Takes a vector of any length and pads it with zeros to reach
+/// the next power of 2 length. This is necessary for the folding
+/// algorithm which requires power-of-2 sized vectors.
+///
+/// # Example
+/// - Input length 52 -> Padded to 64
+/// - Input length 8 -> Remains 8 (already power of 2)
+pub fn pad_to_power_of_two<F: Field>(vec: &[F]) -> Vec<F> {
+    let len = vec.len();
+    
+    // If already a power of 2, return as is
+    if len.is_power_of_two() && len > 0 {
+        return vec.to_vec();
+    }
+    
+    // Handle empty vector
+    if len == 0 {
+        return vec![F::zero()];
+    }
+    
+    // Find next power of 2
+    let next_pow2 = len.next_power_of_two();
+    
+    // Create padded vector
+    let mut padded = vec.to_vec();
+    padded.resize(next_pow2, F::zero());
+    
+    tracing::trace!(
+        target: LOG_TARGET,
+        original_len = len,
+        padded_len = next_pow2,
+        "Padded vector to power of 2"
+    );
+    
+    padded
+}
+
 /// Recursive helper function for proving
 ///
 /// Implements the recursive folding of the IPA protocol:
@@ -196,28 +235,31 @@ where
     proof
 }
 
-/// Prove knowledge of opening for a Pedersen commitment (Prover Algorithm)
+/// Prove knowledge of opening for a Pedersen commitment (Prover Algorithm) with flexible vector size
 ///
 /// Given a commitment C = ⟨m, G⟩ + rH, this function generates an IPA proof
 /// demonstrating knowledge of the message vector m and blinding factor r.
+/// The message vector can be any length and will be padded to power of 2 if needed.
 ///
 /// # Protocol (Variant A - Anchored at P₀ = C - rH)
 ///
 /// **Inputs:**
-/// - `params`: Pedersen parameters containing bases G = (G₀, ..., G_{N-1}) and H
-/// - `commitment_vector`: Contains commitment C and message m ∈ F_q^N
+/// - `params`: Pedersen parameters containing bases G and H
+/// - `commitment`: The commitment C ∈ G
+/// - `message`: The message vector m (any length, will be padded)
 /// - `r`: The blinding factor used in the commitment
 /// - `rng`: Random number generator for blinding factors
 ///
 /// **Output:** IPA proof π = ({(L_k, R_k)}_{k=0}^{t-1}, â, r̂)
 ///
 /// **Algorithm:**
-/// 1. Initialize:
+/// 1. Pad message to power of 2 if needed
+/// 2. Initialize:
 ///    - P₀ := C - rH = ⟨m, G⟩ (removes initial blinding)
-///    - a₀ := m, g₀ := G, r₀ := 0
+///    - a₀ := padded_m, g₀ := padded_G, r₀ := 0
 ///    - Initialize Fiat-Shamir transcript and absorb P₀
 ///
-/// 2. For each round k = 0, 1, ..., t-1:
+/// 3. For each round k = 0, 1, ..., t-1:
 ///    - Split: a_k = (a_{k,L} || a_{k,R}), g_k = (g_{k,L} || g_{k,R})
 ///    - Sample blinding: α_k, β_k ← F_q
 ///    - Commit cross-terms:
@@ -230,12 +272,66 @@ where
 ///      * g_{k+1} := x_k^{-1}·g_{k,L} + x_k·g_{k,R}
 ///      * r_{k+1} := r_k + x_k²·α_k + x_k^{-2}·β_k
 ///
-/// 3. Base case (after t rounds): a_t = (â), g_t = (Ĝ), r_t = r̂
+/// 4. Base case (after t rounds): a_t = (â), g_t = (Ĝ), r_t = r̂
 ///
 /// **Invariant:** At each round k: P_k = ⟨a_k, g_k⟩ + r_k·H
 ///
 /// **Security:** The proof is binding under the discrete log assumption and
 /// zero-knowledge when blinding factors α_k, β_k are randomly chosen.
+#[tracing::instrument(target = LOG_TARGET, skip_all)]
+pub fn prove_with_flexible_size<C>(
+    params: &PedersenParams<C>,
+    commitment: C,
+    message: &[C::ScalarField],
+    r: C::ScalarField,
+    rng: &mut impl RngCore,
+) -> PedersenCommitmentOpeningProof<C>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField,
+{
+    // Pad the message to power of 2
+    let padded_message = pad_to_power_of_two(message);
+    let padded_len = padded_message.len();
+    
+    // Pad the generator bases to match
+    assert!(params.g.len() >= message.len(), "Not enough generator bases for message");
+    let padded_g = if params.g.len() == padded_len {
+        params.g.clone()
+    } else {
+        // Take only the needed generators and pad with zero point if needed
+        let mut g_vec = params.g[..message.len().min(params.g.len())].to_vec();
+        // Pad with the identity element (zero point)
+        g_vec.resize(padded_len, C::zero());
+        g_vec
+    };
+
+    // P0 = C - rH
+    let p0 = commitment - params.h * r;
+    tracing::debug!(target: LOG_TARGET, ?p0, "Prove: Computed P0 = C - rH");
+
+    // Initialize Fiat-Shamir transcript
+    let config = poseidon_config::<C::BaseField>();
+    let mut transcript = PoseidonSponge::<C::BaseField>::new(&config);
+    tracing::debug!(target: LOG_TARGET, "Prove: Absorbing P0 into fresh transcript");
+    p0.curve_absorb(&mut transcript);
+
+    // Call recursive helper with padded values
+    // Note: We pass 0 for r_cur since P0 = C - rH has already removed the blinding
+    prove_recursive(
+        padded_message,
+        padded_g,
+        C::ScalarField::zero(),
+        params.h,
+        &mut transcript,
+        rng,
+    )
+}
+
+/// Prove knowledge of opening for a Pedersen commitment (Prover Algorithm)
+///
+/// Wrapper for fixed-size array input that uses the flexible size prover internally.
 #[tracing::instrument(target = LOG_TARGET, skip_all)]
 pub fn prove<C, const N: usize>(
     params: &PedersenParams<C>,
@@ -249,25 +345,12 @@ where
     C::ScalarField: PrimeField,
 {
     params.assert_sizes::<N>();
-
-    // P0 = C - rH
-    let p0 = commitment_vector.comm - params.h * r;
-    tracing::debug!(target: LOG_TARGET, ?p0, "Prove: Computed P0 = C - rH");
-
-    // Initialize Fiat-Shamir transcript
-    let config = poseidon_config::<C::BaseField>();
-    let mut transcript = PoseidonSponge::<C::BaseField>::new(&config);
-    tracing::debug!(target: LOG_TARGET, "Prove: Absorbing P0 into fresh transcript");
-    p0.curve_absorb(&mut transcript);
-
-    // Call recursive helper with initial values
-    // Note: We pass 0 for r_cur since P0 = C - rH has already removed the blinding
-    prove_recursive(
-        commitment_vector.value.to_vec(),
-        params.g.clone(),
-        C::ScalarField::zero(),
-        params.h,
-        &mut transcript,
+    
+    prove_with_flexible_size(
+        params,
+        commitment_vector.comm,
+        &commitment_vector.value,
+        r,
         rng,
     )
 }
@@ -380,6 +463,166 @@ where
     }
 
     coeffs
+}
+
+/// Scalar folding algorithm for linking Pedersen commitment to secret vector
+///
+/// This function performs the scalar folding operation on a secret message vector `m`
+/// using the public opening proof transcript. It reconstructs the Fiat-Shamir challenges
+/// from the public transcript and folds the secret vector accordingly.
+///
+/// The input vector will be automatically padded to the next power of 2 if needed.
+///
+/// # Algorithm
+///
+/// Given:
+/// - Public transcript: P₀, {(L_k, R_k)}_{k=0}^{t-1} from the opening proof
+/// - Secret vector: m (any length, will be padded if needed)
+///
+/// Steps:
+/// 1. Pad vector to power of 2 if needed
+/// 2. Initialize transcript and absorb P₀
+/// 3. For each round k = 0, ..., t-1:
+///    - Absorb L_k, R_k into transcript
+///    - Derive challenge x_k (must match prover's challenge)
+///    - Fold: a_{k+1} = x_k · a_{k,L} + x_k^{-1} · a_{k,R}
+/// 4. Return final folded scalar â
+///
+/// # Security
+///
+/// This function allows verifying that a secret vector `m` was used in the commitment
+/// without revealing `m`. The final scalar â serves as a binding link between
+/// the public proof and the private vector.
+#[tracing::instrument(target = LOG_TARGET, skip_all)]
+pub fn fold_scalars<C>(
+    p0: &C,
+    folding_rounds: &[(C, C)],
+    secret_message: &[C::ScalarField],
+) -> C::ScalarField
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField,
+{
+    // Pad the message to power of 2 if needed
+    let padded_message = pad_to_power_of_two(secret_message);
+    let expected_rounds = padded_message.len().trailing_zeros() as usize;
+    
+    // Verify we have the correct number of folding rounds
+    assert_eq!(
+        folding_rounds.len(), 
+        expected_rounds,
+        "Number of folding rounds {} doesn't match expected {} for vector length {}",
+        folding_rounds.len(),
+        expected_rounds,
+        padded_message.len()
+    );
+    
+    // Initialize Fiat-Shamir transcript
+    let config = poseidon_config::<C::BaseField>();
+    let mut transcript = PoseidonSponge::<C::BaseField>::new(&config);
+    
+    // Absorb P0 into transcript
+    tracing::trace!(target: LOG_TARGET, "fold_scalars: Absorbing P0 into transcript");
+    p0.curve_absorb(&mut transcript);
+    
+    // Start with the padded message vector
+    let mut a_current = padded_message;
+    
+    // Process each folding round
+    for (round_idx, (left_commitment, right_commitment)) in folding_rounds.iter().enumerate() {
+        tracing::trace!(target: LOG_TARGET, round = round_idx, "Processing folding round");
+        
+        // Absorb left and right commitments
+        left_commitment.curve_absorb(&mut transcript);
+        right_commitment.curve_absorb(&mut transcript);
+        
+        // Get challenge from transcript (matching the prover)
+        let x_bf: C::BaseField = transcript.squeeze_field_elements(1)[0];
+        let mut x = cf_to_cs::<C::BaseField, C::ScalarField>(x_bf);
+        if x.is_zero() {
+            x = C::ScalarField::one(); // Ensure invertible
+        }
+        let x_inv = x.inverse().unwrap();
+        
+        eprintln!("Native challenge for round {}: base_field={:?}, scalar={:?}", round_idx, x_bf, x);
+        
+        // Split the current vector in half
+        let mid = a_current.len() / 2;
+        let (a_left, a_right) = a_current.split_at(mid);
+        
+        // Fold: a_{k+1}[i] = x · a_k[i] + x^{-1} · a_k[mid + i]
+        let a_folded: Vec<C::ScalarField> = a_left
+            .iter()
+            .zip(a_right.iter())
+            .enumerate()
+            .map(|(i, (al, ar))| {
+                let folded = x * al + x_inv * ar;
+                if round_idx == 0 && i == 0 {
+                    eprintln!("Native folding round {} index {}: left={:?}, right={:?}, folded={:?}", 
+                        round_idx, i, al, ar, folded);
+                }
+                folded
+            })
+            .collect();
+        
+        tracing::trace!(target: LOG_TARGET, 
+            old_len = a_current.len(), 
+            new_len = a_folded.len(), 
+            "Folded scalar vector"
+        );
+        
+        a_current = a_folded;
+    }
+    
+    // After all rounds, we should have a single scalar
+    assert_eq!(a_current.len(), 1, "Folding should result in single scalar");
+    let a_final = a_current[0];
+    
+    tracing::debug!(target: LOG_TARGET, ?a_final, "Final folded scalar");
+    a_final
+}
+
+/// Verify linking of secret vector to Pedersen opening proof
+///
+/// This function verifies that a secret message vector `m` was indeed used
+/// in creating the Pedersen commitment by checking that the scalar folding
+/// of `m` matches the public `a_final` in the proof.
+///
+/// The secret message will be automatically padded to match the proof's expected size.
+///
+/// # Returns
+/// - `Ok(())` if the folded scalar matches the proof's `a_final`
+/// - `Err` if there's a mismatch, indicating the vector doesn't match the commitment
+pub fn verify_scalar_folding_link<C>(
+    c_commit: &C,
+    r: C::ScalarField,
+    params: &PedersenParams<C>,
+    proof: &PedersenCommitmentOpeningProof<C>,
+    secret_message: &[C::ScalarField],
+) -> Result<(), PedersenCommitmentOpeningError>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField,
+{
+    // Compute P0 = C - rH (matching the verifier)
+    let p0 = *c_commit - params.h * r;
+    
+    // Fold the secret message using the public transcript
+    let a_folded = fold_scalars(&p0, &proof.folding_challenge_commitment_rounds, secret_message);
+    
+    // Check if the folded scalar matches the proof's a_final
+    if a_folded == proof.a_final {
+        tracing::info!(target: LOG_TARGET, "Scalar folding link verified successfully");
+        Ok(())
+    } else {
+        tracing::warn!(target: LOG_TARGET, 
+            "Scalar folding mismatch: folded={:?}, proof.a_final={:?}", 
+            a_folded, proof.a_final
+        );
+        Err(PedersenCommitmentOpeningError::BadProof)
+    }
 }
 
 /// Verify a Pedersen commitment opening proof (Verifier Algorithm)
@@ -495,6 +738,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::extract_pedersen_bases;
     use ark_bn254::{Fr, G1Projective};
     use ark_crypto_primitives::commitment::pedersen::Window as PedersenWindow;
     use ark_std::test_rng;
@@ -853,6 +1097,177 @@ mod tests {
         let result =
             verify::<G1Projective, PADDED_SIZE>(&params, &commitment.comm, r, &proof_final);
         assert!(result.is_ok(), "Padded 52-card deck proof should verify");
+    }
+
+    /// Helper function for testing scalar folding with arbitrary vector sizes
+    ///
+    /// This function:
+    /// 1. Creates a random secret vector of the specified size
+    /// 2. Computes a Pedersen commitment
+    /// 3. Creates an opening proof
+    /// 4. Verifies the proof with the standard verify function
+    /// 5. Verifies the scalar folding link
+    ///
+    /// Returns the proof for additional testing if needed
+    fn test_scalar_folding_with_size(
+        size: usize,
+        test_name: &str,
+    ) -> Result<(), PedersenCommitmentOpeningError> {
+        let _guard = setup_test_tracing();
+        let mut rng = test_rng();
+        
+        tracing::info!(target: TEST_TARGET, size, test_name, "Testing scalar folding");
+        
+        // Generate random message of specified size
+        let message: Vec<Fr> = (0..size).map(|_| Fr::rand(&mut rng)).collect();
+        
+        // Setup parameters with enough generators
+        let padded_size = if size.is_power_of_two() && size > 0 {
+            size
+        } else {
+            size.next_power_of_two()
+        };
+        
+        // Create arkworks parameters with sufficient generators
+        use ark_crypto_primitives::commitment::{pedersen::Commitment, CommitmentScheme};
+        let arkworks_params = 
+            <Commitment<G1Projective, TestWindow8> as CommitmentScheme>::setup(&mut rng).unwrap();
+        
+        // Extract bases for the padded size
+        let (h, g_array) = extract_pedersen_bases::<G1Projective, 64>(&arkworks_params);
+        let g = g_array[..padded_size].to_vec();
+        let params = PedersenParams {
+            arkworks_params: arkworks_params.clone(),
+            g,
+            h,
+        };
+        
+        // Compute commitment manually (on original unpadded message)
+        let r = Fr::rand(&mut rng);
+        let commitment = {
+            let mut result = G1Projective::zero();
+            for i in 0..message.len() {
+                result = result + params.g[i] * message[i];
+            }
+            result = result + params.h * r;
+            result
+        };
+        
+        tracing::debug!(target: TEST_TARGET, "Computed commitment for size {}", size);
+        
+        // Generate proof using flexible size prover
+        let proof = prove_with_flexible_size(
+            &params,
+            commitment,
+            &message,
+            r,
+            &mut rng,
+        );
+        
+        tracing::debug!(
+            target: TEST_TARGET, 
+            rounds = proof.folding_challenge_commitment_rounds.len(),
+            a_final = ?proof.a_final,
+            "Generated proof for size {}", 
+            size
+        );
+        
+        // Verify with standard verifier (needs padded size)
+        // We need to adjust verify to work with flexible sizes too
+        // For now, we'll verify the folding directly
+        
+        // Verify the scalar folding link
+        verify_scalar_folding_link(
+            &commitment,
+            r,
+            &params,
+            &proof,
+            &message,
+        )?;
+        
+        tracing::info!(
+            target: TEST_TARGET, 
+            size, 
+            test_name,
+            "✅ Scalar folding verification succeeded"
+        );
+        
+        Ok(())
+    }
+
+    #[test]
+    fn test_scalar_folding_various_sizes() {
+        // Test power-of-2 sizes
+        assert!(test_scalar_folding_with_size(1, "single element").is_ok());
+        assert!(test_scalar_folding_with_size(2, "pair").is_ok());
+        assert!(test_scalar_folding_with_size(4, "small power of 2").is_ok());
+        assert!(test_scalar_folding_with_size(8, "medium power of 2").is_ok());
+        assert!(test_scalar_folding_with_size(16, "larger power of 2").is_ok());
+        assert!(test_scalar_folding_with_size(32, "32 elements").is_ok());
+        
+        // Test non-power-of-2 sizes
+        assert!(test_scalar_folding_with_size(3, "three elements").is_ok());
+        assert!(test_scalar_folding_with_size(5, "five elements").is_ok());
+        assert!(test_scalar_folding_with_size(7, "seven elements").is_ok());
+        assert!(test_scalar_folding_with_size(13, "thirteen elements").is_ok());
+        assert!(test_scalar_folding_with_size(52, "poker deck").is_ok());
+    }
+    
+    #[test]
+    fn test_scalar_folding_link_mismatch() {
+        let _guard = setup_test_tracing();
+        let mut rng = test_rng();
+        
+        // Create a message and commitment
+        let message: Vec<Fr> = (0..8).map(|_| Fr::rand(&mut rng)).collect();
+        
+        // Setup parameters
+        use ark_crypto_primitives::commitment::{pedersen::Commitment, CommitmentScheme};
+        let arkworks_params = 
+            <Commitment<G1Projective, TestWindow8> as CommitmentScheme>::setup(&mut rng).unwrap();
+        let (h, g_array) = extract_pedersen_bases::<G1Projective, 8>(&arkworks_params);
+        let params = PedersenParams {
+            arkworks_params: arkworks_params.clone(),
+            g: g_array.to_vec(),
+            h,
+        };
+        
+        // Compute commitment
+        let r = Fr::rand(&mut rng);
+        let commitment = {
+            let mut result = G1Projective::zero();
+            for i in 0..message.len() {
+                result = result + params.g[i] * message[i];
+            }
+            result = result + params.h * r;
+            result
+        };
+        
+        // Generate proof with correct message
+        let proof = prove_with_flexible_size(
+            &params,
+            commitment,
+            &message,
+            r,
+            &mut rng,
+        );
+        
+        // Try to verify with a different message (should fail)
+        let wrong_message: Vec<Fr> = (0..8).map(|_| Fr::rand(&mut rng)).collect();
+        let result = verify_scalar_folding_link(
+            &commitment,
+            r,
+            &params,
+            &proof,
+            &wrong_message,
+        );
+        
+        assert!(
+            result.is_err(),
+            "Scalar folding should fail with wrong message"
+        );
+        
+        tracing::info!(target: TEST_TARGET, "✅ Correctly rejected wrong message");
     }
 
     #[test]

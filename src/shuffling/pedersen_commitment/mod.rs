@@ -1,5 +1,6 @@
 pub mod error;
 pub mod opening_proof;
+pub mod opening_proof_gadget;
 
 use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
@@ -8,7 +9,11 @@ use ark_ff::UniformRand;
 use ark_std::rand::RngCore;
 
 pub use error::PedersenCommitmentOpeningError;
-pub use opening_proof::{prove, verify, PedersenCommitmentOpeningProof, PedersenParams};
+pub use opening_proof::{
+    prove, verify, PedersenCommitmentOpeningProof, PedersenParams,
+    prove_with_flexible_size, fold_scalars, verify_scalar_folding_link,
+    pad_to_power_of_two
+};
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::pedersen_commitment";
 

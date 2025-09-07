@@ -108,6 +108,39 @@ where
 }
 
 // ============================================================================
+// Implement CurveAbsorbGadget for references to ProjectiveVar
+// ============================================================================
+
+impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fq, ROVar>
+    for &'a ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fq, PoseidonSponge<ark_bn254::Fq>>,
+{
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
+        // Convert to affine representation in-circuit
+        let affine = self.to_affine()?;
+        // Use the existing AbsorbGadget implementation for the affine variable
+        sponge.absorb(&affine)?;
+        Ok(())
+    }
+}
+
+impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fr, ROVar>
+    for &'a ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fr, PoseidonSponge<ark_bn254::Fr>>,
+{
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
+        // Convert to affine and absorb
+        use ark_r1cs_std::convert::ToConstraintFieldGadget;
+        let affine = self.to_affine()?;
+        let coords = affine.to_constraint_field()?;
+        sponge.absorb(&coords)?;
+        Ok(())
+    }
+}
+
+// ============================================================================
 // Helper functions for convenient usage
 // ============================================================================
 
