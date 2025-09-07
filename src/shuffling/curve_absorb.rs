@@ -200,7 +200,7 @@ mod tests {
         // Get the result
         let native_result: Fq = native_sponge.squeeze_field_elements(1)[0];
 
-        println!("Native absorption result: {:?}", native_result);
+        tracing::debug!(target: "test", ?native_result, "Native absorption result");
 
         // ============= Circuit Absorption =============
         let cs = ConstraintSystem::<Fq>::new_ref();
@@ -223,7 +223,7 @@ mod tests {
         let circuit_result_var = circuit_sponge.squeeze_field_elements(1).unwrap()[0].clone();
         let circuit_result = circuit_result_var.value().unwrap();
 
-        println!("Circuit absorption result: {:?}", circuit_result);
+        tracing::debug!(target: "test", ?circuit_result, "Circuit absorption result");
 
         // ============= Compare Results =============
         // Assert that native and circuit results are equal
@@ -238,7 +238,7 @@ mod tests {
             "Circuit constraints should be satisfied"
         );
 
-        println!("✅ Test passed: Native and circuit sponge absorption produce identical results!");
+        tracing::info!(target: "test", "✅ Test passed: Native and circuit sponge absorption produce identical results!");
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
 
         for i in 0..3 {
-            println!("\n--- Testing point {} ---", i + 1);
+            tracing::debug!(target: "test", point_index = i + 1, "Testing point");
 
             let point = G1Projective::rand(&mut rng);
 
@@ -273,10 +273,10 @@ mod tests {
             // Verify equality
             assert_eq!(native_result, circuit_result);
             assert!(cs.is_satisfied().unwrap());
-            println!("Point {} passed ✓", i + 1);
+            tracing::debug!(target: "test", point_index = i + 1, "Point passed ✓");
         }
 
-        println!("\n✅ All multiple point tests passed!");
+        tracing::info!(target: "test", "✅ All multiple point tests passed!");
     }
 
     #[test]
@@ -312,6 +312,6 @@ mod tests {
             "Identity point absorption should be consistent"
         );
         assert!(cs.is_satisfied().unwrap());
-        println!("✅ Identity point test passed!");
+        tracing::info!(target: "test", "✅ Identity point test passed!");
     }
 }
