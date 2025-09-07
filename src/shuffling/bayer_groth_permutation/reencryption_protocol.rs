@@ -46,11 +46,10 @@
 //! - No π^{-1} computation required - we work directly with π
 
 use crate::pedersen_commitment_opening_proof::ReencryptionWindow;
-use crate::shuffling::bayer_groth_permutation::utils::{
-    compute_powers_sequence_with_index_1, msm_ciphertexts, pedersen_commit_scalars,
-};
+use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::data_structures::ElGamalCiphertext;
+use crate::shuffling::pedersen_commitment::{msm_ciphertexts, pedersen_commit_scalars};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_crypto_primitives::{
     commitment::pedersen::{Commitment as PedersenCommitment, Parameters},
@@ -178,7 +177,8 @@ where
 
     // --- Commit phase: pick random blinds ---
     //These are the values t.
-    let blinding_factors: [G::ScalarField; N] = crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
+    let blinding_factors: [G::ScalarField; N] =
+        crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
     let blinding_factor_for_blinding_factor_commitment = G::ScalarField::rand(rng); // Blinding factor used for the blinding commitment i.e. t_s
     let ciphertext_masking_rerand = G::ScalarField::rand(rng); // this is t_ρ
 
@@ -311,11 +311,7 @@ where
     }
 
     // Compute aggregators C^a using normalized ciphertexts
-    let mut input_ciphertext_aggregator =
-        crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
-            &normalized_input_ciphertexts,
-            &powers,
-        );
+    let mut input_ciphertext_aggregator = msm_ciphertexts(&normalized_input_ciphertexts, &powers);
 
     // Normalize the aggregator to ensure consistent coordinates with gadget
     input_ciphertext_aggregator.c1 = input_ciphertext_aggregator.c1.into_affine().into();
@@ -373,7 +369,7 @@ where
     );
 
     // 1) Commitment-side equality
-    let lhs_com = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars(
+    let lhs_com = pedersen_commit_scalars(
         pedersen_params,
         &proof.sigma_response_power_permutation_vector,
         proof.sigma_response_blinding,
@@ -459,10 +455,7 @@ where
     );
 
     // ∏ C_j^{scalar_factors[j]}
-    let msm = crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
-        ciphertexts,
-        scalar_factors,
-    );
+    let msm = msm_ciphertexts(ciphertexts, scalar_factors);
     tracing::trace!(
         target: LOG_TARGET,
         "encrypt_one_and_combine: msm.c1 = {:?}, msm.c2 = {:?}",
@@ -639,11 +632,7 @@ mod tests {
         // Compute commitment to b
         let s_b = Fr::rand(&mut rng);
         tracing::trace!("Computing commitment to b with randomness");
-        let c_b = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars(
-            &pedersen_params,
-            &b,
-            s_b,
-        );
+        let c_b = pedersen_commit_scalars(&pedersen_params, &b, s_b);
         tracing::trace!("Commitment c_b computed");
 
         // Verify the shuffle relation holds before returning the instance
@@ -923,14 +912,8 @@ mod tests {
         });
 
         // Use the utils function to compute aggregator with powers
-        let powers =
-            crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1(
-                x,
-            );
-        let agg = crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
-            &output_ciphertexts,
-            &powers,
-        );
+        let powers = compute_powers_sequence_with_index_1(x);
+        let agg = msm_ciphertexts(&output_ciphertexts, &powers);
 
         // Manually compute expected
         let mut expected = ElGamalCiphertext {
@@ -949,10 +932,7 @@ mod tests {
 
         // Test msm_ciphertexts
         let scalars = [Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)];
-        let msm_result = crate::shuffling::bayer_groth_permutation::utils::msm_ciphertexts(
-            &output_ciphertexts,
-            &scalars,
-        );
+        let msm_result = msm_ciphertexts(&output_ciphertexts, &scalars);
 
         let mut expected_msm = ElGamalCiphertext {
             c1: G1Projective::zero(),
@@ -1064,11 +1044,7 @@ mod tests {
         // power_perm_commitment = com(b; power_perm_blinding_factor)
         let power_perm_blinding_factor = Fr::rand(&mut rng);
         let power_perm_commitment =
-            crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars(
-                &pedersen_params,
-                &b,
-                power_perm_blinding_factor,
-            );
+            pedersen_commit_scalars(&pedersen_params, &b, power_perm_blinding_factor);
 
         // rerandomization_scalars are already output-indexed from shuffle_and_rerandomize_random
         let rerandomization_scalars = rerand;

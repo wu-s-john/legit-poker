@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum IpaError {
+pub enum PedersenCommitmentOpeningError {
     #[error("Length mismatch in parameters")]
     LengthMismatch,
     

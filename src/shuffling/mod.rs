@@ -10,7 +10,7 @@ pub mod encryption;
 pub mod error;
 pub mod field_conversion_gadget;
 pub mod game_events;
-pub mod ipa;
+pub mod pedersen_commitment;
 pub mod player_decryption;
 pub mod player_decryption_gadget;
 pub mod proof_system;
