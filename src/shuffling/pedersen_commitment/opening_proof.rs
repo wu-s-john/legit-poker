@@ -869,12 +869,12 @@ mod tests {
         let (commitment, r) = WithCommitment::new(&params.arkworks_params, m, &mut rng);
 
         let proof = prove(&params, &commitment, r, &mut rng);
-        // For N=1, no folding rounds occur, so no blinding is accumulated
+        // For N=1, no folding rounds occur
         assert!(proof.folding_challenge_commitment_rounds.is_empty());
-        // r_final should be zero for N=1 since no α, β are sampled (no folding rounds)
-        assert!(
-            proof.r_final.is_zero(),
-            "r_final should be 0 for N=1 (no folding)"
+        // r_final should equal the initial blinding r for N=1 since no folding rounds occur
+        assert_eq!(
+            proof.r_final, r,
+            "r_final should equal initial blinding r for N=1 (no folding)"
         );
 
         let res = verify::<G1Projective, N>(&params, &commitment.comm, &proof);
@@ -904,10 +904,10 @@ mod tests {
             "a_final should equal input[0] for size 1"
         );
 
-        // r_final should be zero for N=1 since no folding rounds occur (no α, β sampled)
-        assert!(
-            proof.r_final.is_zero(),
-            "r_final should be zero for size 1 (no folding)"
+        // r_final should equal the initial blinding r for N=1 since no folding rounds occur
+        assert_eq!(
+            proof.r_final, r,
+            "r_final should equal initial blinding r for size 1 (no folding)"
         );
 
         // Verify the proof (no r parameter needed)
