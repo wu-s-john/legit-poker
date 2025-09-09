@@ -128,6 +128,60 @@ fn unopened_min_bet_equals_big_blind() {
 }
 
 #[test]
+fn preflop_short_big_blind_with_2_on_bb_3_can_only_check() {
+    // BB seat has only 2 chips total while BB is 3. They post 2 and have 0 behind.
+    // We verify that when action returns to the BB (unopened preflop), they can only Check.
+    let cfg = cfg_6max(1, 3);
+    let mut players = vec![
+        player_active(0, 100, 0), // BTN
+        player_active(1, 99, 1),  // SB posted 1
+        PlayerState {
+            seat: 2,                      // BB posted only 2 (short)
+            player_id: None,
+            stack: 0,                     // 0 behind
+            committed_this_round: 2,      // posted 2 total
+            committed_total: 0,
+            status: PlayerStatus::Active, // still acts preflop
+            has_acted_this_round: false,
+        },
+        player_active(3, 100, 0), // UTG
+        player_active(4, 100, 0), // HJ
+        player_active(5, 100, 0), // CO
+    ];
+    let mut st = EngineNL::new_after_deal(cfg, players.drain(..).collect(), empty_pots());
+
+    // With a short BB post, the current bet to match equals the posted amount (2)
+    assert_eq!(st.current_bet_to_match, 2);
+    assert_eq!(st.first_to_act, 3);
+    assert_eq!(st.to_act, 3);
+
+    // Bring action back to BB: UTG calls 2, HJ folds, CO calls, SB completes to 2
+    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
+    let tr = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
+    match tr {
+        Transition::Continued { next_to_act, .. } => assert_eq!(next_to_act, 2),
+        _ => panic!("expected action to pass to BB"),
+    }
+
+    // Legal actions for the short BB: may Check, cannot Fold (price=0), no Bet, no Raise
+    let legals_bb = EngineNL::legal_actions(&st, 2);
+    assert_eq!(legals_bb.call_amount, Some(0));
+    assert!(legals_bb.may_check);
+    assert!(!legals_bb.may_fold);
+    assert!(legals_bb.bet_to_range.is_none());
+    assert!(legals_bb.raise_to_range.is_none());
+
+    // Demonstrate the only action: BB checks and the street should end
+    let tr2 = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+    match tr2 {
+        Transition::StreetEnd { street, .. } => assert_eq!(street, Street::Preflop),
+        _ => panic!("expected preflop street to end after BB check"),
+    }
+}
+
+#[test]
 fn min_raise_equals_last_full_raise_amount_and_updates_on_full_raises() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens (first voluntary bet) to 7 using BetTo
