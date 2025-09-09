@@ -1,5 +1,6 @@
 pub mod config;
 pub mod domain;
+pub mod engine;
 pub mod field_conversion;
 pub mod game;
 pub mod logup;
