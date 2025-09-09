@@ -120,12 +120,57 @@ where
     }
 }
 
+/// Convenience wrapper: Verify scalar folding link with automatic padding
+///
+/// This function takes an arbitrary length vector, pads it to the next power of 2,
+/// and then verifies the scalar folding link.
+///
+/// # Arguments
+/// - `cs`: Constraint system
+/// - `c_commit_var`: The commitment C variable (passed separately)
+/// - `proof_var`: The opening proof transcript variables (public inputs)
+/// - `secret_message_var`: The secret message vector variables (any length)
+///
+/// # Returns
+/// Ok(()) if the constraint is satisfied, error otherwise
+pub fn verify_scalar_folding_link_gadget<C, GG>(
+    cs: ConstraintSystemRef<C::BaseField>,
+    c_commit_var: &GG,
+    proof_var: &PedersenCommitmentOpeningProofVar<C, GG>,
+    secret_message_var: &[EmulatedFpVar<C::ScalarField, C::BaseField>],
+) -> Result<(), SynthesisError>
+where
+    C: CurveGroup,
+    C::BaseField: PrimeField + Absorb,
+    C::ScalarField: PrimeField,
+    GG: CurveVar<C, C::BaseField>
+        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
+    for<'a> &'a GG: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
+{
+    // Pad the message
+    let padded_message_var = pad_to_power_of_two_gadget::<C>(cs.clone(), secret_message_var)?;
+
+    // Calculate parameters
+    let padded_size = padded_message_var.len();
+    let num_rounds = padded_size.trailing_zeros() as usize;
+
+    // Call the padded version
+    verify_scalar_folding_link_padded_gadget::<C, GG>(
+        cs,
+        c_commit_var,
+        proof_var,
+        &padded_message_var,
+        num_rounds,
+        padded_size,
+    )
+}
+
 /// Pad a vector of emulated scalar field elements to the next power of two
 ///
 /// This function mirrors the native `pad_to_power_of_two` function but operates
 /// on circuit variables. It allocates zero field elements as constants to pad
 /// the vector to the next power of two length.
-pub fn pad_to_power_of_two_gadget<C>(
+fn pad_to_power_of_two_gadget<C>(
     cs: ConstraintSystemRef<C::BaseField>,
     vec: &[EmulatedFpVar<C::ScalarField, C::BaseField>],
 ) -> Result<Vec<EmulatedFpVar<C::ScalarField, C::BaseField>>, SynthesisError>
@@ -184,7 +229,7 @@ where
 ///
 /// # Returns
 /// The final folded scalar as a circuit variable
-pub fn fold_scalars_padded_gadget<C, GG>(
+fn fold_scalars_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
     c_commit_var: &GG,
     folding_rounds_var: &[(GG, GG)],
@@ -308,51 +353,6 @@ where
     Ok(a_final)
 }
 
-/// Convenience wrapper: Fold scalars with automatic padding
-///
-/// This function takes an arbitrary length vector, pads it to the next power of 2,
-/// and then performs scalar folding.
-///
-/// # Arguments
-/// - `cs`: Constraint system
-/// - `c_commit_var`: The commitment C variable (anchoring at C itself)
-/// - `folding_rounds_var`: The folding round commitment variables
-/// - `secret_message_var`: The secret message vector variables (any length)
-///
-/// # Returns
-/// The final folded scalar as a circuit variable
-pub fn fold_scalars_gadget<C, GG>(
-    cs: ConstraintSystemRef<C::BaseField>,
-    c_commit_var: &GG,
-    folding_rounds_var: &[(GG, GG)],
-    secret_message_var: &[EmulatedFpVar<C::ScalarField, C::BaseField>],
-) -> Result<EmulatedFpVar<C::ScalarField, C::BaseField>, SynthesisError>
-where
-    C: CurveGroup,
-    C::BaseField: PrimeField + Absorb,
-    C::ScalarField: PrimeField,
-    GG: CurveVar<C, C::BaseField>
-        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
-    for<'a> &'a GG: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
-{
-    // Pad the message
-    let padded_message_var = pad_to_power_of_two_gadget::<C>(cs.clone(), secret_message_var)?;
-
-    // Calculate parameters
-    let padded_size = padded_message_var.len();
-    let num_rounds = padded_size.trailing_zeros() as usize;
-
-    // Call the padded version
-    fold_scalars_padded_gadget::<C, GG>(
-        cs,
-        c_commit_var,
-        folding_rounds_var,
-        &padded_message_var,
-        num_rounds,
-        padded_size,
-    )
-}
-
 /// Verify scalar folding link gadget for padded vectors (powers of 2)
 ///
 /// This gadget verifies that a secret message vector was used in creating
@@ -372,7 +372,7 @@ where
 ///
 /// # Returns
 /// Ok(()) if the constraint is satisfied, error otherwise
-pub fn verify_scalar_folding_link_padded_gadget<C, GG>(
+fn verify_scalar_folding_link_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
     c_commit_var: &GG,
     proof_var: &PedersenCommitmentOpeningProofVar<C, GG>,
@@ -403,51 +403,6 @@ where
 
     tracing::info!(target: LOG_TARGET, "Scalar folding link constraint enforced in gadget");
     Ok(())
-}
-
-/// Convenience wrapper: Verify scalar folding link with automatic padding
-///
-/// This function takes an arbitrary length vector, pads it to the next power of 2,
-/// and then verifies the scalar folding link.
-///
-/// # Arguments
-/// - `cs`: Constraint system
-/// - `c_commit_var`: The commitment C variable (passed separately)
-/// - `proof_var`: The opening proof transcript variables (public inputs)
-/// - `secret_message_var`: The secret message vector variables (any length)
-///
-/// # Returns
-/// Ok(()) if the constraint is satisfied, error otherwise
-pub fn verify_scalar_folding_link_gadget<C, GG>(
-    cs: ConstraintSystemRef<C::BaseField>,
-    c_commit_var: &GG,
-    proof_var: &PedersenCommitmentOpeningProofVar<C, GG>,
-    secret_message_var: &[EmulatedFpVar<C::ScalarField, C::BaseField>],
-) -> Result<(), SynthesisError>
-where
-    C: CurveGroup,
-    C::BaseField: PrimeField + Absorb,
-    C::ScalarField: PrimeField,
-    GG: CurveVar<C, C::BaseField>
-        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
-    for<'a> &'a GG: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
-{
-    // Pad the message
-    let padded_message_var = pad_to_power_of_two_gadget::<C>(cs.clone(), secret_message_var)?;
-
-    // Calculate parameters
-    let padded_size = padded_message_var.len();
-    let num_rounds = padded_size.trailing_zeros() as usize;
-
-    // Call the padded version
-    verify_scalar_folding_link_padded_gadget::<C, GG>(
-        cs,
-        c_commit_var,
-        proof_var,
-        &padded_message_var,
-        num_rounds,
-        padded_size,
-    )
 }
 
 #[cfg(test)]
@@ -533,8 +488,11 @@ mod tests {
 
             // ============= Native Scalar Folding =============
             // Now we anchor at C itself (not C - rH)
-            let native_folded =
-                fold_scalars(&commitment, &proof.folding_challenge_commitment_rounds, &message);
+            let native_folded = fold_scalars(
+                &commitment,
+                &proof.folding_challenge_commitment_rounds,
+                &message,
+            );
 
             // Verify it matches the proof
             assert_eq!(
@@ -554,12 +512,8 @@ mod tests {
             let num_rounds = padded_size.trailing_zeros() as usize;
 
             // Allocate commitment C as public input
-            let c_commit_var = G1Var::new_variable(
-                cs.clone(),
-                || Ok(commitment),
-                AllocationMode::Input,
-            )
-            .unwrap();
+            let c_commit_var =
+                G1Var::new_variable(cs.clone(), || Ok(commitment), AllocationMode::Input).unwrap();
 
             // Allocate proof variables as public inputs
             let proof_var = PedersenCommitmentOpeningProofVar::<G1Projective, G1Var>::new_variable(
@@ -671,12 +625,8 @@ mod tests {
         let num_rounds = padded_size.trailing_zeros() as usize;
 
         // Allocate commitment C as public input
-        let c_commit_var = G1Var::new_variable(
-            cs.clone(),
-            || Ok(commitment),
-            AllocationMode::Input,
-        )
-        .unwrap();
+        let c_commit_var =
+            G1Var::new_variable(cs.clone(), || Ok(commitment), AllocationMode::Input).unwrap();
 
         // Allocate proof variables
         let proof_var = PedersenCommitmentOpeningProofVar::<G1Projective, G1Var>::new_variable(
@@ -763,12 +713,8 @@ mod tests {
         let cs = ConstraintSystem::<BaseField>::new_ref();
 
         // Allocate commitment C as public input
-        let c_commit_var = G1Var::new_variable(
-            cs.clone(),
-            || Ok(commitment),
-            AllocationMode::Input,
-        )
-        .unwrap();
+        let c_commit_var =
+            G1Var::new_variable(cs.clone(), || Ok(commitment), AllocationMode::Input).unwrap();
 
         // Allocate public inputs
         let proof_var = PedersenCommitmentOpeningProofVar::<G1Projective, G1Var>::new_variable(
