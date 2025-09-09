@@ -235,28 +235,17 @@ mod tests {
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
-    use tracing_subscriber::filter;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    use crate::test_utils::setup_test_tracing;
 
     const TEST_TARGET: &str = "nexus_nova";
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
 
-    fn setup_test_tracing() {
-        let filter = filter::Targets::new()
-            .with_target(LOG_TARGET, tracing::Level::DEBUG)
-            .with_target(TEST_TARGET, tracing::Level::DEBUG);
-
-        let _ = tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_test_writer())
-            .with(filter)
-            .try_init();
-    }
+    
 
     #[test]
     fn test_chaum_pedersen_native_vs_circuit() -> Result<(), SynthesisError> {
-        setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         tracing::info!(target: TEST_TARGET, "Starting native vs circuit test");
 
         let mut rng = test_rng();

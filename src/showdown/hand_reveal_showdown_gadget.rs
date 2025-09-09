@@ -286,31 +286,15 @@ mod tests {
     };
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
-    use tracing_subscriber::filter;
-    use tracing_subscriber::fmt::format::FmtSpan;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    use crate::test_utils::setup_test_tracing;
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
 
     const TEST_TARGET: &str = "nexus_nova";
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
-
     #[test]
     fn test_three_player_showdown_royal_flush_wins() {
-        let _gaurd = setup_test_tracing();
+        let _gaurd = setup_test_tracing(TEST_TARGET);
         let cs = ConstraintSystem::<Fq>::new_ref();
         let mut rng = test_rng();
 

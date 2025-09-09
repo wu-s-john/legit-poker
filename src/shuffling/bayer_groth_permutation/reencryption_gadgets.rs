@@ -532,35 +532,13 @@ mod tests {
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::test_rng;
     use ark_std::UniformRand;
-    use tracing_subscriber::filter;
-    use tracing_subscriber::fmt::format::FmtSpan;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    use crate::test_utils::setup_test_tracing;
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
     type Pedersen<G> =
         PedersenCommitment<G, crate::pedersen_commitment_opening_proof::ReencryptionWindow>;
 
     const TEST_TARGET: &str = "nexus_nova";
-
-    fn setup_test_tracing() {
-        let filter = filter::Targets::new()
-            .with_target(TEST_TARGET, tracing::Level::TRACE)
-            .with_target(LOG_TARGET, tracing::Level::TRACE)
-            .with_target(
-                "nexus_nova::shuffling::bayer_groth_permutation::reencryption_protocol",
-                tracing::Level::TRACE,
-            );
-
-        let _ = tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .try_init();
-    }
 
     // Local helper: commit vector natively exactly like the prover
     fn commit_vector_native<const N: usize>(
@@ -577,6 +555,7 @@ mod tests {
     }
 
     fn run_sigma_circuit_test<const N: usize>() -> Result<(), SynthesisError> {
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
         // Generate a valid ElGamal public key (sk * G, not a random point)
         let sk = Fr::rand(&mut rng);
@@ -787,19 +766,19 @@ mod tests {
 
     #[test]
     fn test_sigma_circuit_rerand_4() -> Result<(), SynthesisError> {
-        setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         run_sigma_circuit_test::<4>()
     }
 
     #[test]
     fn test_sigma_circuit_rerand_8() -> Result<(), SynthesisError> {
-        setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         run_sigma_circuit_test::<8>()
     }
 
     #[test]
     fn test_sigma_circuit_rerand_10() -> Result<(), SynthesisError> {
-        setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         run_sigma_circuit_test::<10>()
     }
 }

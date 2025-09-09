@@ -526,27 +526,9 @@ mod tests {
     use ark_std::rand::rngs::StdRng;
     use ark_std::rand::SeedableRng;
     use ark_std::Zero;
-    use tracing_subscriber::filter;
-    use tracing_subscriber::fmt::format::FmtSpan;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    use crate::test_utils::setup_test_tracing;
 
     const TEST_TARGET: &str = "nexus_nova";
-
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_line_number(true) // Add line numbers
-                    .with_timer(tracing_subscriber::fmt::time::uptime()) // Use elapsed time instead of date
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
 
     /// Helper function to generate proving and verifying keys for testing
     /// These keys can be generated once and reused across tests
@@ -624,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_shuffling_proof_bn254() {
-        let _gaurd = setup_test_tracing();
+        let _gaurd = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(12345);
 
         // Define types for BN254 with Grumpkin
@@ -698,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_shuffling_proof_with_dummy_permutation() -> Result<(), Box<dyn std::error::Error>> {
-        let _tracing_gaurd = setup_test_tracing();
+        let _tracing_gaurd = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(12345);
 
         // Define types for the test

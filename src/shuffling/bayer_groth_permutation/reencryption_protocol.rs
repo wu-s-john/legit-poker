@@ -522,26 +522,12 @@ mod tests {
     use ark_serialize::CanonicalSerialize;
     use ark_std::{test_rng, vec::Vec};
     use rand::RngCore;
-    use tracing_subscriber::{
-        filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-    };
+    use crate::test_utils::setup_test_tracing;
 
     // Test tracing target
     const TEST_TARGET: &str = "nexus_nova";
 
     /// Setup test tracing for debugging
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
 
     /// Test instance with all necessary data for a complete test
     struct SigmaTestInstance<const N: usize> {
@@ -589,6 +575,7 @@ mod tests {
     /// Helper to build a complete test instance with compile-time size checking
     #[tracing::instrument(target = TEST_TARGET, skip_all, fields(N = N, seed = seed))]
     fn build_sigma_instance<const N: usize>(seed: u64) -> SigmaTestInstance<N> {
+        let _guard = setup_test_tracing(TEST_TARGET);
         tracing::debug!("Building sigma test instance for N={}, seed={}", N, seed);
         let mut rng = test_rng();
         for _ in 0..seed {
@@ -662,7 +649,7 @@ mod tests {
     /// Test with standard deck size (N=52)
     #[test]
     fn test_ni_sigma_protocol_deck_size() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const DECK_SIZE: usize = 52;
         tracing::info!(target: TEST_TARGET, "Starting deck size test with N={}", DECK_SIZE);
 
@@ -708,7 +695,7 @@ mod tests {
     /// Test edge case with N=1
     #[test]
     fn test_ni_sigma_protocol_n1() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 1;
         tracing::info!(target: TEST_TARGET, "Starting edge case test with N={}", N);
 
@@ -751,7 +738,7 @@ mod tests {
     /// Test determinism - same inputs produce same proof
     #[test]
     fn test_determinism() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 10;
         tracing::info!(target: TEST_TARGET, "Starting determinism test with N={}", N);
 
@@ -840,7 +827,7 @@ mod tests {
     /// Test randomized property - many random instances
     #[test]
     fn test_randomized_many_seeds() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 8;
         const NUM_TESTS: usize = 10;
         tracing::info!(target: TEST_TARGET, "Starting randomized test with N={}, {} iterations", N, NUM_TESTS);
@@ -894,7 +881,7 @@ mod tests {
     /// Test helper functions
     #[test]
     fn test_helper_functions() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 3;
         tracing::info!(target: TEST_TARGET, "Starting helper functions test with N={}", N);
 
@@ -952,7 +939,7 @@ mod tests {
     /// Test serialization round-trip
     #[test]
     fn test_serialization() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 6;
         tracing::info!(target: TEST_TARGET, "Starting serialization test with N={}", N);
 

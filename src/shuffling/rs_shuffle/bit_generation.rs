@@ -195,31 +195,13 @@ mod tests {
     use crate::shuffling::rs_shuffle::{LEVELS, N}; // Import the constants for tests
     use ark_bn254::Fr as TestField; // BN254's scalar field = Grumpkin's base field (for SNARK circuits)
     use ark_relations::gr1cs::ConstraintSystem;
-    use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
+    use crate::test_utils::setup_test_tracing;
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        use tracing_subscriber::EnvFilter;
-
-        // Use environment filter that allows all shuffle logs
-        let filter = EnvFilter::new("rs-shuffle=debug");
-        let timer = tracing_subscriber::fmt::time::uptime();
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER)
-                    .with_test_writer()
-                    .with_file(true)
-                    .with_timer(timer)
-                    .with_line_number(true), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
+    
 
     #[test]
     fn test_derive_split_bits_dimensions() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         let seed = TestField::from(12345u64);
         let (bits_mat, num_samples) = derive_split_bits::<TestField, N, LEVELS>(seed);
 
@@ -236,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_deterministic() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         let seed = TestField::from(98765u64);
 
         // Generate bits twice with same seed
@@ -256,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_different_seeds() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         let seed1 = TestField::from(111u64);
         let seed2 = TestField::from(222u64);
 
@@ -302,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_circuit_dimensions() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         let cs = ConstraintSystem::<TestField>::new_ref();
 
         // Create seed as public input
@@ -336,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_circuit_native_consistency() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         // Test that circuit and native versions produce the same bits
         let seed_field = TestField::from(7777u64);
 
@@ -375,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_circuit_deterministic() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         // Test that the same seed produces the same bits
         let seed = TestField::from(98765u64);
 
@@ -422,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_derive_split_bits_circuit_constraint_count() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(LOG_TARGET);
         let cs = ConstraintSystem::<TestField>::new_ref();
 
         let initial_constraints = cs.num_constraints();

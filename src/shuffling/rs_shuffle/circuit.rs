@@ -566,28 +566,13 @@ mod tests {
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_relations::gr1cs::ConstraintSystem;
-    use tracing_subscriber::{
-        filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-    };
+    use crate::test_utils::setup_test_tracing;
 
     const TEST_TARGET: &str = "nexus_nova";
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
-
     #[test]
     fn test_rs_shuffle_ordinary_case() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 52;
         const LEVELS: usize = 5;
 
@@ -771,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_rs_shuffle_with_reencryption() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 52;
         const LEVELS: usize = 5;
 

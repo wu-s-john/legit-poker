@@ -686,9 +686,7 @@ mod tests {
     };
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::{test_rng, vec::Vec, Zero};
-    use tracing_subscriber::{
-        filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-    };
+    use crate::test_utils::setup_test_tracing;
 
     // Additional imports for moved tests
     use crate::shuffling::rs_shuffle::data_structures::{
@@ -733,19 +731,7 @@ mod tests {
         c_d + c_minus_z
     }
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_line_number(true) // Add line numbers to trace output
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
+    
 
     /// Helper function to allocate an array of UnsortedRow as UnsortedRowVar in the constraint system
     fn allocate_unsorted_rows<F: PrimeField, const N: usize>(
@@ -1118,7 +1104,7 @@ mod tests {
 
     #[test]
     fn test_verify_row_constraints_single_level_alternating() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 8;
 
         // Create a single bucket with all elements
@@ -1168,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_verify_row_constraints_two_successive_levels() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 8;
 
         // Level 0: Single bucket containing all elements
@@ -1237,7 +1223,7 @@ mod tests {
 
     #[test]
     fn test_verify_row_constraints_edge_cases() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 4;
 
         // Test case 1: All zeros
@@ -1285,7 +1271,7 @@ mod tests {
 
     #[test]
     fn test_verify_row_constraints_multi_bucket() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 6;
 
         // Create two initial buckets
@@ -1336,7 +1322,7 @@ mod tests {
 
     #[test]
     fn test_verify_shuffle_level_single() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 8;
 
         tracing::debug!(target: TEST_TARGET, "Starting test_verify_shuffle_level_single");
@@ -1394,7 +1380,7 @@ mod tests {
 
     #[test]
     fn test_verify_shuffle_level_two_successive() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         const N: usize = 8;
 
         tracing::debug!(target: TEST_TARGET, "Starting test_verify_shuffle_level_two_successive");
@@ -1480,7 +1466,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_rs_shuffle_with_random_blinding() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
 
         // Test with random seed and blinding factors
@@ -1502,7 +1488,7 @@ mod tests {
     #[ignore]
     #[test]
     fn test_rs_shuffle_with_zero_blinding() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
 
         // Test with random seed but zero blinding factors
@@ -1521,7 +1507,7 @@ mod tests {
 
     #[test]
     fn test_rs_shuffle_with_bayer_groth_proof_consistency() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         // This test verifies that the gadget produces consistent results
         // with the native computation

@@ -21,9 +21,7 @@ use ark_relations::gr1cs::{
     ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, SynthesisError,
 };
 use ark_std::test_rng;
-use tracing_subscriber::filter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use crate::test_utils::setup_test_tracing;
 
 type TestCurve = GrumpkinProjective;
 type TestCurveConfig = GrumpkinConfig;
@@ -92,24 +90,9 @@ impl ConstraintSynthesizer<BaseField> for VrfProveCircuit {
     }
 }
 
-fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-    let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
-
-    let timer = tracing_subscriber::fmt::time::uptime();
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_timer(timer)
-                .with_test_writer(), // This ensures output goes to test stdout
-        )
-        .with(filter)
-        .set_default()
-}
-
 #[test]
 fn test_native_vrf_roundtrip() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -148,7 +131,7 @@ fn test_native_vrf_roundtrip() {
 
 #[test]
 fn test_native_vs_snark_parity() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -193,7 +176,7 @@ fn test_native_vs_snark_parity() {
 
 #[test]
 fn test_deterministic_vrf_output() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -219,7 +202,7 @@ fn test_deterministic_vrf_output() {
 
 #[test]
 fn test_different_messages_different_outputs() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -246,7 +229,7 @@ fn test_different_messages_different_outputs() {
 
 #[test]
 fn test_different_keys_different_outputs() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -274,7 +257,7 @@ fn test_different_keys_different_outputs() {
 
 #[test]
 fn test_beta_computation_consistency() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
 
     // Setup parameters
@@ -319,7 +302,7 @@ fn test_hash_to_curve_consistency() {
     use crate::vrf::native::hash_to_curve;
     use ark_crypto_primitives::crh::pedersen::constraints::CRHParametersVar as PedersenCRHParamsVar;
 
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
 
     let mut rng = test_rng();
     let params = VrfParams::<TestCurve>::setup(&mut rng);
@@ -385,7 +368,7 @@ fn test_hash_to_curve_consistency() {
 
 #[test]
 fn test_generate_nonce_consistency() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     use crate::vrf::gadgets::{generate_nonce_var, hash_to_curve_var};
     use crate::vrf::native::{generate_nonce, hash_to_curve};
     use ark_crypto_primitives::crh::pedersen::constraints::CRHParametersVar as PedersenCRHParamsVar;
@@ -467,7 +450,7 @@ fn test_generate_nonce_consistency() {
 
 #[test]
 fn test_challenge_generation_consistency() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     use crate::vrf::gadgets::generate_challenge_var;
     use crate::vrf::native::{generate_challenge, generate_nonce, hash_to_curve};
 
@@ -533,7 +516,7 @@ fn test_challenge_generation_consistency() {
 
 #[test]
 fn test_vrf_proof_var_allocation() {
-    let _guard = setup_test_tracing();
+    let _guard = setup_test_tracing(TEST_TARGET);
     let mut rng = test_rng();
     
     // Setup parameters

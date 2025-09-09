@@ -337,33 +337,13 @@ mod tests {
     use ark_ff::UniformRand;
     use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef};
     use ark_std::rand;
-    use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt};
+    use crate::test_utils::setup_test_tracing;
 
     const TEST_TARGET: &str = "shuffle";
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        use tracing_subscriber::EnvFilter;
-
-        // Use environment filter that allows all shuffle logs
-        let filter = EnvFilter::new("shuffle=debug");
-        let timer = tracing_subscriber::fmt::time::uptime();
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER)
-                    .with_test_writer()
-                    .with_file(true)
-                    .with_timer(timer)
-                    .with_line_number(true), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
-
     #[test]
     fn test_generate_sample_deck() -> Result<(), Box<dyn std::error::Error>> {
-        let _gaurd = setup_test_tracing();
+        let _gaurd = setup_test_tracing(TEST_TARGET);
         // Use BN254 G1 curve
         use ark_bn254::{g1, G1Projective};
 
@@ -768,7 +748,7 @@ mod tests {
 
     #[test]
     fn test_snark_generate_sample_deck() -> Result<(), Box<dyn std::error::Error>> {
-        let _gaurd = setup_test_tracing();
+        let _gaurd = setup_test_tracing(TEST_TARGET);
         // Use Grumpkin curve
         use ark_bn254::Bn254;
         use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};

@@ -715,25 +715,11 @@ mod tests {
     use ark_bn254::{Fr, G1Projective};
     use ark_crypto_primitives::commitment::pedersen::Window as PedersenWindow;
     use ark_std::test_rng;
-    use tracing_subscriber::{
-        filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-    };
+    use crate::test_utils::setup_test_tracing;
 
     const TEST_TARGET: &str = LOG_TARGET;
 
     /// Setup test tracing for debugging
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::TRACE);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
 
     /// Test window configuration for small tests
     #[derive(Clone, PartialEq, Eq, Hash)]
@@ -760,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_commitment_opening_correctness() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         const N: usize = 8;
         let mut rng = test_rng();
@@ -794,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_commitment_opening_wrong_blinding() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         const N: usize = 8;
         let mut rng = test_rng();
@@ -818,7 +804,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_commitment_opening_invalid_proof() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         const N: usize = 8;
         let mut rng = test_rng();
@@ -842,7 +828,7 @@ mod tests {
     fn test_pedersen_opening_with_values<const N: usize>(
         m: &[Fr; N],
     ) -> PedersenCommitmentOpeningProof<G1Projective> {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = test_rng();
         let params = setup_params::<N>();
@@ -883,7 +869,7 @@ mod tests {
 
     #[test]
     fn test_size_1_base_case() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
         let m: [Fr; 1] = [Fr::rand(&mut rng)];
 
@@ -917,7 +903,7 @@ mod tests {
 
     #[test]
     fn test_size_2_simple_case() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let m: [Fr; 2] = [Fr::from(3u64), Fr::from(7u64)];
 
@@ -941,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_size_4_edge_case() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let m: [Fr; 4] = std::array::from_fn(|i| Fr::from((i + 1) as u64));
 
@@ -967,7 +953,7 @@ mod tests {
 
     #[test]
     fn test_size_8_more_involved() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = test_rng();
 
@@ -996,7 +982,7 @@ mod tests {
 
     #[test]
     fn test_size_64_large_case() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = test_rng();
 
@@ -1022,7 +1008,7 @@ mod tests {
 
     #[test]
     fn test_size_52_poker_deck() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = test_rng();
 
@@ -1086,7 +1072,7 @@ mod tests {
         size: usize,
         test_name: &str,
     ) -> Result<(), PedersenCommitmentOpeningError> {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
 
         tracing::info!(target: TEST_TARGET, size, test_name, "Testing scalar folding");
@@ -1176,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_scalar_folding_link_mismatch() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = test_rng();
 
         // Create a message and commitment

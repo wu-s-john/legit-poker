@@ -557,32 +557,13 @@ mod tests {
     use ark_std::rand::SeedableRng;
     use ark_std::Zero;
     use tracing::{debug, info};
-    use tracing_subscriber::filter;
-    use tracing_subscriber::fmt::format::FmtSpan;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
+    use crate::test_utils::setup_test_tracing;
 
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new()
-            .with_default(tracing::Level::WARN)
-            .with_target("game_demo", tracing::Level::DEBUG)
-            .with_target("zk_poker", tracing::Level::DEBUG)
-            .with_target("shuffling", tracing::Level::DEBUG)
-            .with_target("nexus_nova", tracing::Level::DEBUG)
-            .with_target("shuffler_service", tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
+    const TEST_TARGET: &str = "shuffler_service";
 
     #[test]
     fn test_shuffler_service() {
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(12345);
 
         // Create shuffler service
@@ -636,7 +617,7 @@ mod tests {
 
     #[test]
     fn test_complete_shuffle_and_decrypt_protocol() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(42);
 
         // ============ PHASE 1: SETUP ============
@@ -833,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_multiple_card_values() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(99);
 
         // Setup

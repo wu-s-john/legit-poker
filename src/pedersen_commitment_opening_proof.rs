@@ -214,6 +214,7 @@ mod tests {
     use std::marker::PhantomData;
 
     use super::*;
+    use crate::test_utils::setup_test_tracing;
     use ark_bn254::{Bn254, Fr};
     use ark_crypto_primitives::commitment::pedersen::Randomness as PedersenRandomness;
     use ark_ed_on_bn254::{
@@ -226,9 +227,7 @@ mod tests {
     use ark_serialize::CanonicalDeserialize;
     use ark_snark::SNARK;
     use rand::{rngs::StdRng, SeedableRng};
-    use tracing_subscriber::{
-        filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
-    };
+    
 
     /// Simple circuit wrapper for Groth16 proof generation
     /// This is only used internally for proof generation
@@ -268,19 +267,6 @@ mod tests {
     }
 
     const TEST_TARGET: &str = "nexus_nova";
-
-    fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
-        let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
-            )
-            .with(filter)
-            .set_default()
-    }
 
     fn prove_opening_groth16<W: PedersenWindow, R: RngCore + CryptoRng>(
         rng: &mut R,
@@ -332,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_opening_prove_and_verify() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
         let mut rng = StdRng::seed_from_u64(0);
 
         // 1) Setup Pedersen parameters for our window (constants in-circuit)
@@ -374,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_different_randomness_different_commitment() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -395,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_different_messages_different_commitment() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -416,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_message_length_validation() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -469,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_circuit_constraint_counts() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -510,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_zero_message_and_randomness() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -543,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_proof_serialization() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -590,7 +576,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_hash_52_elements_with_constraint_tracking() {
-        let _guard = setup_test_tracing();
+        let _guard = setup_test_tracing(TEST_TARGET);
 
         use crate::track_constraints;
         use ark_crypto_primitives::crh::pedersen::{
