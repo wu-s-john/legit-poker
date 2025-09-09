@@ -517,7 +517,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shuffling::bayer_groth_permutation::utils::extract_pedersen_bases as native_extract_bases;
+    use crate::shuffling::pedersen_commitment::extract_pedersen_bases as native_extract_bases;
     use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
     use crate::shuffling::{generate_random_ciphertexts, shuffle_and_rerandomize_random};
     use ark_bn254::{Fq, Fr, G1Projective};

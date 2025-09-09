@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_opening_prove_and_verify() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
         let mut rng = StdRng::seed_from_u64(0);
 
         // 1) Setup Pedersen parameters for our window (constants in-circuit)
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_different_randomness_different_commitment() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_different_messages_different_commitment() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_message_length_validation() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_circuit_constraint_counts() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_zero_message_and_randomness() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_proof_serialization() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         let mut rng = StdRng::seed_from_u64(0);
         let params = pedersen_setup::<JubjubProjective, PedersenWin, _>(&mut rng);
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_pedersen_hash_52_elements_with_constraint_tracking() {
-        let _gaurd = setup_test_tracing();
+        let _guard = setup_test_tracing();
 
         use crate::track_constraints;
         use ark_crypto_primitives::crh::pedersen::{

@@ -1,5 +1,6 @@
 //! Fiat-Shamir challenge derivation for Bayer-Groth permutation proof
 
+use crate::pedersen_commitment::pedersen_commit_scalars;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
@@ -154,10 +155,7 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
 
         // Step 1: Compute Pedersen commitment to permutation vector using DeckHashWindow parameters
         // This uses a linearly homomorphic commitment over scalar field elements
-        let c_perm = crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<
-            G,
-            N,
-        >(perm_params, &perm_vector, prover_blinding_r);
+        let c_perm = pedersen_commit_scalars::<G, N>(perm_params, &perm_vector, prover_blinding_r);
 
         // Step 2: Absorb commitment to permutation vector
         self.absorb_perm_vector_commitment(&c_perm);
@@ -178,11 +176,7 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
         // Step 5: Compute Pedersen commitment to power vector using ReencryptionWindow parameters
         // The power vector contains scalar field elements x^π(i), so we use the linearly homomorphic commitment
         let c_power_perm =
-            crate::shuffling::bayer_groth_permutation::utils::pedersen_commit_scalars::<G, N>(
-                power_params,
-                &perm_power_vector,
-                prover_blinding_s,
-            );
+            pedersen_commit_scalars::<G, N>(power_params, &perm_power_vector, prover_blinding_s);
 
         // Step 6: Absorb commitment to power vector
         self.absorb_perm_power_vector_commitment(&c_power_perm);

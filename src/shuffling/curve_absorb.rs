@@ -108,6 +108,39 @@ where
 }
 
 // ============================================================================
+// Implement CurveAbsorbGadget for references to ProjectiveVar
+// ============================================================================
+
+impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fq, ROVar>
+    for &'a ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fq, PoseidonSponge<ark_bn254::Fq>>,
+{
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
+        // Convert to affine representation in-circuit
+        let affine = self.to_affine()?;
+        // Use the existing AbsorbGadget implementation for the affine variable
+        sponge.absorb(&affine)?;
+        Ok(())
+    }
+}
+
+impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fr, ROVar>
+    for &'a ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
+where
+    ROVar: CryptographicSpongeVar<ark_bn254::Fr, PoseidonSponge<ark_bn254::Fr>>,
+{
+    fn curve_absorb_gadget(&self, sponge: &mut ROVar) -> Result<(), SynthesisError> {
+        // Convert to affine and absorb
+        use ark_r1cs_std::convert::ToConstraintFieldGadget;
+        let affine = self.to_affine()?;
+        let coords = affine.to_constraint_field()?;
+        sponge.absorb(&coords)?;
+        Ok(())
+    }
+}
+
+// ============================================================================
 // Helper functions for convenient usage
 // ============================================================================
 
@@ -167,7 +200,7 @@ mod tests {
         // Get the result
         let native_result: Fq = native_sponge.squeeze_field_elements(1)[0];
 
-        println!("Native absorption result: {:?}", native_result);
+        tracing::debug!(target: "test", ?native_result, "Native absorption result");
 
         // ============= Circuit Absorption =============
         let cs = ConstraintSystem::<Fq>::new_ref();
@@ -190,7 +223,7 @@ mod tests {
         let circuit_result_var = circuit_sponge.squeeze_field_elements(1).unwrap()[0].clone();
         let circuit_result = circuit_result_var.value().unwrap();
 
-        println!("Circuit absorption result: {:?}", circuit_result);
+        tracing::debug!(target: "test", ?circuit_result, "Circuit absorption result");
 
         // ============= Compare Results =============
         // Assert that native and circuit results are equal
@@ -205,7 +238,7 @@ mod tests {
             "Circuit constraints should be satisfied"
         );
 
-        println!("✅ Test passed: Native and circuit sponge absorption produce identical results!");
+        tracing::info!(target: "test", "✅ Test passed: Native and circuit sponge absorption produce identical results!");
     }
 
     #[test]
@@ -214,7 +247,7 @@ mod tests {
         let config = crate::config::poseidon_config::<Fq>();
 
         for i in 0..3 {
-            println!("\n--- Testing point {} ---", i + 1);
+            tracing::debug!(target: "test", point_index = i + 1, "Testing point");
 
             let point = G1Projective::rand(&mut rng);
 
@@ -240,10 +273,10 @@ mod tests {
             // Verify equality
             assert_eq!(native_result, circuit_result);
             assert!(cs.is_satisfied().unwrap());
-            println!("Point {} passed ✓", i + 1);
+            tracing::debug!(target: "test", point_index = i + 1, "Point passed ✓");
         }
 
-        println!("\n✅ All multiple point tests passed!");
+        tracing::info!(target: "test", "✅ All multiple point tests passed!");
     }
 
     #[test]
@@ -279,6 +312,6 @@ mod tests {
             "Identity point absorption should be consistent"
         );
         assert!(cs.is_satisfied().unwrap());
-        println!("✅ Identity point test passed!");
+        tracing::info!(target: "test", "✅ Identity point test passed!");
     }
 }
