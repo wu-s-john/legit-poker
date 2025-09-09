@@ -17,6 +17,7 @@ pub mod proof_system;
 pub mod prove;
 pub mod public_key_setup;
 pub mod rs_shuffle;
+pub mod permutation_proof;
 pub mod setup;
 pub mod shuffling_proof;
 pub mod unified_shuffler;
