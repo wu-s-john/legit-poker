@@ -102,6 +102,50 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
         Ok(perm_power_challenge)
     }
 
+    /// Derive power challenge from a commitment to the permutation vector
+    ///
+    /// This is a minimal version for verifiers that only need the power challenge.
+    /// It absorbs the permutation commitment and derives the power challenge.
+    ///
+    /// Parameters:
+    /// - cs: Constraint system reference
+    /// - permutation_commitment: Commitment to the permutation vector (curve point)
+    ///
+    /// Returns: The power challenge as EmulatedFpVar<ScalarField, F>
+    pub fn derive_power_challenge_from_commitment<C, CG>(
+        &mut self,
+        cs: ConstraintSystemRef<F>,
+        permutation_commitment: &CG,
+    ) -> Result<EmulatedFpVar<C::ScalarField, F>, SynthesisError>
+    where
+        C: CurveGroup,
+        C::BaseField: PrimeField,
+        CG: CurveAbsorbGadget<F, ROVar>,
+    {
+        // Step 1: Absorb commitment to permutation vector
+        self.absorb_perm_vector_commitment(permutation_commitment)?;
+        tracing::debug!(target: LOG_TARGET, "Absorbed permutation vector commitment");
+
+        // Step 2: Derive power challenge in base field
+        let perm_power_challenge = self.derive_perm_power_challenge()?;
+
+        // Step 3: Convert from base field to scalar field
+        let perm_power_challenge_scalar =
+            EmulatedFpVar::<C::ScalarField, F>::new_witness(cs, || {
+                let power_base = perm_power_challenge.value().unwrap_or_default();
+                let power_scalar = C::ScalarField::from_le_bytes_mod_order(
+                    &power_base.into_bigint().to_bytes_le(),
+                );
+                Ok(power_scalar)
+            })?;
+
+        tracing::debug!(target: LOG_TARGET,
+            perm_power_challenge = ?perm_power_challenge_scalar.value().ok(),
+            "Derived power challenge from commitment");
+
+        Ok(perm_power_challenge_scalar)
+    }
+
     /// Absorb the commitment to the power vector using CurveAbsorbGadget
     fn absorb_perm_power_vector_commitment<CG>(
         &mut self,
@@ -180,24 +224,14 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
 
         let cs_clone = cs.clone();
         track_constraints!(cs_clone, "bg_setup_protocol", LOG_TARGET, {
-            // Step 1: Absorb commitment to permutation vector
-            self.absorb_perm_vector_commitment(c_perm)?;
-            tracing::debug!(target: LOG_TARGET, c_perm = ?c_perm.value().ok(), "Step 1: Absorbed permutation vector commitment");
-
-            // Step 2: Derive power challenge
-            let perm_power_challenge = self.derive_perm_power_challenge()?;
-
-            let perm_power_challenge_scalar =
-                EmulatedFpVar::<C::ScalarField, F>::new_witness(cs.clone(), || {
-                    let power_base = perm_power_challenge.value().unwrap_or_default();
-                    let power_scalar = C::ScalarField::from_le_bytes_mod_order(
-                        &power_base.into_bigint().to_bytes_le(),
-                    );
-                    Ok(power_scalar)
-                })?;
-
+            // Step 1 & 2: Use the new method to derive power challenge from commitment
+            let perm_power_challenge_scalar = self.derive_power_challenge_from_commitment::<C, CG>(
+                cs.clone(),
+                c_perm,
+            )?;
             tracing::debug!(target: LOG_TARGET,
-                perm_power_challenge = ?perm_power_challenge_scalar.value().ok(), "Step 2: Derived power challenge");
+                perm_power_challenge = ?perm_power_challenge_scalar.value().ok(),
+                "Step 1-2: Derived power challenge from commitment");
 
             // Step 3: Absorb commitment to power vector
             self.absorb_perm_power_vector_commitment(c_power)?;
@@ -256,4 +290,114 @@ where
     let config = crate::config::poseidon_config::<F>();
     let sponge = PoseidonSpongeVar::new(cs.clone(), &config);
     BayerGrothTranscriptGadget::new(cs, domain, sponge)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+    use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
+    use ark_bn254::{Fq, Fr, G1Projective};
+    use ark_crypto_primitives::commitment::{
+        pedersen::Commitment as PedersenCommitment, CommitmentScheme,
+    };
+    use ark_r1cs_std::{
+        alloc::AllocVar, fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar,
+        alloc::AllocationMode,
+    };
+    use ark_relations::gr1cs::{ConstraintSystem, SynthesisError};
+    use ark_std::{rand::SeedableRng, test_rng, UniformRand};
+    use rand::rngs::StdRng;
+
+    type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
+
+    /// Test that the gadget's derive_power_challenge_from_commitment produces the same
+    /// power challenge as the native prover logic
+    #[test]
+    fn test_derive_power_challenge_consistency() -> Result<(), SynthesisError> {
+        let mut rng = test_rng();
+        let perm: [usize; 5] = [3, 1, 4, 2, 5];
+        let prover_blinding_r = Fr::rand(&mut rng);
+        let prover_blinding_s = Fr::rand(&mut rng);
+
+        // Create Pedersen parameters
+        let mut deck_rng = StdRng::seed_from_u64(42);
+        let perm_params = PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut deck_rng)
+            .expect("Failed to setup DeckHashWindow Pedersen parameters");
+        let mut power_rng = StdRng::seed_from_u64(43);
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut power_rng)
+                .expect("Failed to setup ReencryptionWindow Pedersen parameters");
+
+        // ============= Native Prover =============
+        let mut native_transcript = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
+        let (_, native_setup) = native_transcript.compute_power_challenge_setup::<G1Projective, 5>(
+            &perm_params,
+            &power_params,
+            &perm,
+            prover_blinding_r,
+            prover_blinding_s,
+        );
+
+        // Extract the native power challenge (in scalar field Fr)
+        let native_power_challenge: Fr = native_setup.power_challenge;
+        let native_c_perm = native_setup.permutation_commitment;
+
+        tracing::debug!(
+            target: "test",
+            ?native_power_challenge,
+            ?native_c_perm,
+            "Native prover results"
+        );
+
+        // ============= Gadget Verifier =============
+        let cs = ConstraintSystem::<Fq>::new_ref();
+
+        // Allocate the permutation commitment as a circuit variable
+        let c_perm_var = G1Var::new_variable(
+            cs.clone(),
+            || Ok(native_c_perm),
+            AllocationMode::Witness,
+        )?;
+
+        // Create gadget transcript and derive power challenge from commitment
+        let mut gadget_transcript = new_bayer_groth_transcript_gadget_with_poseidon::<Fq>(
+            cs.clone(),
+            b"test-domain",
+        )?;
+
+        let gadget_power_challenge = gadget_transcript
+            .derive_power_challenge_from_commitment::<G1Projective, G1Var>(
+                cs.clone(),
+                &c_perm_var,
+            )?;
+
+        // Extract the gadget power challenge value
+        let gadget_power_challenge_value: Fr = gadget_power_challenge.value()?;
+
+        tracing::debug!(
+            target: "test",
+            ?gadget_power_challenge_value,
+            "Gadget verifier result"
+        );
+
+        // ============= Verify Consistency =============
+        assert_eq!(
+            native_power_challenge, gadget_power_challenge_value,
+            "Native and gadget power challenges should be identical"
+        );
+
+        // Verify constraint system is satisfied
+        assert!(
+            cs.is_satisfied()?,
+            "Circuit constraints should be satisfied"
+        );
+
+        tracing::info!(
+            target: "test",
+            "✅ Test passed: Gadget derives same power challenge as native prover"
+        );
+
+        Ok(())
+    }
 }
