@@ -17,7 +17,7 @@
 //! - To avoid in-circuit exponentiation by permutation indices, the power-permutation vector
 //!   `b` is passed as a witness and checked to be a permutation of the base powers `a`.
 
-use ark_ec::{CurveGroup, PrimeGroup};
+use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::convert::ToBitsGadget;
@@ -25,7 +25,6 @@ use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::fields::{emulated_fp::EmulatedFpVar, fp::FpVar};
 use ark_r1cs_std::groups::CurveVar;
-use ark_r1cs_std::GR1CSVar;
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
 use crate::field_conversion::base_to_scalar;
@@ -52,9 +51,14 @@ pub struct PermutationParameters<'a, C: CurveGroup, R: rand::RngCore> {
 }
 
 /// In-circuit parameters for the permutation proof gadgets
-pub struct PermutationGadgetParameters<'a, C: CurveGroup> {
+pub struct PermutationGadgetParameters<'a, C: CurveGroup> 
+where
+    C::BaseField: ark_ff::PrimeField,
+{
     /// VRF parameters used by the VRF proving gadget
     pub vrf_params: &'a crate::vrf::VrfParams<C>,
+    /// Poseidon sponge configuration
+    pub sponge_config: &'a ark_crypto_primitives::sponge::poseidon::PoseidonConfig<C::BaseField>,
     /// Number of Poseidon field elements used to derive the RS bit-matrix
     pub num_samples: usize,
 }
@@ -235,10 +239,25 @@ where
     >,
 {
     track_constraints!(&cs, "prove_permutation_gadget", LOG_TARGET, {
-        // 1) VRF prove in-circuit; bind pk to public key
-        let (pk_var, _gamma, _c, _s, beta) =
-            prove_vrf_gadget::<C, GG>(cs.clone(), gadget_params.vrf_params, msg_bytes, sk_var)?;
-        pk_var.enforce_equal(pk_public)?;
+        // 1) VRF prove in-circuit
+        let (_proof_var, _nonce_k, _beta) = prove_vrf_gadget::<
+            C,
+            GG,
+            ark_crypto_primitives::sponge::poseidon::PoseidonSponge<C::BaseField>,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
+        >(
+            cs.clone(),
+            gadget_params.vrf_params,
+            gadget_params.sponge_config,
+            msg_bytes,
+            sk_var.clone(),
+        )?;
+        
+        // Compute pk = sk * G and enforce it equals the public key
+        let g = GG::constant(C::generator());
+        let sk_bits = sk_var.to_bits_le()?;
+        let pk_computed = g.scalar_mul_le(sk_bits.iter())?;
+        pk_computed.enforce_equal(pk_public)?;
 
         // 2) RS bit binding: ensure the RS bit-matrix equals trimmed bits of alphas
         bind_rs_bits_to_alphas::<ConstraintF<C>, N, LEVELS>(
@@ -376,7 +395,6 @@ mod tests {
     fn test_bg_power_challenge_and_opening_consistency() {
         use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
-        use crate::shuffling::bayer_groth_permutation::bg_setup::BayerGrothTranscript;
         use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
         use ark_crypto_primitives::commitment::{
             pedersen::Commitment as PedersenCommitment, CommitmentScheme,
@@ -573,8 +591,10 @@ mod tests {
             });
 
         // Gadget params
+        let sponge_config = crate::config::poseidon_config::<BaseField>();
         let gadget_params = PermutationGadgetParameters::<G1Projective> {
             vrf_params: &vrf_params,
+            sponge_config: &sponge_config,
             num_samples,
         };
 
@@ -597,6 +617,13 @@ mod tests {
         )
         .unwrap();
 
-        assert!(cs.is_satisfied().unwrap());
+        if !cs.is_satisfied().unwrap() {
+            let unsatisfied = cs.which_is_unsatisfied().unwrap();
+            if let Some(msg) = unsatisfied {
+                panic!("unsatisfied constraint: {}", msg);
+            } else {
+                panic!("constraint not satisfied but no specific constraint returned");
+            }
+        }
     }
 }

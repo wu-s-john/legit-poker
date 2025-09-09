@@ -5,7 +5,7 @@ use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;
-use ark_ff::{BigInteger, Field, PrimeField};
+use ark_ff::{BigInteger, PrimeField};
 use ark_std::{fmt::Debug, vec::Vec};
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
@@ -144,7 +144,10 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
         permutation: &[usize; N],
         prover_blinding_r: G::ScalarField,
         prover_blinding_s: G::ScalarField,
-    ) -> ([G::ScalarField; N], BGPowerChallengeSetup<G::ScalarField, G>)
+    ) -> (
+        [G::ScalarField; N],
+        BGPowerChallengeSetup<G::ScalarField, G>,
+    )
     where
         G: CurveGroup<BaseField = F> + CurveAbsorb<F, RO>,
         G::ScalarField: PrimeField,
@@ -317,6 +320,7 @@ mod tests {
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
     };
     use ark_ec::PrimeGroup;
+    use ark_ff::Field;
     use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar, prelude::*};
     use ark_relations::gr1cs::{ConstraintSystem, SynthesisError};
     use ark_std::Zero;
