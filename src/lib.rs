@@ -13,6 +13,9 @@ pub mod vrf;
 
 pub mod pedersen_commitment_opening_proof;
 
+#[cfg(test)]
+pub mod test_utils;
+
 #[cfg(feature = "gpu")]
 pub mod gpu;
 

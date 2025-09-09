@@ -4,7 +4,6 @@ use crate::engine::nl::{BettingState, InvariantCheck};
 
 use super::engine::{BettingEngineNL, EngineNL, Transition};
 use super::events::GameEvent;
-use super::legals::LegalActions;
 use super::types::*;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 

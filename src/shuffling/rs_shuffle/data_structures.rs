@@ -5,7 +5,7 @@ use std::borrow::Borrow;
 
 /// Row in the unsorted (witness) table for one level
 #[derive(Clone, Debug)]
-pub struct UnsortedRow {
+pub(crate) struct UnsortedRow {
     /// Split bit (0 or 1)
     pub bit: bool,
     /// Number of zeros seen before this row in its bucket
@@ -26,24 +26,49 @@ pub struct UnsortedRow {
 
 /// Row in the next (sorted) array after placement
 #[derive(Clone, Debug)]
-pub struct SortedRow {
+pub(crate) struct SortedRow {
     /// Stable original index
     pub idx: u16,
     /// Length of the bucket this row enters (for next level)
-    pub length: u16,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) length: u16,
     /// Bucket index this row belongs to
     pub bucket: u16,
 }
 
 /// Witness data for all levels
 #[derive(Clone, Debug)]
-pub struct PermutationWitnessData<const N: usize, const LEVELS: usize> {
+pub struct PermutationWitnessTrace<const N: usize, const LEVELS: usize> {
     /// Split bits matrix (LEVELS × N)
     pub bits_mat: [[bool; N]; LEVELS],
     /// Unsorted witness rows per level
-    pub uns_levels: [[UnsortedRow; N]; LEVELS],
+    pub(crate) uns_levels: [[UnsortedRow; N]; LEVELS],
     /// Next-arraycar per level
-    pub next_levels: [[SortedRow; N]; LEVELS],
+    pub(crate) next_levels: [[SortedRow; N]; LEVELS],
+}
+
+/// Output of the RS shuffle permutation operation
+/// Contains the witness trace, sample count, and permuted output
+#[derive(Clone, Debug)]
+pub struct RSShuffleTrace<T, const N: usize, const LEVELS: usize> {
+    /// The witness trace for the shuffle
+    pub witness_trace: PermutationWitnessTrace<N, LEVELS>,
+    /// The number of samples used in bit generation
+    pub num_samples: usize,
+    /// The permuted array
+    pub permuted_output: [T; N],
+}
+
+impl<T, const N: usize, const LEVELS: usize> RSShuffleTrace<T, N, LEVELS> {
+    /// Extract the permutation array (1-indexed) from the witness trace
+    /// This is useful for protocols that need the explicit permutation mapping
+    pub fn extract_permutation_array(&self) -> [usize; N] {
+        let final_sorted = &self.witness_trace.next_levels[LEVELS - 1];
+        std::array::from_fn(|i| {
+            // The permutation is 1-indexed, convert from u16 to usize
+            final_sorted[i].idx as usize + 1
+        })
+    }
 }
 
 impl UnsortedRow {
@@ -71,14 +96,6 @@ impl UnsortedRow {
 }
 
 impl SortedRow {
-    pub fn new(idx: u16, length: u16) -> Self {
-        Self {
-            idx,
-            length,
-            bucket: 0,
-        }
-    }
-
     pub fn new_with_bucket(idx: u16, length: u16, bucket: u16) -> Self {
         Self {
             idx,
@@ -94,7 +111,7 @@ impl SortedRow {
 
 /// Circuit variable version of UnsortedRow for use in SNARK constraints
 #[derive(Clone)]
-pub struct UnsortedRowVar<F: PrimeField> {
+pub(crate) struct UnsortedRowVar<F: PrimeField> {
     /// Split bit (0 or 1)
     pub bit: Boolean<F>,
     /// Number of zeros seen before this row in its bucket
@@ -146,16 +163,16 @@ impl<F: PrimeField> AllocVar<UnsortedRow, F> for UnsortedRowVar<F> {
 
 /// Circuit variable version of SortedRow for use in SNARK constraints
 #[derive(Clone)]
-pub struct SortedRowVar<F>
+pub(crate) struct SortedRowVar<F>
 where
     F: PrimeField,
 {
     /// Stable original index
     pub idx: FpVar<F>,
-    /// Length of the bucket this row enters (for next level)
-    pub length: FpVar<F>,
-    /// Bucket index this row belongs to
-    pub bucket: FpVar<F>,
+    // /// Length of the bucket this row enters (for next level)
+    // length: FpVar<F>,
+    // /// Bucket index this row belongs to
+    // bucket: FpVar<F>,
 }
 
 impl<F: PrimeField> AllocVar<SortedRow, F> for SortedRowVar<F> {
@@ -170,27 +187,27 @@ impl<F: PrimeField> AllocVar<SortedRow, F> for SortedRowVar<F> {
 
         Ok(Self {
             idx: FpVar::new_variable(cs.clone(), || Ok(F::from(row.idx as u64)), mode)?,
-            length: FpVar::new_variable(cs.clone(), || Ok(F::from(row.length as u64)), mode)?,
-            bucket: FpVar::new_variable(cs.clone(), || Ok(F::from(row.bucket as u64)), mode)?,
+            // length: FpVar::new_variable(cs.clone(), || Ok(F::from(row.length as u64)), mode)?,
+            // bucket: FpVar::new_variable(cs.clone(), || Ok(F::from(row.bucket as u64)), mode)?,
         })
     }
 }
 
 /// Circuit variable version of WitnessData for use in SNARK constraints
 #[derive(Clone)]
-pub struct PermutationWitnessDataVar<F: PrimeField, const N: usize, const LEVELS: usize> {
+pub struct PermutationWitnessTraceVar<F: PrimeField, const N: usize, const LEVELS: usize> {
     /// Split bits matrix (LEVELS × N) as witness variables
     pub bits_mat: [[Boolean<F>; N]; LEVELS],
     /// Unsorted witness rows per level
-    pub uns_levels: [[UnsortedRowVar<F>; N]; LEVELS],
+    pub(crate) uns_levels: [[UnsortedRowVar<F>; N]; LEVELS],
     /// Next-array per level
-    pub sorted_levels: [[SortedRowVar<F>; N]; LEVELS],
+    pub(crate) sorted_levels: [[SortedRowVar<F>; N]; LEVELS],
 }
 
 impl<F: PrimeField, const N: usize, const LEVELS: usize>
-    AllocVar<PermutationWitnessData<N, LEVELS>, F> for PermutationWitnessDataVar<F, N, LEVELS>
+    AllocVar<PermutationWitnessTrace<N, LEVELS>, F> for PermutationWitnessTraceVar<F, N, LEVELS>
 {
-    fn new_variable<T: Borrow<PermutationWitnessData<N, LEVELS>>>(
+    fn new_variable<T: Borrow<PermutationWitnessTrace<N, LEVELS>>>(
         cs: impl Into<gr1cs::Namespace<F>>,
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
@@ -277,7 +294,7 @@ impl<F: PrimeField, const N: usize, const LEVELS: usize>
     }
 }
 
-impl<F: PrimeField, const N: usize, const LEVELS: usize> PermutationWitnessDataVar<F, N, LEVELS> {
+impl<F: PrimeField, const N: usize, const LEVELS: usize> PermutationWitnessTraceVar<F, N, LEVELS> {
     /// Get the number of levels in the witness data (always LEVELS)
     pub const fn num_levels(&self) -> usize {
         LEVELS

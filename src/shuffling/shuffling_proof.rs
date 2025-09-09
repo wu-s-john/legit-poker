@@ -14,10 +14,10 @@ use super::proof_system::{
     PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionPublicInput,
     ReencryptionWitness,
 };
-use super::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
+use super::rs_shuffle::native::run_rs_shuffle_permutation;
 #[cfg(test)]
 use super::rs_shuffle::{
-    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessData,
+    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessTrace,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
@@ -48,7 +48,7 @@ fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
     seed: G::BaseField,
     bg_setup_params: &BayerGrothSetupParameters<G::ScalarField, G, N>,
     permutation_usize: &[usize; N],
-    witness_data: &PermutationWitnessData<N, LEVELS>,
+    witness_data: &PermutationWitnessTrace<N, LEVELS>,
     blinding_r: <G::Config as CurveConfig>::ScalarField,
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
@@ -212,19 +212,17 @@ where
 
     // Step 1: Apply RS shuffle permutation to get witness data and permutation
     tracing::debug!(target: LOG_TARGET, "Step 1: Applying RS shuffle permutation");
-    let (witness_data, _num_samples, ct_shuffled) =
-        apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
+    let rs_shuffle_trace =
+        run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
             seed, ct_input,
         );
 
-    // Extract the permutation from witness data's final sorted level
-    // The permutation maps original indices to new positions
-    let final_sorted = &witness_data.next_levels[LEVELS - 1];
-    // TODO: MAYBE we don't need to do this
-    let permutation_usize: [usize; N] = std::array::from_fn(|i| {
-        // The permutation is 1-indexed, convert from u16 to usize
-        final_sorted[i].idx as usize + 1
-    });
+    // Create an RSShuffleTrace with the permutation as the output
+    let permutation_trace = super::rs_shuffle::data_structures::RSShuffleTrace {
+        witness_trace: rs_shuffle_trace.witness_trace.clone(),
+        num_samples: rs_shuffle_trace.num_samples,
+        permuted_output: rs_shuffle_trace.extract_permutation_array(),
+    };
 
     // Step 2: Generate re-encryption randomness and apply re-encryption
     tracing::debug!(target: LOG_TARGET, "Step 2: Generating re-encryption");
@@ -234,8 +232,8 @@ where
         // Re-encrypt the shuffled ciphertext
         let r = rerandomization_factors[i];
         ElGamalCiphertext {
-            c1: ct_shuffled[i].c1 + config.generator * r,
-            c2: ct_shuffled[i].c2 + config.public_key * r,
+            c1: rs_shuffle_trace.permuted_output[i].c1 + config.generator * r,
+            c2: rs_shuffle_trace.permuted_output[i].c2 + config.public_key * r,
         }
     });
 
@@ -271,11 +269,12 @@ where
     let blinding_r = <G::Config as CurveConfig>::ScalarField::rand(rng);
     let blinding_s = <G::Config as CurveConfig>::ScalarField::rand(rng);
 
-    let mut bg_transcript = new_bayer_groth_transcript_with_poseidon::<G::BaseField>(&config.domain);
+    let mut bg_transcript =
+        new_bayer_groth_transcript_with_poseidon::<G::BaseField>(&config.domain);
     let (bg_setup_params, perm_power_vector) = bg_transcript.run_protocol::<G, N>(
         &perm_params,
         &power_params,
-        &permutation_usize,
+        &permutation_trace.permuted_output,
         blinding_r,
         blinding_s,
     );
@@ -293,8 +292,7 @@ where
 
     // Create PermutationWitness
     let permutation_witness = PermutationWitness::<G, GV, N, LEVELS>::new(
-        permutation_usize,
-        witness_data.clone(),
+        permutation_trace,
         blinding_r,
         blinding_s,
     );
@@ -584,8 +582,8 @@ mod tests {
             c2: G::zero(),
         });
 
-        let (witness_data, _, _) =
-            apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
+        let rs_shuffle_trace =
+            run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
                 seed, &dummy_ct,
             );
 
@@ -613,7 +611,7 @@ mod tests {
             seed,
             &bg_setup_params,
             &dummy_permutation,
-            &witness_data,
+            &rs_shuffle_trace.witness_trace,
             blinding_r,
             blinding_s,
             generator,

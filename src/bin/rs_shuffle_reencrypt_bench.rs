@@ -20,8 +20,7 @@ use tracing_subscriber::{
 use zk_poker::shuffling::{
     data_structures::{scalar_to_base_field, ElGamalCiphertext},
     rs_shuffle::{
-        circuit::RSShuffleWithReencryptionCircuit,
-        witness_preparation::apply_rs_shuffle_permutation, LEVELS, N,
+        circuit::RSShuffleWithReencryptionCircuit, native::run_rs_shuffle_permutation, LEVELS, N,
     },
 };
 
@@ -199,7 +198,7 @@ fn generate_test_data<E, C, const N: usize, const LEVELS: usize>(
     [E::ScalarField; N],
     E::ScalarField,
     E::ScalarField,
-    zk_poker::shuffling::rs_shuffle::data_structures::PermutationWitnessData<N, LEVELS>,
+    zk_poker::shuffling::rs_shuffle::data_structures::PermutationWitnessTrace<N, LEVELS>,
     usize,
 )
 where
@@ -225,9 +224,9 @@ where
     let seed = E::ScalarField::rand(rng);
 
     // Apply RS shuffle permutation
-    println!("  Applying RS shuffle permutation...");
-    let (witness_data, num_samples, ct_after_shuffle) =
-        apply_rs_shuffle_permutation::<E::ScalarField, _, N, LEVELS>(seed, &ct_init);
+    println!("  Run RS shuffle permutation...");
+    let rs_shuffle_trace =
+        run_rs_shuffle_permutation::<E::ScalarField, _, N, LEVELS>(seed, &ct_init);
 
     // Generate re-encryption randomizations (as curve's scalar field)
     let rerandomizations_scalar: [<C::Config as CurveConfig>::ScalarField; N] =
@@ -243,7 +242,8 @@ where
     // Apply re-encryption
     println!("  Applying re-encryption...");
     let ct_final: [ElGamalCiphertext<C>; N] = std::array::from_fn(|i| {
-        ct_after_shuffle[i].add_encryption_layer(rerandomizations_scalar[i], shuffler_pk)
+        rs_shuffle_trace.permuted_output[i]
+            .add_encryption_layer(rerandomizations_scalar[i], shuffler_pk)
     });
 
     // Generate Fiat-Shamir challenges
@@ -252,15 +252,15 @@ where
 
     (
         ct_init,
-        ct_after_shuffle,
+        rs_shuffle_trace.permuted_output,
         ct_final,
         seed,
         shuffler_pk,
         rerandomizations,
         alpha,
         beta,
-        witness_data,
-        num_samples,
+        rs_shuffle_trace.witness_trace,
+        rs_shuffle_trace.num_samples,
     )
 }
 

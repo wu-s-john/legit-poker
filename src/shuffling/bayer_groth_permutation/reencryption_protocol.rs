@@ -510,7 +510,7 @@ fn absorb_public_inputs<G: CurveGroup, RO>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
+    use crate::rs_shuffle::native::run_rs_shuffle_permutation;
     use crate::shuffling::{generate_random_ciphertexts, shuffle_and_rerandomize_random};
     use crate::ElGamalKeys;
     use ark_bn254::{Fq, Fr, G1Projective};
@@ -573,13 +573,13 @@ mod tests {
         let input: [usize; N] = std::array::from_fn(|i| i);
 
         // Apply RS shuffle permutation
-        let (_witness_data, _num_samples, shuffled) =
-            apply_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed_field, &input);
+        let rs_shuffle_trace =
+            run_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed_field, &input);
 
         // Convert shuffled array back to permutation array
         // pi[i] tells us where element i ended up
         let mut pi = [0usize; N];
-        for (new_pos, &original_idx) in shuffled.iter().enumerate() {
+        for (new_pos, &original_idx) in rs_shuffle_trace.permuted_output.iter().enumerate() {
             pi[original_idx] = new_pos;
         }
 

@@ -518,7 +518,7 @@ where
 mod tests {
     use super::*;
     use crate::shuffling::pedersen_commitment::extract_pedersen_bases as native_extract_bases;
-    use crate::shuffling::rs_shuffle::witness_preparation::apply_rs_shuffle_permutation;
+    use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
     use crate::shuffling::{generate_random_ciphertexts, shuffle_and_rerandomize_random};
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
@@ -595,13 +595,13 @@ mod tests {
         let indices: [usize; N] = core::array::from_fn(|i| i);
 
         // Apply RS shuffle to get the permutation
-        let (_witness_data, _num_samples, permuted_indices) =
-            apply_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &indices);
+        let rs_shuffle_trace =
+            run_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &indices);
 
         // Convert the permuted indices to a permutation array
         // pi[i] tells us where element i should go
         let mut pi = [0usize; N];
-        for (new_pos, &original_idx) in permuted_indices.iter().enumerate() {
+        for (new_pos, &original_idx) in rs_shuffle_trace.permuted_output.iter().enumerate() {
             pi[original_idx] = new_pos;
         }
 

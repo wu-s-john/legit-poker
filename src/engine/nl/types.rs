@@ -74,4 +74,3 @@ pub struct ActionLogEntry {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ActionLog(pub Vec<ActionLogEntry>);
-

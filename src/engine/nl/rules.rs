@@ -91,7 +91,7 @@ impl BettingState {
     pub fn compute_pots(&self) -> Result<super::types::Pots, StateError> {
         use super::types::{PlayerStatus, Pot, Pots};
         // contributions include all streets so far (total + current street)
-        let mut contrib: Vec<(SeatId, Chips, PlayerStatus)> = self
+        let contrib: Vec<(SeatId, Chips, PlayerStatus)> = self
             .players
             .iter()
             .map(|p| {

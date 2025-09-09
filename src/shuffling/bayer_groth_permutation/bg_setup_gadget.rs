@@ -82,7 +82,7 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
 
     /// Derive permutation power challenge from the transcript
     /// Returns perm_power_challenge which is used to compute the power vector
-    fn derive_perm_power_challenge(&mut self) -> Result<FpVar<F>, SynthesisError> {
+    pub fn derive_perm_power_challenge(&mut self) -> Result<FpVar<F>, SynthesisError> {
         // Squeeze one field element
         let elements = self.sponge.squeeze_field_elements(1)?;
         let mut perm_power_challenge = elements[0].clone();
@@ -249,10 +249,7 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
 pub fn new_bayer_groth_transcript_gadget_with_poseidon<F>(
     cs: ConstraintSystemRef<F>,
     domain: &[u8],
-) -> Result<
-    BayerGrothTranscriptGadget<F, PoseidonSponge<F>, PoseidonSpongeVar<F>>,
-    SynthesisError,
->
+) -> Result<BayerGrothTranscriptGadget<F, PoseidonSponge<F>, PoseidonSpongeVar<F>>, SynthesisError>
 where
     F: PrimeField,
 {

@@ -9,10 +9,56 @@ use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-/// Main witness preparation function (prover-side)
-pub fn prepare_witness_data<F, const N: usize, const LEVELS: usize>(
+/// Run RS shuffle permutation on a collection
+///
+/// This function generates the witness trace for RS shuffle and applies the resulting
+/// permutation to the input collection.
+///
+/// # Parameters
+/// - `seed`: The seed for deterministic permutation generation
+/// - `input`: The input array to be permuted
+///
+/// # Returns
+/// An `RSShuffleTrace` containing:
+/// - The witness trace for the shuffle
+/// - The number of samples used in bit generation
+/// - The permuted array
+pub fn run_rs_shuffle_permutation<F, T, const N: usize, const LEVELS: usize>(
     seed: F,
-) -> (PermutationWitnessData<N, LEVELS>, usize)
+    input: &[T; N],
+) -> RSShuffleTrace<T, N, LEVELS>
+where
+    F: Field + PrimeField + Absorb,
+    T: Clone + std::fmt::Debug,
+{
+    // Generate witness trace - we need to specify the const generics
+    let (witness_trace, num_samples) = prepare_rs_witness_trace::<F, N, LEVELS>(seed);
+
+    // Extract final permutation from last level
+    let final_sorted = &witness_trace.next_levels[LEVELS - 1];
+
+    // Apply permutation to create output array
+    // For each position in the output, get the element from the original index
+    let output: Vec<T> = final_sorted
+        .iter()
+        .map(|sorted_row| input[sorted_row.idx as usize].clone())
+        .collect();
+
+    // Convert Vec to array
+    let permuted_output: [T; N] = output
+        .try_into()
+        .expect("Permutation should preserve array size");
+
+    RSShuffleTrace {
+        witness_trace,
+        num_samples,
+        permuted_output,
+    }
+}
+
+pub(crate) fn prepare_rs_witness_trace<F, const N: usize, const LEVELS: usize>(
+    seed: F,
+) -> (PermutationWitnessTrace<N, LEVELS>, usize)
 where
     F: Field + PrimeField + Absorb,
 {
@@ -51,7 +97,7 @@ where
     let next_levels: [[SortedRow; N]; LEVELS] = std::array::from_fn(|i| level_results[i].1.clone());
 
     (
-        PermutationWitnessData {
+        PermutationWitnessTrace {
             bits_mat,
             uns_levels,
             next_levels,
@@ -60,51 +106,8 @@ where
     )
 }
 
-/// Apply RS shuffle permutation to a collection
-///
-/// This function generates the witness data for RS shuffle and applies the resulting
-/// permutation to the input collection.
-///
-/// # Parameters
-/// - `seed`: The seed for deterministic permutation generation
-/// - `input`: The input array to be permuted
-///
-/// # Returns
-/// A tuple containing:
-/// - The witness data for the shuffle
-/// - The number of samples used in bit generation
-/// - The permuted array
-pub fn apply_rs_shuffle_permutation<F, T, const N: usize, const LEVELS: usize>(
-    seed: F,
-    input: &[T; N],
-) -> (PermutationWitnessData<N, LEVELS>, usize, [T; N])
-where
-    F: Field + PrimeField + Absorb,
-    T: Clone + std::fmt::Debug,
-{
-    // Generate witness data - we need to specify the const generics
-    let (witness_data, num_samples) = prepare_witness_data::<F, N, LEVELS>(seed);
-
-    // Extract final permutation from last level
-    let final_sorted = &witness_data.next_levels[LEVELS - 1];
-
-    // Apply permutation to create output array
-    // For each position in the output, get the element from the original index
-    let output: Vec<T> = final_sorted
-        .iter()
-        .map(|sorted_row| input[sorted_row.idx as usize].clone())
-        .collect();
-
-    // Convert Vec to array
-    let output_array: [T; N] = output
-        .try_into()
-        .expect("Permutation should preserve array size");
-
-    (witness_data, num_samples, output_array)
-}
-
 /// Build witness tables for one level using functional approach
-pub fn build_level<const N: usize>(
+pub(crate) fn build_level<const N: usize>(
     prev_rows: &[SortedRow; N],
     bits_lvl: &[bool; N],
 ) -> ([UnsortedRow; N], [SortedRow; N]) {
@@ -247,17 +250,17 @@ pub fn build_level<const N: usize>(
 /// # Parameters
 /// - `cs`: The constraint system reference
 /// - `seed`: The seed as a circuit variable (FpVar)
-/// - `witness_data`: The witness data computed natively (used as advice)
+/// - `rs_witness_trace`: The witness trace computed natively (used as advice)
 /// - `num_samples`: Number of Poseidon hash samples needed
 ///
 /// # Returns
 /// - `Result<WitnessDataVar<F, N, LEVELS>, SynthesisError>` - The circuit witness data
-pub fn prepare_witness_data_circuit<F, const N: usize, const LEVELS: usize>(
+pub(crate) fn prepare_rs_witness_data_circuit<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     seed: &FpVar<F>,
-    witness_data: &PermutationWitnessData<N, LEVELS>,
+    rs_witness_trace: &PermutationWitnessTrace<N, LEVELS>,
     num_samples: usize,
-) -> Result<PermutationWitnessDataVar<F, N, LEVELS>, SynthesisError>
+) -> Result<PermutationWitnessTraceVar<F, N, LEVELS>, SynthesisError>
 where
     F: PrimeField + Absorb,
 {
@@ -267,7 +270,7 @@ where
     // 2. Allocate unsorted rows without the bit field (we'll use bits from derive_split_bits_circuit)
     let uns_levels: [[UnsortedRowVar<F>; N]; LEVELS] = std::array::from_fn(|level| {
         std::array::from_fn(|i| {
-            let row = &witness_data.uns_levels[level][i];
+            let row = &rs_witness_trace.uns_levels[level][i];
 
             // Allocate all fields except bit (which comes from derive_split_bits_circuit)
             UnsortedRowVar {
@@ -297,20 +300,20 @@ where
     // 3. Allocate sorted rows (all fields are witness variables)
     let sorted_levels: [[SortedRowVar<F>; N]; LEVELS] = std::array::from_fn(|level| {
         std::array::from_fn(|i| {
-            let row = &witness_data.next_levels[level][i];
+            let row = &rs_witness_trace.next_levels[level][i];
 
             SortedRowVar {
                 idx: FpVar::new_witness(cs.clone(), || Ok(F::from(row.idx as u64)))
                     .expect("Failed to allocate sorted idx"),
-                length: FpVar::new_witness(cs.clone(), || Ok(F::from(row.length as u64)))
-                    .expect("Failed to allocate sorted length"),
-                bucket: FpVar::new_witness(cs.clone(), || Ok(F::from(row.bucket as u64)))
-                    .expect("Failed to allocate sorted bucket"),
+                // length: FpVar::new_witness(cs.clone(), || Ok(F::from(row.length as u64)))
+                //     .expect("Failed to allocate sorted length"),
+                // bucket: FpVar::new_witness(cs.clone(), || Ok(F::from(row.bucket as u64)))
+                //     .expect("Failed to allocate sorted bucket"),
             }
         })
     });
 
-    Ok(PermutationWitnessDataVar {
+    Ok(PermutationWitnessTraceVar {
         bits_mat,
         uns_levels,
         sorted_levels,

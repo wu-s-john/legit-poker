@@ -115,7 +115,7 @@ impl EngineNL {
         }
     }
 
-    fn hand_end_if_only_one_left(state: &BettingState, mut events: Vec<GameEvent>) -> Option<Transition> {
+    fn hand_end_if_only_one_left(state: &BettingState, events: Vec<GameEvent>) -> Option<Transition> {
         let still_in: Vec<_> = state
             .players
             .iter()
@@ -197,7 +197,7 @@ impl EngineNL {
 }
 
 impl BettingEngineNL for EngineNL {
-    fn new_after_deal(cfg: HandConfig, mut players: Vec<PlayerState>, pots: Pots) -> BettingState {
+    fn new_after_deal(cfg: HandConfig, players: Vec<PlayerState>, pots: Pots) -> BettingState {
         // Preflop setup assumes blinds/antes are already reflected in committed_this_round of players
         // Determine current_bet_to_match from max committed among active players
         let current_bet_to_match = players
@@ -449,7 +449,7 @@ impl BettingEngineNL for EngineNL {
                     if to == cur {
                         return Err(ActionError::ActorCannotAct);
                     }
-                    let add = to - cur;
+                    let _add = to - cur;
                     state.players[idx].stack = 0;
                     state.players[idx].committed_this_round = to;
                     state.players[idx].status = PlayerStatus::AllIn;

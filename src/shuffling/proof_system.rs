@@ -28,10 +28,11 @@ use super::bayer_groth_permutation::{
 pub use super::bayer_groth_permutation::reencryption_protocol::ReencryptionProof;
 use super::data_structures::ElGamalCiphertext;
 use super::rs_shuffle::{
-    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessData,
-    witness_preparation::apply_rs_shuffle_permutation,
+    circuit::RSShuffleWithBayerGrothLinkCircuit, data_structures::PermutationWitnessTrace,
+    native::run_rs_shuffle_permutation,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
+use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use ark_crypto_primitives::{
     commitment::{
         pedersen::{Commitment as PedersenCommitment, Parameters},
@@ -40,7 +41,6 @@ use ark_crypto_primitives::{
     snark::SNARK,
     sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge},
 };
-use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, ToConstraintField};
 use ark_groth16::{
@@ -190,8 +190,7 @@ where
     G::BaseField: PrimeField,
     GV: CurveVar<G, G::BaseField>,
 {
-    pub permutation_usize: [usize; N],
-    pub witness_data: PermutationWitnessData<N, LEVELS>,
+    pub rs_shuffle_trace: super::rs_shuffle::data_structures::RSShuffleTrace<usize, N, LEVELS>,
     pub blinding_r: <G::Config as CurveConfig>::ScalarField,
     pub blinding_s: <G::Config as CurveConfig>::ScalarField,
     _marker: PhantomData<GV>,
@@ -205,14 +204,12 @@ where
 {
     /// Create a new PermutationWitness
     pub fn new(
-        permutation_usize: [usize; N],
-        witness_data: PermutationWitnessData<N, LEVELS>,
+        rs_shuffle_trace: super::rs_shuffle::data_structures::RSShuffleTrace<usize, N, LEVELS>,
         blinding_r: <G::Config as CurveConfig>::ScalarField,
         blinding_s: <G::Config as CurveConfig>::ScalarField,
     ) -> Self {
         Self {
-            permutation_usize,
-            witness_data,
+            rs_shuffle_trace,
             blinding_r,
             blinding_s,
             _marker: PhantomData,
@@ -244,10 +241,11 @@ where
         + CurveAbsorb<E::ScalarField>
         + ToConstraintField<E::ScalarField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<
-        E::ScalarField,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
-    >,
+    GV: CurveVar<G, E::ScalarField>
+        + CurveAbsorbGadget<
+            E::ScalarField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     E::ScalarField: PrimeField + Absorb,
@@ -266,7 +264,7 @@ where
         // Convert permutation to scalar field elements
         let permutation_scalars: [<G::Config as CurveConfig>::ScalarField; N] =
             std::array::from_fn(|i| {
-                <G::Config as CurveConfig>::ScalarField::from(witness.permutation_usize[i] as u64)
+                <G::Config as CurveConfig>::ScalarField::from(witness.rs_shuffle_trace.permuted_output[i] as u64)
             });
 
         // Extract initial indices (0..N-1)
@@ -274,7 +272,7 @@ where
             std::array::from_fn(|i| E::ScalarField::from(i as u64));
 
         // Extract shuffled indices from witness data
-        let final_sorted = &witness.witness_data.next_levels[LEVELS - 1];
+        let final_sorted = &witness.rs_shuffle_trace.witness_trace.next_levels[LEVELS - 1];
         let indices_after_shuffle: [E::ScalarField; N] =
             std::array::from_fn(|i| E::ScalarField::from(final_sorted[i].idx as u64));
 
@@ -292,7 +290,7 @@ where
             public_input.bg_setup_params.c_perm,
             public_input.bg_setup_params.c_power,
             permutation_scalars,
-            witness.witness_data.clone(),
+            witness.rs_shuffle_trace.witness_trace.clone(),
             indices_init,
             indices_after_shuffle,
             (witness.blinding_r, witness.blinding_s),
@@ -339,10 +337,11 @@ where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
     G::BaseField: PrimeField,
-    GV: CurveVar<G, E::ScalarField> + CurveAbsorbGadget<
-        E::ScalarField,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
-    >,
+    GV: CurveVar<G, E::ScalarField>
+        + CurveAbsorbGadget<
+            E::ScalarField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<E::ScalarField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, E::ScalarField>,
 {
     /// Verify a proof using the raw (unprepared) verifying key
@@ -578,7 +577,7 @@ fn create_rs_shuffle_circuit<G, GV, const N: usize, const LEVELS: usize>(
     seed: G::BaseField,
     bg_setup_params: &BayerGrothSetupParameters<G::ScalarField, G, N>,
     permutation_usize: &[usize; N],
-    witness_data: &PermutationWitnessData<N, LEVELS>,
+    witness_data: &PermutationWitnessTrace<N, LEVELS>,
     blinding_r: <G::Config as CurveConfig>::ScalarField,
     blinding_s: <G::Config as CurveConfig>::ScalarField,
     generator: G,
@@ -645,10 +644,11 @@ where
     E: Pairing,
     G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<G::BaseField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<
-        G::BaseField,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
-    >,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<
+            G::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
     <G::Config as CurveConfig>::ScalarField: UniformRand,
     G::BaseField: PrimeField + Absorb,
@@ -666,32 +666,37 @@ where
         c2: G::zero(),
     });
 
-    let (witness_data, _, _) =
-        apply_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
+    let rs_shuffle_trace =
+        run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
             seed, &dummy_ct,
         );
 
     // Create dummy Pedersen parameters for test key generation
     use ark_std::rand::SeedableRng;
     use rand::rngs::StdRng;
-    
+
     let mut deck_rng = StdRng::seed_from_u64(42);
     let perm_params = PedersenCommitment::<G, DeckHashWindow>::setup(&mut deck_rng)
         .expect("Failed to setup DeckHashWindow Pedersen parameters");
-    
+
     let mut power_rng = StdRng::seed_from_u64(43);
     let power_params = PedersenCommitment::<G, ReencryptionWindow>::setup(&mut power_rng)
         .expect("Failed to setup ReencryptionWindow Pedersen parameters");
 
     let mut bg_transcript = new_bayer_groth_transcript_with_poseidon::<G::BaseField>(b"test");
-    let (bg_setup_params, _) =
-        bg_transcript.run_protocol::<G, N>(&perm_params, &power_params, &dummy_permutation, blinding_r, blinding_s);
+    let (bg_setup_params, _) = bg_transcript.run_protocol::<G, N>(
+        &perm_params,
+        &power_params,
+        &dummy_permutation,
+        blinding_r,
+        blinding_s,
+    );
 
     let dummy_circuit = create_rs_shuffle_circuit::<G, GV, N, LEVELS>(
         seed,
         &bg_setup_params,
         &dummy_permutation,
-        &witness_data,
+        &rs_shuffle_trace.witness_trace,
         blinding_r,
         blinding_s,
         generator,

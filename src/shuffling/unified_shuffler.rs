@@ -4,7 +4,7 @@ use super::{
     bayer_groth::{self, BgParams, BgProof, ShuffleInstance, ShuffleWitness},
     data_structures::ElGamalCiphertext,
     rs_shuffle::{
-        circuit::RSShufflePermutationCircuit, witness_preparation::prepare_witness_data, LEVELS, N,
+        circuit::RSShufflePermutationCircuit, native::prepare_rs_witness_trace, LEVELS, N,
     },
 };
 use ark_bn254::{Bn254, Fr, G1Affine, G1Projective};
@@ -80,7 +80,7 @@ pub fn generate_unified_shuffle_proof<R: Rng + RngCore + CryptoRng>(
     // Step 1: Generate permutation using RS shuffle algorithm
     tracing::info!(target: "unified_shuffler", "Generating RS shuffle permutation");
     let seed = Fr::rand(rng);
-    let (witness_data, num_samples) = prepare_witness_data::<Fr, N, LEVELS>(seed);
+    let (witness_data, num_samples) = prepare_rs_witness_trace::<Fr, N, LEVELS>(seed);
 
     // Extract permutation from RS shuffle witness
     let final_sorted = &witness_data.next_levels[LEVELS - 1];
@@ -240,7 +240,7 @@ pub fn setup_unified_shuffler<R: Rng + RngCore + CryptoRng>(
     // Setup RS+Groth16 parameters
     // Create a dummy circuit for setup
     let seed = Fr::rand(rng);
-    let (witness_data, num_samples) = prepare_witness_data::<Fr, N, LEVELS>(seed);
+    let (witness_data, num_samples) = prepare_rs_witness_trace::<Fr, N, LEVELS>(seed);
     let indices_init: Vec<Fr> = (0..N).map(|i| Fr::from(i as u64)).collect();
     let indices_after_shuffle = indices_init.clone(); // Dummy values for setup
     let alpha = Fr::rand(rng);
