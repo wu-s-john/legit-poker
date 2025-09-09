@@ -80,20 +80,45 @@ impl pedersen::Window for VrfPedersenWindow {
     const NUM_WINDOWS: usize = 256;
 }
 
-/// VRF parameters containing Pedersen CRH setup for hash-to-curve
+/// VRF parameters containing Pedersen CRH setup for hash-to-curve and sponge config
 #[derive(Clone)]
-pub struct VrfParams<C: CurveGroup> {
+pub struct VrfParams<C, SP = ark_crypto_primitives::sponge::poseidon::PoseidonConfig<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>>
+where
+    C: CurveGroup,
+    SP: Clone,
+{
     pub pedersen_crh_params: pedersen::Parameters<C>,
+    pub sponge_params: SP,
 }
 
-impl<C: CurveGroup> VrfParams<C> {
-    /// Setup VRF parameters with random Pedersen generators
+impl<C, SP> VrfParams<C, SP>
+where
+    C: CurveGroup,
+    SP: Clone,
+{
+    /// Create VRF parameters with custom Pedersen and sponge parameters
+    pub fn new(pedersen_crh_params: pedersen::Parameters<C>, sponge_params: SP) -> Self {
+        Self {
+            pedersen_crh_params,
+            sponge_params,
+        }
+    }
+}
+
+impl<C> VrfParams<C, ark_crypto_primitives::sponge::poseidon::PoseidonConfig<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>>
+where
+    C: CurveGroup,
+    <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField: PrimeField,
+{
+    /// Setup VRF parameters with random Pedersen generators and default Poseidon config
     pub fn setup<R: ark_std::rand::Rng>(rng: &mut R) -> Self {
         use ark_crypto_primitives::crh::CRHScheme;
         let pedersen_crh_params = <pedersen::CRH<C, VrfPedersenWindow> as CRHScheme>::setup(rng)
             .expect("Pedersen CRH setup should not fail");
+        let sponge_params = poseidon_config::<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>();
         Self {
             pedersen_crh_params,
+            sponge_params,
         }
     }
 }
