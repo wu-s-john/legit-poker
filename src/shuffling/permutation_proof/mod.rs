@@ -46,6 +46,13 @@ type ConstraintF<C> = <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrime
 
 const LOG_TARGET: &str = "nexus_nova::shuffling::permutation_proof";
 
+// Submodules providing the circuit wrapper and Groth16 proof system
+pub mod circuit;
+pub mod proof_system;
+
+// Re-exports for ergonomic access to the proof system API
+pub use proof_system::{build_public_inputs, PermutationGroth16, PublicData, WitnessData};
+
 /// Native (prover-side) configuration parameters for preparing permutation witnesses
 pub struct PermutationParameters<'a, C: CurveGroup, R: rand::RngCore> {
     pub perm_params: &'a ark_crypto_primitives::commitment::pedersen::Parameters<C>, // DeckHashWindow
@@ -67,8 +74,6 @@ where
     pub rs_trace: RSShuffleTrace<usize, N, LEVELS>,
     pub indices_init: [C::BaseField; N],
     pub permutation_vec: [C::ScalarField; N],
-    pub power_challenge_base: C::BaseField, // Base field version for circuit
-    pub power_challenge_scalar: C::ScalarField, // Scalar field version for Pedersen
     pub bg_setup: BGPowerChallengeSetup<C::BaseField, C::ScalarField, C>,
     pub perm_power_vector_base: [C::BaseField; N], // Base field version for circuit verification
     pub perm_power_vector_scalar: [C::ScalarField; N], // Scalar field version for Pedersen opening
@@ -150,8 +155,6 @@ where
         rs_trace,
         indices_init,
         permutation_vec,
-        power_challenge_base: bg_power_challenge_setup.power_challenge_base,
-        power_challenge_scalar: bg_power_challenge_setup.power_challenge_scalar,
         bg_setup: bg_power_challenge_setup,
         perm_power_vector_base,
         perm_power_vector_scalar,
@@ -275,13 +278,12 @@ mod tests {
     use super::*;
     use ark_bn254::{Fq as BaseField, Fr as ScalarField, G1Projective};
     use ark_ec::PrimeGroup;
-    use ark_ff::BigInteger;
     use ark_r1cs_std::alloc::AllocVar;
     use ark_r1cs_std::fields::fp::FpVar;
     use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
     use ark_r1cs_std::GR1CSVar;
     use ark_relations::gr1cs::ConstraintSystem;
-    use ark_std::{test_rng, vec::Vec};
+    use ark_std::test_rng;
     use tracing_subscriber::{
         filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
     };
