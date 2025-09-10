@@ -1,6 +1,6 @@
 //! Witness generation for RS shuffle (prover-side logic)
 
-use super::bit_generation::{derive_split_bits, derive_split_bits_circuit};
+use super::bit_generation::{derive_split_bits, derive_split_bits_gadget};
 use super::data_structures::*;
 // Removed unused imports - N and LEVELS are now generic parameters
 use ark_crypto_primitives::sponge::Absorb;
@@ -265,7 +265,7 @@ where
     F: PrimeField + Absorb,
 {
     // 1. Generate bits from seed using the circuit version
-    let bits_mat = derive_split_bits_circuit::<F, N, LEVELS>(cs.clone(), seed, num_samples)?;
+    let bits_mat = derive_split_bits_gadget::<F, N, LEVELS>(cs.clone(), seed, num_samples)?;
 
     // 2. Allocate unsorted rows without the bit field (we'll use bits from derive_split_bits_circuit)
     let uns_levels: [[UnsortedRowVar<F>; N]; LEVELS] = std::array::from_fn(|level| {

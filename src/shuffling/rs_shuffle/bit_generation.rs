@@ -127,7 +127,7 @@ where
         num_samples,
     )
 )]
-pub fn derive_split_bits_circuit<F, const N: usize, const LEVELS: usize>(
+pub fn derive_split_bits_gadget<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     seed: &FpVar<F>,
     num_samples: usize,
@@ -318,7 +318,7 @@ mod tests {
 
         // Generate bits in circuit
         let bits_mat =
-            derive_split_bits_circuit::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
+            derive_split_bits_gadget::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
                 .expect("Circuit execution failed");
 
         // Check dimensions
@@ -348,7 +348,7 @@ mod tests {
         let seed_var =
             FpVar::new_input(cs.clone(), || Ok(seed_field)).expect("Failed to allocate seed");
         let circuit_bits =
-            derive_split_bits_circuit::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
+            derive_split_bits_gadget::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
                 .expect("Circuit execution failed");
 
         // Compare the values
@@ -391,7 +391,7 @@ mod tests {
         let seed_var1 =
             FpVar::new_input(cs1.clone(), || Ok(seed)).expect("Failed to allocate seed");
         let bits1 =
-            derive_split_bits_circuit::<TestField, N, LEVELS>(cs1.clone(), &seed_var1, num_samples)
+            derive_split_bits_gadget::<TestField, N, LEVELS>(cs1.clone(), &seed_var1, num_samples)
                 .expect("Circuit execution failed");
 
         // Second run
@@ -399,7 +399,7 @@ mod tests {
         let seed_var2 =
             FpVar::new_input(cs2.clone(), || Ok(seed)).expect("Failed to allocate seed");
         let bits2 =
-            derive_split_bits_circuit::<TestField, N, LEVELS>(cs2.clone(), &seed_var2, num_samples)
+            derive_split_bits_gadget::<TestField, N, LEVELS>(cs2.clone(), &seed_var2, num_samples)
                 .expect("Circuit execution failed");
 
         // Compare values
@@ -438,7 +438,7 @@ mod tests {
         let seed = TestField::from(555u64);
         let seed_var = FpVar::new_input(cs.clone(), || Ok(seed)).expect("Failed to allocate seed");
         let _bits_mat =
-            derive_split_bits_circuit::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
+            derive_split_bits_gadget::<TestField, N, LEVELS>(cs.clone(), &seed_var, num_samples)
                 .expect("Circuit execution failed");
 
         let final_constraints = cs.num_constraints();

@@ -27,8 +27,6 @@ use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
-use ark_r1cs_std::boolean::Boolean;
-use ark_r1cs_std::convert::ToBitsGadget;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::{emulated_fp::EmulatedFpVar, fp::FpVar};
 use ark_r1cs_std::groups::CurveVar;
@@ -65,7 +63,7 @@ where
     C::ScalarField: PrimeField,
 {
     pub pk: C,
-    pub beta: C::BaseField,
+    pub vrf_value: C::BaseField,
     pub rs_trace: RSShuffleTrace<usize, N, LEVELS>,
     pub indices_init: [C::BaseField; N],
     pub permutation_vec: [C::ScalarField; N],
@@ -102,15 +100,15 @@ where
     use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
     use ark_std::vec::Vec;
 
-    // 1) Simple VRF native prove to obtain beta and pk
+    // 1) Simple VRF native prove to obtain vrf_value and pk
     let g = C::generator();
     let pk = g * sk;
     // Use the provided random oracle sponge
-    let beta = prove_simple_vrf::<C, _>(sponge, &nonce, &sk, &pk);
+    let vrf_value = prove_simple_vrf::<C, _>(sponge, &nonce, &sk, &pk);
 
-    // 2) RS shuffle witnesses using beta as seed
+    // 2) RS shuffle witnesses using vrf_value as seed
     let input: [usize; N] = std::array::from_fn(|i| i);
-    let rs_trace = run_rs_shuffle_permutation::<C::BaseField, usize, N, LEVELS>(beta, &input);
+    let rs_trace = run_rs_shuffle_permutation::<C::BaseField, usize, N, LEVELS>(vrf_value, &input);
 
     // Extract 1-indexed permutation in scalar field
     let permutation_vec: [C::ScalarField; N] = rs_trace
@@ -148,7 +146,7 @@ where
 
     Ok(PreparedPermutationWitness {
         pk,
-        beta,
+        vrf_value,
         rs_trace,
         indices_init,
         permutation_vec,
@@ -160,44 +158,6 @@ where
         power_opening_proof: opening,
         blinding_r,
         blinding_s,
-    })
-}
-
-/// Bind the RS bit matrix to a list of base-field elements (alphas) by
-/// comparing element-wise with the trimmed bitstream of those alphas.
-///
-/// The trimming removes the first and last bit from each element's bit-decomposition,
-/// matching derive_split_bits_circuit(). Bits are laid out row-major by (level, index).
-fn bind_rs_bits_to_alphas<F, const N: usize, const LEVELS: usize>(
-    cs: ConstraintSystemRef<F>,
-    alphas: &[FpVar<F>],
-    bits_mat: &[[Boolean<F>; N]; LEVELS],
-) -> Result<(), SynthesisError>
-where
-    F: PrimeField,
-{
-    track_constraints!(&cs, "bind_rs_bits_to_alphas", LOG_TARGET, {
-        // Flatten the trimmed bits from all alphas (LSB-first) into a single stream
-        let mut bit_stream: Vec<Boolean<F>> = Vec::new();
-        for alpha in alphas.iter() {
-            let bits = alpha.to_bits_le()?;
-            if bits.len() > 2 {
-                bit_stream.extend_from_slice(&bits[1..bits.len() - 1]);
-            }
-        }
-
-        // Compare to the RS bit matrix in row-major order
-        let total = N * LEVELS;
-        for k in 0..total {
-            let level = k / N;
-            let idx = k % N;
-            if k < bit_stream.len() {
-                bits_mat[level][idx].enforce_equal(&bit_stream[k])?;
-            } else {
-                bits_mat[level][idx].enforce_equal(&Boolean::constant(false))?;
-            }
-        }
-        Ok(())
     })
 }
 
@@ -214,7 +174,7 @@ pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: 
     rs_witness_var: &PermutationWitnessTraceVar<ConstraintF<C>, N, LEVELS>,
     indices_init: &[FpVar<ConstraintF<C>>; N],
     alpha_rs: &FpVar<ConstraintF<C>>, // same alpha reused later for permutation product check
-    alphas_for_bits: &[FpVar<ConstraintF<C>>], // num_samples base-field elements
+    num_samples: usize,               // number of base-field elements used to derive RS bits
     // BG + opening
     power_challenge_public: &FpVar<ConstraintF<C>>, // x in base field
     c_perm: &GG,
@@ -228,6 +188,7 @@ pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: 
 where
     C: CurveGroup,
     C::BaseField: PrimeField + Absorb,
+    ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     GG: CurveVar<C, ConstraintF<C>>
         + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
@@ -237,15 +198,21 @@ where
     ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
 {
     track_constraints!(&cs, "prove_permutation_gadget", LOG_TARGET, {
-        // 1) Simple VRF gadget in-circuit to derive beta from (nonce, sk)
-        let _beta = prove_simple_vrf_gadget::<C, GG, RO, ROVar>(sponge, nonce, &sk_var, pk_public)?;
+        // 1) Simple VRF gadget in-circuit to derive vrf_value from (nonce, sk)
+        let vrf_value =
+            prove_simple_vrf_gadget::<C, GG, RO, ROVar>(sponge, nonce, &sk_var, pk_public)?;
 
-        // 2) RS bit binding: ensure the RS bit-matrix equals trimmed bits of alphas
-        bind_rs_bits_to_alphas::<ConstraintF<C>, N, LEVELS>(
-            cs.clone(),
-            alphas_for_bits,
-            &rs_witness_var.bits_mat,
-        )?;
+        // 2) RS bit binding: derive the RS bit-matrix from vrf_value and enforce equality
+        let derived_bits = crate::shuffling::rs_shuffle::bit_generation::derive_split_bits_gadget::<
+            ConstraintF<C>,
+            N,
+            LEVELS,
+        >(cs.clone(), &vrf_value, num_samples)?;
+        for level in 0..LEVELS {
+            for i in 0..N {
+                rs_witness_var.bits_mat[level][i].enforce_equal(&derived_bits[level][i])?;
+            }
+        }
 
         // 3) RS shuffle constraints on indices
         let indices_after_shuffle: [FpVar<ConstraintF<C>>; N] =
@@ -335,42 +302,7 @@ mod tests {
             .set_default()
     }
 
-    /// Mini-test: alpha → bit-matrix binding gadget
-    #[test]
-    fn test_bind_rs_bits_to_alphas_positive() {
-        const N: usize = 8;
-        const LEVELS: usize = 3;
-        let cs = ConstraintSystem::<BaseField>::new_ref();
-
-        // Prepare two random base-field alphas
-        let mut rng = test_rng();
-        let a0 = BaseField::rand(&mut rng);
-        let a1 = BaseField::rand(&mut rng);
-        let a0_var = FpVar::new_witness(cs.clone(), || Ok(a0)).unwrap();
-        let a1_var = FpVar::new_witness(cs.clone(), || Ok(a1)).unwrap();
-
-        // Build trimmed bitstream natively
-        let mut bits: Vec<bool> = Vec::new();
-        for a in [a0, a1] {
-            let le = a.into_bigint().to_bits_le();
-            if le.len() > 2 {
-                bits.extend_from_slice(&le[1..le.len() - 1]);
-            }
-        }
-        // Allocate RS bit-matrix Booleans matching the trimmed stream
-        let mut mat: [[Boolean<BaseField>; N]; LEVELS] =
-            std::array::from_fn(|_| std::array::from_fn(|_| Boolean::constant(false)));
-        for k in 0..(N * LEVELS) {
-            let level = k / N;
-            let idx = k % N;
-            let v = if k < bits.len() { bits[k] } else { false };
-            mat[level][idx] = Boolean::new_witness(cs.clone(), || Ok(v)).unwrap();
-        }
-
-        bind_rs_bits_to_alphas::<BaseField, N, LEVELS>(cs.clone(), &[a0_var, a1_var], &mat)
-            .unwrap();
-        assert!(cs.is_satisfied().unwrap());
-    }
+    // Removed obsolete alpha → bit-matrix binding test
 
     /// Mini-test: BG folding link consistency using verify_scalar_folding_link_gadget
     #[test]
@@ -458,7 +390,6 @@ mod tests {
         use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
         use crate::shuffling::rs_shuffle::bit_generation::derive_split_bits;
         use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
-        use crate::shuffling::utils::generate_random_values;
         use crate::vrf::simple::prove_simple_vrf;
         use ark_crypto_primitives::commitment::{
             pedersen::Commitment as PedersenCommitment, CommitmentScheme,
@@ -477,18 +408,17 @@ mod tests {
         let sk = ScalarField::rand(&mut rng);
         let pk = G1Projective::generator() * sk;
         let nonce: BaseField = BaseField::rand(&mut rng);
-        // Simple VRF native to get beta seed
+        // Simple VRF native to get vrf_value (seed)
         let mut sponge_native =
             PoseidonSponge::<BaseField>::new(&crate::config::poseidon_config::<BaseField>());
-        let beta = prove_simple_vrf::<G1Projective, _>(&mut sponge_native, &nonce, &sk, &pk);
+        let vrf_value = prove_simple_vrf::<G1Projective, _>(&mut sponge_native, &nonce, &sk, &pk);
 
-        // RS trace from beta
+        // RS trace from vrf_value
         let input: [usize; N] = std::array::from_fn(|i| i);
-        let rs_trace = run_rs_shuffle_permutation::<BaseField, usize, N, LEVELS>(beta, &input);
+        let rs_trace = run_rs_shuffle_permutation::<BaseField, usize, N, LEVELS>(vrf_value, &input);
 
-        // Compute number of samples and alphas used for bit generation
-        let (_bits_mat, num_samples) = derive_split_bits::<BaseField, N, LEVELS>(beta);
-        let alphas = generate_random_values::<BaseField>(beta, num_samples);
+        // Compute number of samples used for bit generation
+        let (_bits_mat, num_samples) = derive_split_bits::<BaseField, N, LEVELS>(vrf_value);
 
         // BG setup and power vector
         let perm_params =
@@ -529,8 +459,8 @@ mod tests {
         let pk_public = G1Var::new_input(cs.clone(), || Ok(pk)).unwrap();
         let nonce_var = FpVar::new_witness(cs.clone(), || Ok(nonce)).unwrap();
 
-        // RS witness as Vars prepared in-circuit from the same seed (beta)
-        let seed_var = FpVar::new_witness(cs.clone(), || Ok(beta)).unwrap();
+        // RS witness as Vars prepared in-circuit from the same seed (vrf_value)
+        let seed_var = FpVar::new_witness(cs.clone(), || Ok(vrf_value)).unwrap();
         let rs_witness_var =
             crate::shuffling::rs_shuffle::native::prepare_rs_witness_data_circuit::<
                 BaseField,
@@ -544,12 +474,8 @@ mod tests {
             FpVar::new_witness(cs.clone(), || Ok(indices_init_native[i])).unwrap()
         });
 
-        // RS alpha vars (recycle beta as alpha_rs and alphas_for_bits)
-        let alpha_rs = FpVar::new_witness(cs.clone(), || Ok(beta)).unwrap();
-        let alphas_for_bits: Vec<FpVar<BaseField>> = alphas
-            .iter()
-            .map(|a| FpVar::new_witness(cs.clone(), || Ok(*a)).unwrap())
-            .collect();
+        // RS alpha var (recycle vrf_value as alpha_rs)
+        let alpha_rs = FpVar::new_witness(cs.clone(), || Ok(vrf_value)).unwrap();
 
         // BG + commitment vars
         let power_challenge_public =
@@ -598,7 +524,7 @@ mod tests {
             &rs_witness_var,
             &indices_init,
             &alpha_rs,
-            &alphas_for_bits,
+            num_samples,
             &power_challenge_public,
             &c_perm_var,
             &c_power_var,
