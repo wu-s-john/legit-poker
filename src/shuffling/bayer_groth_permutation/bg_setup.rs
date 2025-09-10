@@ -12,9 +12,11 @@ const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linkin
 
 /// Minimal output structure for power challenge setup (without product permutation)
 #[derive(Debug, Clone)]
-pub struct BGPowerChallengeSetup<F: PrimeField, G: CurveGroup> {
-    /// The Fiat-Shamir challenge x ∈ F_q* used to compute powers x^π(i)
-    pub power_challenge: F,
+pub struct BGPowerChallengeSetup<BaseField: PrimeField, ScalarField: PrimeField, G: CurveGroup> {
+    /// The Fiat-Shamir challenge x ∈ F_q* in base field (for circuit computation)
+    pub power_challenge_base: BaseField,
+    /// The Fiat-Shamir challenge x in scalar field (for native Pedersen commitment)
+    pub power_challenge_scalar: ScalarField,
     /// Commitment to the permutation vector
     pub permutation_commitment: G,
     /// Commitment to the power permutation vector
@@ -145,15 +147,16 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
         prover_blinding_r: G::ScalarField,
         prover_blinding_s: G::ScalarField,
     ) -> (
+        [G::BaseField; N],
         [G::ScalarField; N],
-        BGPowerChallengeSetup<G::ScalarField, G>,
+        BGPowerChallengeSetup<G::BaseField, G::ScalarField, G>,
     )
     where
         G: CurveGroup<BaseField = F> + CurveAbsorb<F, RO>,
         G::ScalarField: PrimeField,
         F: PrimeField,
     {
-        // Convert permutation to scalar field elements
+        // Convert permutation to scalar field elements for Pedersen commitment
         let perm_vector: [G::ScalarField; N] = permutation
             .iter()
             .map(|&i| G::ScalarField::from(i as u64))
@@ -168,28 +171,41 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
         self.absorb_perm_vector_commitment(&c_perm);
         tracing::debug!(target: LOG_TARGET, ?c_perm, "Absorbed permutation vector commitment");
 
-        // Step 3: Derive power challenge in base field and convert to scalar field
+        // Step 3: Derive power challenge in base field (no conversion needed for circuits!)
         let perm_power_challenge_base: G::BaseField = self.derive_perm_power_challenge();
-        let perm_power_challenge: G::ScalarField = G::ScalarField::from_le_bytes_mod_order(
+
+        // Convert to scalar field only for Pedersen commitment
+        let perm_power_challenge_scalar: G::ScalarField = G::ScalarField::from_le_bytes_mod_order(
             &perm_power_challenge_base.into_bigint().to_bytes_le(),
         );
-        tracing::debug!(target: LOG_TARGET, ?perm_power_challenge, "Derived permutation power challenge");
+        tracing::debug!(target: LOG_TARGET, ?perm_power_challenge_base, ?perm_power_challenge_scalar, "Derived permutation power challenge");
 
-        // Step 4: Compute permutation power vector
-        let perm_power_vector =
-            super::utils::compute_perm_power_vector(permutation, perm_power_challenge);
+        // Step 4: Compute permutation power vector in both fields
+        // Base field version for circuit computation
+        let perm_power_vector_base = super::utils::compute_perm_power_vector_base_field(
+            permutation,
+            perm_power_challenge_base,
+        );
 
-        // Step 5: Compute Pedersen commitment to power vector using ReencryptionWindow parameters
-        let c_power_perm =
-            pedersen_commit_scalars::<G, N>(power_params, &perm_power_vector, prover_blinding_s);
+        // Scalar field version for Pedersen commitment
+        let perm_power_vector_scalar =
+            super::utils::compute_perm_power_vector(permutation, perm_power_challenge_scalar);
+
+        // Step 5: Compute Pedersen commitment to power vector using scalar field version
+        let c_power_perm = pedersen_commit_scalars::<G, N>(
+            power_params,
+            &perm_power_vector_scalar,
+            prover_blinding_s,
+        );
 
         let setup = BGPowerChallengeSetup {
-            power_challenge: perm_power_challenge,
+            power_challenge_base: perm_power_challenge_base,
+            power_challenge_scalar: perm_power_challenge_scalar,
             permutation_commitment: c_perm,
             power_permutation_commitment: c_power_perm,
         };
 
-        (perm_power_vector, setup)
+        (perm_power_vector_base, perm_power_vector_scalar, setup)
     }
 
     /// Complete Fiat-Shamir protocol for Bayer-Groth permutation proof
@@ -616,13 +632,14 @@ mod tests {
 
         // Test the new minimal method
         let mut transcript1 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
-        let (power_vector1, setup1) = transcript1.compute_power_challenge_setup::<G1Projective, 5>(
-            &perm_params,
-            &power_params,
-            &perm,
-            prover_blinding_r,
-            prover_blinding_s,
-        );
+        let (power_vector_base1, power_vector_scalar1, setup1) = transcript1
+            .compute_power_challenge_setup::<G1Projective, 5>(
+                &perm_params,
+                &power_params,
+                &perm,
+                prover_blinding_r,
+                prover_blinding_s,
+            );
 
         // Test that run_protocol produces the same power challenge and commitments
         let mut transcript2 = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
@@ -635,17 +652,51 @@ mod tests {
         );
 
         // Verify that both methods produce the same results
-        assert_eq!(setup1.power_challenge, full_params.perm_power_challenge);
+        assert_eq!(
+            setup1.power_challenge_scalar,
+            full_params.perm_power_challenge
+        );
         assert_eq!(setup1.permutation_commitment, full_params.c_perm);
         assert_eq!(setup1.power_permutation_commitment, full_params.c_power);
-        assert_eq!(power_vector1, power_vector2);
+        assert_eq!(power_vector_scalar1, power_vector2);
 
-        // Verify power vector is computed correctly
-        assert_eq!(power_vector1[0], setup1.power_challenge.pow([3u64])); // x^3
-        assert_eq!(power_vector1[1], setup1.power_challenge); // x^1
-        assert_eq!(power_vector1[2], setup1.power_challenge.pow([4u64])); // x^4
-        assert_eq!(power_vector1[3], setup1.power_challenge.pow([2u64])); // x^2
-        assert_eq!(power_vector1[4], setup1.power_challenge.pow([5u64])); // x^5
+        // Verify power vector is computed correctly in scalar field
+        assert_eq!(
+            power_vector_scalar1[0],
+            setup1.power_challenge_scalar.pow([3u64])
+        ); // x^3
+        assert_eq!(power_vector_scalar1[1], setup1.power_challenge_scalar); // x^1
+        assert_eq!(
+            power_vector_scalar1[2],
+            setup1.power_challenge_scalar.pow([4u64])
+        ); // x^4
+        assert_eq!(
+            power_vector_scalar1[3],
+            setup1.power_challenge_scalar.pow([2u64])
+        ); // x^2
+        assert_eq!(
+            power_vector_scalar1[4],
+            setup1.power_challenge_scalar.pow([5u64])
+        ); // x^5
+
+        // Verify base field power vector is computed correctly
+        assert_eq!(
+            power_vector_base1[0],
+            setup1.power_challenge_base.pow([3u64])
+        ); // x^3
+        assert_eq!(power_vector_base1[1], setup1.power_challenge_base); // x^1
+        assert_eq!(
+            power_vector_base1[2],
+            setup1.power_challenge_base.pow([4u64])
+        ); // x^4
+        assert_eq!(
+            power_vector_base1[3],
+            setup1.power_challenge_base.pow([2u64])
+        ); // x^2
+        assert_eq!(
+            power_vector_base1[4],
+            setup1.power_challenge_base.pow([5u64])
+        ); // x^5
     }
 
     /// Test complete Bayer-Groth protocol with Fiat-Shamir

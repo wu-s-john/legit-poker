@@ -146,6 +146,27 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
         Ok(perm_power_challenge_scalar)
     }
 
+    /// Derive power challenge from commitment and return as base field element
+    ///
+    /// This is the base field version that avoids expensive field conversion,
+    /// used for efficient circuit computation.
+    pub fn derive_power_challenge_from_commitment_base_field<C, CG>(
+        &mut self,
+        _cs: ConstraintSystemRef<F>,
+        c_perm: &CG,
+    ) -> Result<FpVar<F>, SynthesisError>
+    where
+        C: CurveGroup,
+        C::BaseField: PrimeField,
+        CG: CurveAbsorbGadget<F, ROVar>,
+    {
+        // Step 1: Absorb commitment
+        self.absorb_perm_vector_commitment(c_perm)?;
+
+        // Step 2: Derive and return power challenge in base field
+        self.derive_perm_power_challenge()
+    }
+
     /// Absorb the commitment to the power vector using CurveAbsorbGadget
     fn absorb_perm_power_vector_commitment<CG>(
         &mut self,
@@ -331,7 +352,7 @@ mod tests {
 
         // ============= Native Prover =============
         let mut native_transcript = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
-        let (_, native_setup) = native_transcript.compute_power_challenge_setup::<G1Projective, 5>(
+        let (_power_vec_base, _power_vec_scalar, native_setup) = native_transcript.compute_power_challenge_setup::<G1Projective, 5>(
             &perm_params,
             &power_params,
             &perm,
@@ -340,7 +361,7 @@ mod tests {
         );
 
         // Extract the native power challenge (in scalar field Fr)
-        let native_power_challenge: Fr = native_setup.power_challenge;
+        let native_power_challenge: Fr = native_setup.power_challenge_scalar;
         let native_c_perm = native_setup.permutation_commitment;
 
         tracing::debug!(

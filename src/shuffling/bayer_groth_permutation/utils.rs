@@ -108,6 +108,26 @@ pub(crate) fn compute_perm_power_vector<F: PrimeField, const N: usize>(
         .expect("Vector length should match array size N")
 }
 
+/// Compute the permutation power vector in base field
+///
+/// This is the base field version of compute_perm_power_vector, used for
+/// efficient circuit computation without field conversion.
+///
+/// # Parameters
+/// - `permutation`: The permutation π (1-indexed values)
+/// - `power_challenge`: The challenge x in base field
+///
+/// # Returns
+/// An array where `power_vector[i] = x^π(i)` for i = 0..N-1, all in base field
+pub(crate) fn compute_perm_power_vector_base_field<F: PrimeField, const N: usize>(
+    permutation: &[usize; N],
+    power_challenge: F,
+) -> [F; N] {
+    // power_vector[i] = x^π(i) in base field
+    // Note: permutation contains 1-indexed values
+    std::array::from_fn(|i| power_challenge.pow(&[permutation[i] as u64]))
+}
+
 /// Compute the power permutation vector b = (x^{π(0)+1}, ..., x^{π(N-1)+1})
 ///
 /// Given a permutation π and a challenge x, this computes the power vector

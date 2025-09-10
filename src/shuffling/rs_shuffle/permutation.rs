@@ -155,3 +155,13 @@ impl<F: PrimeField> PermutationProduct<F, 3> for CiphertextTriple<F> {
         self.compress(&challenges[0], &challenges[1], &challenges[2])
     }
 }
+
+/// Implementation of PermutationProduct for FpVar to enable direct permutation checks
+/// This is used for checking that b is a permutation of a where both are arrays of field elements
+impl<F: PrimeField> PermutationProduct<F, 1> for FpVar<F> {
+    fn product(&self, challenges: &[FpVar<F>; 1]) -> FpVar<F> {
+        // For permutation check: (r - element) where r is the random challenge
+        // This allows checking ∏(r - a_i) = ∏(r - b_i)
+        challenges[0].clone() - self
+    }
+}

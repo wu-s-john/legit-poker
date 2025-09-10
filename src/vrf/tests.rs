@@ -7,7 +7,7 @@ use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
 use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 use ark_bn254::Fr as BaseField; // BN254's scalar field = Grumpkin's base field
 use ark_ec::PrimeGroup;
-use ark_ff::{BigInteger, UniformRand};
+use ark_ff::UniformRand;
 use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
 use ark_r1cs_std::GR1CSVar;
 use ark_r1cs_std::{
