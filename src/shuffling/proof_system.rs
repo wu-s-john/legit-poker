@@ -264,7 +264,9 @@ where
         // Convert permutation to scalar field elements
         let permutation_scalars: [<G::Config as CurveConfig>::ScalarField; N] =
             std::array::from_fn(|i| {
-                <G::Config as CurveConfig>::ScalarField::from(witness.rs_shuffle_trace.permuted_output[i] as u64)
+                <G::Config as CurveConfig>::ScalarField::from(
+                    witness.rs_shuffle_trace.permuted_output[i] as u64,
+                )
             });
 
         // Extract initial indices (0..N-1)

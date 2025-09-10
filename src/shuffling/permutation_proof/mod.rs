@@ -18,13 +18,13 @@
 //!   `b` is passed as a witness and checked to be a permutation of the base powers `a`.
 
 use crate::shuffling::bayer_groth_permutation::bg_setup::BGPowerChallengeSetup;
-use crate::shuffling::curve_absorb::CurveAbsorb;
+use crate::shuffling::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof;
 use crate::vrf::simple::prove_simple_vrf;
 use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar;
-use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
-// for PoseidonSpongeVar::new
-use ark_crypto_primitives::sponge::CryptographicSponge; // for PoseidonSponge::new
+use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+// use ark_crypto_primitives::sponge::poseidon::PoseidonSponge; // used in tests
+use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::boolean::Boolean;
@@ -56,15 +56,7 @@ pub struct PermutationParameters<'a, C: CurveGroup, R: rand::RngCore> {
 }
 
 /// In-circuit parameters for the permutation proof gadgets
-pub struct PermutationGadgetParameters<'a, C: CurveGroup>
-where
-    C::BaseField: ark_ff::PrimeField,
-{
-    /// Poseidon sponge configuration
-    pub sponge_config: &'a ark_crypto_primitives::sponge::poseidon::PoseidonConfig<C::BaseField>,
-    /// Number of Poseidon field elements used to derive the RS bit-matrix
-    pub num_samples: usize,
-}
+// Removed PermutationGadgetParameters; its fields are now inlined into function parameters
 
 /// Prepared witnesses from the native prover for driving the permutation gadget
 pub struct PreparedPermutationWitness<C: CurveGroup, const N: usize, const LEVELS: usize>
@@ -77,11 +69,11 @@ where
     pub rs_trace: RSShuffleTrace<usize, N, LEVELS>,
     pub indices_init: [C::BaseField; N],
     pub permutation_vec: [C::ScalarField; N],
-    pub power_challenge_base: C::BaseField,  // Base field version for circuit
-    pub power_challenge_scalar: C::ScalarField,  // Scalar field version for Pedersen
+    pub power_challenge_base: C::BaseField, // Base field version for circuit
+    pub power_challenge_scalar: C::ScalarField, // Scalar field version for Pedersen
     pub bg_setup: BGPowerChallengeSetup<C::BaseField, C::ScalarField, C>,
-    pub perm_power_vector_base: [C::BaseField; N],  // Base field version for circuit verification
-    pub perm_power_vector_scalar: [C::ScalarField; N],  // Scalar field version for Pedersen opening
+    pub perm_power_vector_base: [C::BaseField; N], // Base field version for circuit verification
+    pub perm_power_vector_scalar: [C::ScalarField; N], // Scalar field version for Pedersen opening
     pub power_opening_proof: PedersenCommitmentOpeningProof<C>,
     pub blinding_r: C::ScalarField,
     pub blinding_s: C::ScalarField,
@@ -92,16 +84,18 @@ where
 /// Note: This function is scaffolded for completeness. It wires the existing native
 /// utilities to produce the objects that the circuit expects, but it is not used by
 /// the circuit gadgets directly.
-pub fn prepare_witness<C, R, const N: usize, const LEVELS: usize>(
+pub fn prepare_witness<C, R, RO, const N: usize, const LEVELS: usize>(
     params: &mut PermutationParameters<'_, C, R>,
     nonce: C::BaseField,
     sk: C::ScalarField,
+    sponge: &mut RO,
 ) -> anyhow::Result<PreparedPermutationWitness<C, N, LEVELS>>
 where
     C: CurveGroup + CurveAbsorb<C::BaseField>,
-    C::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
-    C::ScalarField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C::BaseField: PrimeField + Absorb,
+    C::ScalarField: PrimeField + Absorb,
     R: rand::RngCore,
+    RO: CryptographicSponge,
 {
     use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
     use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
@@ -111,11 +105,8 @@ where
     // 1) Simple VRF native prove to obtain beta and pk
     let g = C::generator();
     let pk = g * sk;
-    // Use Poseidon over the curve's base prime field
-    let mut sponge = PoseidonSponge::new(&crate::config::poseidon_config::<
-        <C::BaseField as ark_ff::Field>::BasePrimeField,
-    >());
-    let beta = prove_simple_vrf::<C, _>(&mut sponge, &nonce, &sk, &pk);
+    // Use the provided random oracle sponge
+    let beta = prove_simple_vrf::<C, _>(sponge, &nonce, &sk, &pk);
 
     // 2) RS shuffle witnesses using beta as seed
     let input: [usize; N] = std::array::from_fn(|i| i);
@@ -212,9 +203,9 @@ where
 
 /// Main permutation gadget: emits constraints tying VRF→RS→BG and Pedersen opening together.
 #[allow(clippy::too_many_arguments)]
-pub fn prove_permutation_gadget<C, GG, const N: usize, const LEVELS: usize>(
+pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
-    gadget_params: &PermutationGadgetParameters<'_, C>,
+    sponge: &mut ROVar,
     // VRF
     nonce: &FpVar<ConstraintF<C>>,
     sk_var: EmulatedFpVar<C::ScalarField, ConstraintF<C>>,
@@ -236,34 +227,18 @@ pub fn prove_permutation_gadget<C, GG, const N: usize, const LEVELS: usize>(
 ) -> Result<(), SynthesisError>
 where
     C: CurveGroup,
-    C::BaseField: PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C::BaseField: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     GG: CurveVar<C, ConstraintF<C>>
-        + crate::shuffling::curve_absorb::CurveAbsorbGadget<
-            ConstraintF<C>,
-            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<ConstraintF<C>>,
-        >,
+        + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     for<'a> &'a GG: ark_r1cs_std::groups::GroupOpsBounds<'a, C, GG>,
-    for<'a> &'a GG: crate::shuffling::curve_absorb::CurveAbsorbGadget<
-        ConstraintF<C>,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<ConstraintF<C>>,
-    >,
+    for<'a> &'a GG: CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
+    RO: CryptographicSponge,
+    ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
 {
     track_constraints!(&cs, "prove_permutation_gadget", LOG_TARGET, {
         // 1) Simple VRF gadget in-circuit to derive beta from (nonce, sk)
-        let mut sponge = ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar::<
-            <C::BaseField as ark_ff::Field>::BasePrimeField,
-        >::new(cs.clone(), gadget_params.sponge_config);
-        let _beta = prove_simple_vrf_gadget::<
-            C,
-            GG,
-            ark_crypto_primitives::sponge::poseidon::PoseidonSponge<
-                <C::BaseField as ark_ff::Field>::BasePrimeField,
-            >,
-            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
-                <C::BaseField as ark_ff::Field>::BasePrimeField,
-            >,
-        >(&mut sponge, nonce, &sk_var, pk_public)?;
+        let _beta = prove_simple_vrf_gadget::<C, GG, RO, ROVar>(sponge, nonce, &sk_var, pk_public)?;
 
         // 2) RS bit binding: ensure the RS bit-matrix equals trimmed bits of alphas
         bind_rs_bits_to_alphas::<ConstraintF<C>, N, LEVELS>(
@@ -288,8 +263,8 @@ where
             cs.clone(),
             b"permutation-proof",
         )?;
-        let x_from_commit =
-            transcript.derive_power_challenge_from_commitment_base_field::<C, GG>(cs.clone(), c_perm)?;
+        let x_from_commit = transcript
+            .derive_power_challenge_from_commitment_base_field::<C, GG>(cs.clone(), c_perm)?;
         x_from_commit.enforce_equal(power_challenge_public)?;
 
         // 5) Efficient power-permutation check: b is permutation of a = [x, x^2, …, x^N]
@@ -309,7 +284,12 @@ where
 
         // Use check_grand_product with alpha_rs as the random challenge
         // This checks that ∏(alpha_rs - a_i) = ∏(alpha_rs - b_i)
-        check_grand_product(cs.clone(), &a_powers, power_perm_vec_wit, &[alpha_rs.clone()])?;
+        check_grand_product(
+            cs.clone(),
+            &a_powers,
+            power_perm_vec_wit,
+            &[alpha_rs.clone()],
+        )?;
 
         // 6) Verify Pedersen opening for c_power against b_scalar (witness power_perm_vec_scalar_wit)
         verify_scalar_folding_link_gadget::<C, GG>(
@@ -519,13 +499,14 @@ mod tests {
         let mut tr = new_bayer_groth_transcript_with_poseidon::<BaseField>(b"permutation-proof");
         let blinding_r = ScalarField::rand(&mut rng);
         let blinding_s = ScalarField::rand(&mut rng);
-        let (power_vec_base, power_vec_scalar, bg_setup) = tr.compute_power_challenge_setup::<G1Projective, N>(
-            &perm_params,
-            &power_params,
-            &rs_trace.extract_permutation_array(),
-            blinding_r,
-            blinding_s,
-        );
+        let (power_vec_base, power_vec_scalar, bg_setup) = tr
+            .compute_power_challenge_setup::<G1Projective, N>(
+                &perm_params,
+                &power_params,
+                &rs_trace.extract_permutation_array(),
+                blinding_r,
+                blinding_s,
+            );
 
         // Pedersen opening proof for c_power
         let ped_params = PedersenParams::<G1Projective>::from_arkworks::<N>(power_params.clone());
@@ -571,12 +552,13 @@ mod tests {
             .collect();
 
         // BG + commitment vars
-        let power_challenge_public = FpVar::<BaseField>::new_input(cs.clone(), || {
-            Ok(bg_setup.power_challenge_base)
-        })
-        .unwrap();
-        let c_perm_var = G1Var::new_input(cs.clone(), || Ok(bg_setup.permutation_commitment)).unwrap();
-        let c_power_var = G1Var::new_input(cs.clone(), || Ok(bg_setup.power_permutation_commitment)).unwrap();
+        let power_challenge_public =
+            FpVar::<BaseField>::new_input(cs.clone(), || Ok(bg_setup.power_challenge_base))
+                .unwrap();
+        let c_perm_var =
+            G1Var::new_input(cs.clone(), || Ok(bg_setup.permutation_commitment)).unwrap();
+        let c_power_var =
+            G1Var::new_input(cs.clone(), || Ok(bg_setup.power_permutation_commitment)).unwrap();
         let power_opening_proof_var =
             PedersenCommitmentOpeningProofVar::<G1Projective, G1Var>::new_variable(
                 cs.clone(),
@@ -585,10 +567,9 @@ mod tests {
             )
             .unwrap();
         // Base field power vector for efficient circuit verification
-        let power_perm_vec_wit: [FpVar<BaseField>; N] =
-            std::array::from_fn(|i| {
-                FpVar::new_witness(cs.clone(), || Ok(power_vec_base[i])).unwrap()
-            });
+        let power_perm_vec_wit: [FpVar<BaseField>; N] = std::array::from_fn(|i| {
+            FpVar::new_witness(cs.clone(), || Ok(power_vec_base[i])).unwrap()
+        });
         // Scalar field power vector for Pedersen opening
         let power_perm_vec_scalar_wit: [EmulatedFpVar<ScalarField, BaseField>; N] =
             std::array::from_fn(|i| {
@@ -597,15 +578,20 @@ mod tests {
 
         // Gadget params
         let sponge_config = crate::config::poseidon_config::<BaseField>();
-        let gadget_params = PermutationGadgetParameters::<G1Projective> {
-            sponge_config: &sponge_config,
-            num_samples,
-        };
+        // Shared transcript/sponge for VRF (tests use Poseidon)
+        let mut sponge_var = PoseidonSpongeVar::<BaseField>::new(cs.clone(), &sponge_config);
 
         // Run the main gadget (no allocations inside)
-        prove_permutation_gadget::<G1Projective, G1Var, N, LEVELS>(
+        prove_permutation_gadget::<
+            G1Projective,
+            G1Var,
+            PoseidonSponge<BaseField>,
+            PoseidonSpongeVar<BaseField>,
+            N,
+            LEVELS,
+        >(
             cs.clone(),
-            &gadget_params,
+            &mut sponge_var,
             &nonce_var,
             sk_var,
             &pk_public,
