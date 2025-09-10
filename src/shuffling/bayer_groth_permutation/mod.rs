@@ -105,7 +105,7 @@ pub struct PermutationProof<F: PrimeField, G: CurveGroup> {
     /// Challenge y
     pub y: F,
 
-    /// Challenge z
+    /// Challenge zO
     pub z: F,
 
     /// Left product L = ∏(d_i - z)

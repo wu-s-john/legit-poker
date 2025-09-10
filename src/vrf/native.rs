@@ -3,6 +3,7 @@
 use super::{
     dst_beta_digest, dst_challenge_digest, dst_nonce_digest, VrfParams, VrfPedersenWindow, VrfProof,
 };
+use crate::field_conversion::scalar_to_base_field_elements;
 use crate::poseidon_config;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::crh::{pedersen, CRHScheme};
@@ -44,10 +45,10 @@ where
 
     // Convert secret key to base field and absorb
     // We absorb the bytes of the scalar field element
-    let sk_bytes = sk.into_bigint().to_bytes_le();
     tracing::debug!(target: LOG_TARGET, "absorbing sk {}", sk);
-    for byte in &sk_bytes {
-        sponge.absorb(&BaseField::<C>::from(*byte as u64));
+    let sk_base_fields: Vec<BaseField<C>> = scalar_to_base_field_elements(sk);
+    for field_elem in sk_base_fields {
+        sponge.absorb(&field_elem);
     }
 
     // Absorb curve point H using CurveAbsorb trait

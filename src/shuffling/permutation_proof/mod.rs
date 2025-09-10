@@ -17,6 +17,9 @@
 //! - To avoid in-circuit exponentiation by permutation indices, the power-permutation vector
 //!   `b` is passed as a witness and checked to be a permutation of the base powers `a`.
 
+use crate::shuffling::curve_absorb::CurveAbsorb;
+use ark_crypto_primitives::sponge::constraints::CryptographicSpongeVar; // for PoseidonSpongeVar::new
+use ark_crypto_primitives::sponge::CryptographicSponge; // for PoseidonSponge::new
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::boolean::Boolean;
@@ -25,18 +28,17 @@ use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::FieldVar;
 use ark_r1cs_std::fields::{emulated_fp::EmulatedFpVar, fp::FpVar};
 use ark_r1cs_std::groups::CurveVar;
-use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError}; // trait bound needed by BG and opening
 
 use crate::field_conversion::base_to_scalar;
 use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon;
-use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::pedersen_commitment::opening_proof_gadget::{
     verify_scalar_folding_link_gadget, PedersenCommitmentOpeningProofVar,
 };
 use crate::shuffling::rs_shuffle::data_structures::PermutationWitnessTraceVar;
 use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle_indices;
 use crate::track_constraints;
-use crate::vrf::gadgets::prove_vrf_gadget;
+use crate::vrf::simple_gadgets::prove_simple_vrf_gadget;
 
 type ConstraintF<C> = <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField;
 
@@ -44,19 +46,16 @@ const LOG_TARGET: &str = "nexus_nova::shuffling::permutation_proof";
 
 /// Native (prover-side) configuration parameters for preparing permutation witnesses
 pub struct PermutationParameters<'a, C: CurveGroup, R: rand::RngCore> {
-    pub vrf_params: &'a crate::vrf::VrfParams<C>,
     pub perm_params: &'a ark_crypto_primitives::commitment::pedersen::Parameters<C>, // DeckHashWindow
     pub power_params: &'a ark_crypto_primitives::commitment::pedersen::Parameters<C>, // ReencryptionWindow
     pub rng: &'a mut R,
 }
 
 /// In-circuit parameters for the permutation proof gadgets
-pub struct PermutationGadgetParameters<'a, C: CurveGroup> 
+pub struct PermutationGadgetParameters<'a, C: CurveGroup>
 where
     C::BaseField: ark_ff::PrimeField,
 {
-    /// VRF parameters used by the VRF proving gadget
-    pub vrf_params: &'a crate::vrf::VrfParams<C>,
     /// Poseidon sponge configuration
     pub sponge_config: &'a ark_crypto_primitives::sponge::poseidon::PoseidonConfig<C::BaseField>,
     /// Number of Poseidon field elements used to derive the RS bit-matrix
@@ -90,7 +89,7 @@ pub struct PreparedPermutationWitness<C: CurveGroup, const N: usize, const LEVEL
 /// the circuit gadgets directly.
 pub fn prepare_witness<C, R, const N: usize, const LEVELS: usize>(
     params: &mut PermutationParameters<'_, C, R>,
-    msg: &[u8],
+    nonce: C::BaseField,
     sk: C::ScalarField,
 ) -> anyhow::Result<PreparedPermutationWitness<C, N, LEVELS>>
 where
@@ -104,10 +103,14 @@ where
     use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
     use ark_std::vec::Vec;
 
-    // 1) VRF native prove to obtain beta and pk
+    // 1) Simple VRF native prove to obtain beta and pk
     let g = C::generator();
     let pk = g * sk;
-    let (_proof, beta) = crate::vrf::native::prove_vrf::<C>(params.vrf_params, &pk, sk, msg);
+    // Use Poseidon over the curve's base prime field
+    let mut sponge = ark_crypto_primitives::sponge::poseidon::PoseidonSponge::new(
+        &crate::config::poseidon_config::<<C::BaseField as ark_ff::Field>::BasePrimeField>(),
+    );
+    let beta = crate::vrf::simple::prove_simple_vrf::<C, _>(&mut sponge, &nonce, &sk, &pk);
 
     // 2) RS shuffle witnesses using beta as seed
     let input: [usize; N] = std::array::from_fn(|i| i);
@@ -166,7 +169,7 @@ where
 ///
 /// The trimming removes the first and last bit from each element's bit-decomposition,
 /// matching derive_split_bits_circuit(). Bits are laid out row-major by (level, index).
-pub fn bind_rs_bits_to_alphas<F, const N: usize, const LEVELS: usize>(
+fn bind_rs_bits_to_alphas<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     alphas: &[FpVar<F>],
     bits_mat: &[[Boolean<F>; N]; LEVELS],
@@ -200,14 +203,12 @@ where
 }
 
 /// Main permutation gadget: emits constraints tying VRF→RS→BG and Pedersen opening together.
-///
-/// This gadget DOES NOT allocate inputs; it consumes Vars and composes constraints.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_permutation_gadget<C, GG, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
     gadget_params: &PermutationGadgetParameters<'_, C>,
     // VRF
-    msg_bytes: &[ark_r1cs_std::uint8::UInt8<ConstraintF<C>>],
+    nonce: &FpVar<ConstraintF<C>>,
     sk_var: EmulatedFpVar<C::ScalarField, ConstraintF<C>>,
     pk_public: &GG,
     // RS (pre-allocated)
@@ -239,25 +240,20 @@ where
     >,
 {
     track_constraints!(&cs, "prove_permutation_gadget", LOG_TARGET, {
-        // 1) VRF prove in-circuit
-        let (_proof_var, _nonce_k, _beta) = prove_vrf_gadget::<
+        // 1) Simple VRF gadget in-circuit to derive beta from (nonce, sk)
+        let mut sponge = ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar::<
+            <C::BaseField as ark_ff::Field>::BasePrimeField,
+        >::new(cs.clone(), gadget_params.sponge_config);
+        let _beta = prove_simple_vrf_gadget::<
             C,
             GG,
-            ark_crypto_primitives::sponge::poseidon::PoseidonSponge<C::BaseField>,
-            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
-        >(
-            cs.clone(),
-            gadget_params.vrf_params,
-            gadget_params.sponge_config,
-            msg_bytes,
-            sk_var.clone(),
-        )?;
-        
-        // Compute pk = sk * G and enforce it equals the public key
-        let g = GG::constant(C::generator());
-        let sk_bits = sk_var.to_bits_le()?;
-        let pk_computed = g.scalar_mul_le(sk_bits.iter())?;
-        pk_computed.enforce_equal(pk_public)?;
+            ark_crypto_primitives::sponge::poseidon::PoseidonSponge<
+                <C::BaseField as ark_ff::Field>::BasePrimeField,
+            >,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
+                <C::BaseField as ark_ff::Field>::BasePrimeField,
+            >,
+        >(&mut sponge, nonce, &sk_var, pk_public)?;
 
         // 2) RS bit binding: ensure the RS bit-matrix equals trimmed bits of alphas
         bind_rs_bits_to_alphas::<ConstraintF<C>, N, LEVELS>(
@@ -477,11 +473,11 @@ mod tests {
         use crate::shuffling::rs_shuffle::bit_generation::derive_split_bits;
         use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
         use crate::shuffling::utils::generate_random_values;
-        use crate::vrf::native::prove_vrf as vrf_prove_native;
-        use crate::vrf::VrfParams;
+        use crate::vrf::simple::prove_simple_vrf;
         use ark_crypto_primitives::commitment::{
             pedersen::Commitment as PedersenCommitment, CommitmentScheme,
         };
+        use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
         use ark_r1cs_std::uint8::UInt8;
 
         let _gaurd = setup_test_tracing();
@@ -492,14 +488,14 @@ mod tests {
         let mut rng = test_rng();
 
         // ---------- Native preparation ----------
-        // VRF params and secrets
-        let vrf_params = VrfParams::<G1Projective>::setup(&mut rng);
+        // Secrets
         let sk = ScalarField::rand(&mut rng);
         let pk = G1Projective::generator() * sk;
-        let msg: Vec<u8> = b"end-to-end-test".to_vec();
-
-        // VRF native to get beta seed
-        let (_proof, beta) = vrf_prove_native::<G1Projective>(&vrf_params, &pk, sk, &msg);
+        let nonce: BaseField = BaseField::rand(&mut rng);
+        // Simple VRF native to get beta seed
+        let mut sponge_native =
+            PoseidonSponge::<BaseField>::new(&crate::config::poseidon_config::<BaseField>());
+        let beta = prove_simple_vrf::<G1Projective, _>(&mut sponge_native, &nonce, &sk, &pk);
 
         // RS trace from beta
         let input: [usize; N] = std::array::from_fn(|i| i);
@@ -543,10 +539,7 @@ mod tests {
         let sk_var =
             EmulatedFpVar::<ScalarField, BaseField>::new_witness(cs.clone(), || Ok(sk)).unwrap();
         let pk_public = G1Var::new_input(cs.clone(), || Ok(pk)).unwrap();
-        let msg_vars: Vec<UInt8<BaseField>> = msg
-            .iter()
-            .map(|b| UInt8::new_witness(cs.clone(), || Ok(*b)).unwrap())
-            .collect();
+        let nonce_var = FpVar::new_witness(cs.clone(), || Ok(nonce)).unwrap();
 
         // RS witness as Vars prepared in-circuit from the same seed (beta)
         let seed_var = FpVar::new_witness(cs.clone(), || Ok(beta)).unwrap();
@@ -593,7 +586,6 @@ mod tests {
         // Gadget params
         let sponge_config = crate::config::poseidon_config::<BaseField>();
         let gadget_params = PermutationGadgetParameters::<G1Projective> {
-            vrf_params: &vrf_params,
             sponge_config: &sponge_config,
             num_samples,
         };
@@ -602,7 +594,7 @@ mod tests {
         prove_permutation_gadget::<G1Projective, G1Var, N, LEVELS>(
             cs.clone(),
             &gadget_params,
-            &msg_vars,
+            &nonce_var,
             sk_var,
             &pk_public,
             &rs_witness_var,

@@ -7,6 +7,8 @@
 pub mod cofactor;
 pub mod gadgets;
 pub mod native;
+pub mod simple;
+pub mod simple_gadgets;
 #[cfg(test)]
 mod tests;
 

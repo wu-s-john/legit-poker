@@ -4,7 +4,7 @@ use super::{
     cofactor::mul_by_cofactor_const, dst_beta_digest, dst_challenge_digest, dst_nonce_digest,
     VrfParams, VrfPedersenWindow, VrfProof,
 };
-use crate::field_conversion::{base_to_scalar_with_bits, scalar_to_base_for_absorption};
+use crate::field_conversion::{base_to_scalar_with_bits, scalar_to_base_field_elements_gadget};
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::track_constraints;
 use ark_crypto_primitives::crh::pedersen::constraints::{
@@ -141,7 +141,7 @@ where
 
     // Convert sk to base field elements for absorption
     // We absorb the bytes of the scalar field element to match native
-    let sk_fields = scalar_to_base_for_absorption::<C>(sk)?;
+    let sk_fields = scalar_to_base_field_elements_gadget::<C>(sk)?;
     sponge.absorb(&sk_fields)?;
 
     // Absorb H using CurveAbsorbGadget trait
