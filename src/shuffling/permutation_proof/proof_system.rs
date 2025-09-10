@@ -1,7 +1,7 @@
 use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{pairing::Pairing, CurveGroup};
-use ark_ff::{PrimeField, ToConstraintField};
+use ark_ff::{Field, PrimeField, ToConstraintField};
 use ark_groth16::{prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof, ProvingKey};
 use ark_r1cs_std::fields::emulated_fp::{params::OptimizationType, AllocatedEmulatedFpVar};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
@@ -10,9 +10,11 @@ use ark_std::{marker::PhantomData, rand::RngCore, vec::Vec};
 use rand::SeedableRng;
 
 use super::circuit::PermutationProofCircuit;
+use crate::shuffling::curve_absorb::CurveAbsorbGadget;
+use crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof;
 use crate::shuffling::rs_shuffle::data_structures::PermutationWitnessTrace;
 
-type ConstraintF<C> = <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField;
+type ConstraintF<C> = <<C as CurveGroup>::BaseField as Field>::BasePrimeField;
 
 /// Public data for the permutation proof circuit
 pub struct PublicData<C: CurveGroup, const N: usize>
@@ -24,11 +26,10 @@ where
     pub pk_public: C,
     pub indices_init: [ConstraintF<C>; N],
     pub alpha_rs: ConstraintF<C>,
-    pub power_challenge_public: ConstraintF<C>,
+    pub power_challenge_public: ConstraintF<C>, // x
     pub c_perm: C,
     pub c_power: C,
-    pub power_opening_proof:
-        crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof<C>,
+    pub power_opening_proof: PedersenCommitmentOpeningProof<C>,
 }
 
 /// Private witness data for the permutation proof circuit
@@ -53,15 +54,9 @@ where
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
     GG: CurveVar<C, ConstraintF<C>>
-        + crate::shuffling::curve_absorb::CurveAbsorbGadget<
-            ConstraintF<C>,
-            PoseidonSpongeVar<ConstraintF<C>>,
-        >,
+        + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     for<'a> &'a GG: GroupOpsBounds<'a, C, GG>,
-    for<'a> &'a GG: crate::shuffling::curve_absorb::CurveAbsorbGadget<
-        ConstraintF<C>,
-        PoseidonSpongeVar<ConstraintF<C>>,
-    >,
+    for<'a> &'a GG: CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     // Ensure circuit field matches pairing scalar field
     E::ScalarField: PrimeField + Absorb,
     C::ScalarField: Absorb,
@@ -80,15 +75,9 @@ where
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
     GG: CurveVar<C, ConstraintF<C>>
-        + crate::shuffling::curve_absorb::CurveAbsorbGadget<
-            ConstraintF<C>,
-            PoseidonSpongeVar<ConstraintF<C>>,
-        >,
+        + CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     for<'a> &'a GG: GroupOpsBounds<'a, C, GG>,
-    for<'a> &'a GG: crate::shuffling::curve_absorb::CurveAbsorbGadget<
-        ConstraintF<C>,
-        PoseidonSpongeVar<ConstraintF<C>>,
-    >,
+    for<'a> &'a GG: CurveAbsorbGadget<ConstraintF<C>, PoseidonSpongeVar<ConstraintF<C>>>,
     E::ScalarField: PrimeField + Absorb,
     C::ScalarField: Absorb,
 {
@@ -204,6 +193,11 @@ where
         Ok((proof, public_inputs))
     }
 
+    /// Access the prepared verifying key for external verification orchestration
+    pub fn prepared_vk(&self) -> &PreparedVerifyingKey<E> {
+        &self.pvk
+    }
+
     /// Verify a proof against the provided public inputs
     pub fn verify(
         &self,
@@ -231,7 +225,7 @@ where
     C: CurveGroup + ToConstraintField<ConstraintF<C>>,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    E::ScalarField: PrimeField + From<<C::BaseField as ark_ff::Field>::BasePrimeField>,
+    E::ScalarField: PrimeField + From<<C::BaseField as Field>::BasePrimeField>,
 {
     let mut v: Vec<E::ScalarField> = Vec::new();
 

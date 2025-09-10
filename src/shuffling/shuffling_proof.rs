@@ -9,6 +9,7 @@
 use super::bayer_groth_permutation::bg_setup::{
     new_bayer_groth_transcript_with_poseidon, BayerGrothSetupParameters,
 };
+use super::bayer_groth_permutation::reencryption_protocol::prove;
 use super::data_structures::ElGamalCiphertext;
 use super::proof_system::{
     PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionPublicInput,
@@ -23,7 +24,9 @@ use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
 use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
 use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
 use ark_crypto_primitives::commitment::CommitmentScheme;
+use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
 use ark_crypto_primitives::sponge::Absorb;
+use ark_crypto_primitives::sponge::CryptographicSponge;
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::PrimeField;
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
@@ -41,6 +44,219 @@ type PedersenReenc<G> = PedersenCommitment<G, ReencryptionWindow>;
 
 /// Type alias for Pedersen commitment with DeckHashWindow configuration
 type PedersenDeck<G> = PedersenCommitment<G, DeckHashWindow>;
+
+// ============================================================================
+// New prover/verifier (v2) using PermutationGroth16 + native Σ‑protocol
+// ============================================================================
+
+use crate::shuffling::pedersen_commitment::opening_proof::{
+    verify as verify_pedersen_opening, PedersenCommitmentOpeningProof, PedersenParams,
+};
+use crate::shuffling::permutation_proof::proof_system::PermutationGroth16;
+use crate::shuffling::permutation_proof::{
+    prepare_witness, PublicData as PermPublicData, WitnessData as PermWitnessData,
+};
+use ark_ec::pairing::Pairing;
+use ark_groth16::{PreparedVerifyingKey, Proof as Groth16Proof};
+
+/// Public configuration for the new shuffling prover/verifier
+pub struct ShufflingConfigV2<G: CurveGroup> {
+    /// Generator on inner curve for ElGamal and commitments
+    pub generator: G,
+    /// Aggregated ElGamal public key
+    pub public_key: G,
+}
+
+/// Complete shuffling proof artifacts for the new prover
+pub struct ShufflingProofV2<E, G, const N: usize>
+where
+    E: Pairing,
+    G: CurveGroup,
+{
+    /// Groth16 proof for the permutation circuit
+    pub perm_snark_proof: Groth16Proof<E>,
+    /// Prepared verifying key (public)
+    pub perm_snark_pvk: PreparedVerifyingKey<E>,
+    /// Flattened public inputs used by the permutation circuit
+    pub perm_snark_public_inputs: Vec<E::ScalarField>,
+    /// Bayer–Groth minimal setup outputs used across sub-protocols
+    pub power_challenge_scalar: G::ScalarField,
+    pub permutation_commitment: G,
+    pub power_permutation_commitment: G,
+    /// Native Pedersen opening proof for c_power
+    pub power_opening_proof: PedersenCommitmentOpeningProof<G>,
+    /// Native Σ‑protocol proof for re-encryption correctness
+    pub reencryption_proof:
+        super::bayer_groth_permutation::reencryption_protocol::ReencryptionProof<G, N>,
+}
+
+/// Prove a shuffle with the new RS SNARK (with VRF) and native Σ‑protocol
+pub fn prove_shuffling_v2<E, G, GG, const N: usize, const LEVELS: usize>(
+    config: &ShufflingConfigV2<G>,
+    ct_input: &[ElGamalCiphertext<G>; N],
+    // VRF inputs
+    vrf_nonce: G::BaseField,
+    vrf_sk: G::ScalarField,
+    rng: &mut (impl RngCore + CryptoRng),
+) -> Result<([ElGamalCiphertext<G>; N], ShufflingProofV2<E, G, N>), Box<dyn std::error::Error>>
+where
+    E: Pairing<ScalarField = G::BaseField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField> + ark_ff::ToConstraintField<G::BaseField>,
+    G::Config: CurveConfig,
+    G::BaseField: PrimeField + Absorb,
+    G::ScalarField: PrimeField + Absorb + UniformRand,
+    GG: CurveVar<G, G::BaseField>
+        + crate::shuffling::curve_absorb::CurveAbsorbGadget<
+            G::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+        >,
+    for<'a> &'a GG: ark_r1cs_std::groups::GroupOpsBounds<'a, G, GG>,
+    for<'a> &'a GG: crate::shuffling::curve_absorb::CurveAbsorbGadget<
+        G::BaseField,
+        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<G::BaseField>,
+    >,
+{
+    // 1) RS shuffle (native) to get permutation and permuted ciphertexts
+    let rs_shuffle_trace =
+        run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
+            vrf_nonce, ct_input,
+        );
+
+    // 2) Apply re-encryption (native) using random scalars
+    let rerand: [G::ScalarField; N] =
+        crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
+    let ct_output: [ElGamalCiphertext<G>; N] = std::array::from_fn(|i| ElGamalCiphertext {
+        c1: rs_shuffle_trace.permuted_output[i].c1 + config.generator * rerand[i],
+        c2: rs_shuffle_trace.permuted_output[i].c2 + config.public_key * rerand[i],
+    });
+
+    // 3) Pedersen parameters (deterministic seeds for consistency across prove/verify)
+    let mut deck_rng = StdRng::seed_from_u64(42);
+    let perm_params = PedersenDeck::<G>::setup(&mut deck_rng)?;
+    let mut power_rng = StdRng::seed_from_u64(43);
+    let power_params = PedersenReenc::<G>::setup(&mut power_rng)?;
+
+    // 4) Prepare permutation witnesses (native), including BG setup + opening
+    let mut prep_params = crate::shuffling::permutation_proof::PermutationParameters::<G, _> {
+        perm_params: &perm_params,
+        power_params: &power_params,
+        rng,
+    };
+    let mut sponge =
+        PoseidonSponge::<G::BaseField>::new(&crate::config::poseidon_config::<G::BaseField>());
+    let prepared =
+        prepare_witness::<G, _, _, N, LEVELS>(&mut prep_params, vrf_nonce, vrf_sk, &mut sponge)?;
+
+    // 5) Groth16 permutation proof (build keys per-proof due to num_samples dependency)
+    let perm_sys: PermutationGroth16<E, G, GG, N, LEVELS> =
+        PermutationGroth16::setup(rng, prepared.rs_trace.num_samples)?;
+    let public = PermPublicData::<G, N> {
+        nonce: vrf_nonce,
+        pk_public: prepared.pk,
+        indices_init: prepared.indices_init,
+        alpha_rs: prepared.vrf_value,
+        power_challenge_public: prepared.bg_setup.power_challenge_base,
+        c_perm: prepared.bg_setup.permutation_commitment,
+        c_power: prepared.bg_setup.power_permutation_commitment,
+        power_opening_proof: prepared.power_opening_proof.clone(),
+    };
+    let witness = PermWitnessData::<G, N, LEVELS> {
+        sk: vrf_sk,
+        rs_witness: prepared.rs_trace.witness_trace.clone(),
+        power_perm_vec_wit: prepared.perm_power_vector_base,
+        power_perm_vec_scalar_wit: prepared.perm_power_vector_scalar,
+    };
+    let (perm_proof, perm_public_inputs) =
+        perm_sys.prove(rng, &public, &witness, prepared.rs_trace.num_samples)?;
+    let pvk = perm_sys.prepared_vk().clone();
+
+    // 6) Native Σ‑protocol for re-encryption correctness
+    let mut tr_sig =
+        PoseidonSponge::<G::BaseField>::new(&crate::config::poseidon_config::<G::BaseField>());
+    let reencryption_proof = prove::<G, _, N>(
+        &config.public_key,
+        &power_params,
+        ct_input,
+        &ct_output,
+        prepared.bg_setup.power_challenge_scalar,
+        &prepared.bg_setup.power_permutation_commitment,
+        &prepared.perm_power_vector_scalar,
+        prepared.blinding_s,
+        &rerand,
+        &mut tr_sig,
+        rng,
+    );
+
+    Ok((
+        ct_output,
+        ShufflingProofV2 {
+            perm_snark_proof: perm_proof,
+            perm_snark_pvk: pvk,
+            perm_snark_public_inputs: perm_public_inputs,
+            power_challenge_scalar: prepared.bg_setup.power_challenge_scalar,
+            permutation_commitment: prepared.bg_setup.permutation_commitment,
+            power_permutation_commitment: prepared.bg_setup.power_permutation_commitment,
+            power_opening_proof: prepared.power_opening_proof,
+            reencryption_proof,
+        },
+    ))
+}
+
+/// Verify a shuffle with the new RS SNARK and native Σ‑protocol
+pub fn  <E, G, const N: usize>(
+    config: &ShufflingConfigV2<G>,
+    ct_input: &[ElGamalCiphertext<G>; N],
+    ct_output: &[ElGamalCiphertext<G>; N],
+    proof: &ShufflingProofV2<E, G, N>,
+) -> Result<bool, Box<dyn std::error::Error>>
+where
+    E: Pairing<ScalarField = G::BaseField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    G::BaseField: PrimeField + Absorb,
+    G::ScalarField: PrimeField + Absorb,
+{
+    // 1) Verify Groth16 permutation proof
+    let ok_snark = ark_groth16::Groth16::<E>::verify_proof(
+        &proof.perm_snark_pvk,
+        &proof.perm_snark_proof,
+        &proof.perm_snark_public_inputs,
+    )?;
+    if !ok_snark {
+        return Ok(false);
+    }
+
+    // 2) Verify Pedersen opening of c_power (natively)
+    let mut power_rng = StdRng::seed_from_u64(43);
+    let power_params_raw = PedersenReenc::<G>::setup(&mut power_rng)?;
+    let ped_params = PedersenParams::<G>::from_arkworks::<N>(power_params_raw.clone());
+    verify_pedersen_opening::<G, N>(
+        &ped_params,
+        &proof.power_permutation_commitment,
+        &proof.power_opening_proof,
+    )
+    .map_err(|e| -> Box<dyn std::error::Error> {
+        format!("pedersen opening verify: {e:?}").into()
+    })?;
+
+    // 3) Verify native re-encryption Σ‑protocol
+    let mut tr_sig =
+        PoseidonSponge::<G::BaseField>::new(&crate::config::poseidon_config::<G::BaseField>());
+    let ok_sigma = super::bayer_groth_permutation::reencryption_protocol::verify::<G, _, N>(
+        &config.public_key,
+        &power_params_raw,
+        ct_input,
+        ct_output,
+        proof.power_challenge_scalar,
+        &proof.power_permutation_commitment,
+        &proof.reencryption_proof,
+        &mut tr_sig,
+    );
+    if !ok_sigma {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
 
 /// Helper function to create RS Shuffle with Bayer-Groth Link circuit
 #[cfg(test)]
@@ -213,9 +429,7 @@ where
     // Step 1: Apply RS shuffle permutation to get witness data and permutation
     tracing::debug!(target: LOG_TARGET, "Step 1: Applying RS shuffle permutation");
     let rs_shuffle_trace =
-        run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(
-            seed, ct_input,
-        );
+        run_rs_shuffle_permutation::<G::BaseField, ElGamalCiphertext<G>, N, LEVELS>(seed, ct_input);
 
     // Create an RSShuffleTrace with the permutation as the output
     let permutation_trace = super::rs_shuffle::data_structures::RSShuffleTrace {
@@ -291,11 +505,8 @@ where
     );
 
     // Create PermutationWitness
-    let permutation_witness = PermutationWitness::<G, GV, N, LEVELS>::new(
-        permutation_trace,
-        blinding_r,
-        blinding_s,
-    );
+    let permutation_witness =
+        PermutationWitness::<G, GV, N, LEVELS>::new(permutation_trace, blinding_r, blinding_s);
 
     // Generate proof using the generic permutation proof system
     let shuffling_permutation_snark_proof = config
@@ -654,7 +865,9 @@ mod tests {
         // Grumpkin scalar field for private key
         let private_key = ark_grumpkin::Fr::rand(&mut rng);
         let public_key = generator * private_key;
-        let domain = b"test_domain".to_vec();
+        // IMPORTANT: Domain must match the one used during key generation ("test").
+        // Otherwise, the Groth16 keys won't match the circuit constants.
+        let domain = b"test".to_vec();
 
         let config = ShufflingConfig {
             domain: domain.clone(),

@@ -43,6 +43,7 @@ use ark_crypto_primitives::{
 };
 use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, ToConstraintField};
+use ark_std::One;
 use ark_groth16::{
     prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof as Groth16Proof, ProvingKey,
     VerifyingKey,
@@ -117,19 +118,57 @@ pub fn build_public_inputs_for_rs_shuffle<G, E>(
 ) -> Result<Vec<E::ScalarField>, String>
 where
     E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
+    G: CurveGroup<BaseField = E::ScalarField>,
+    G::Affine: ToConstraintField<E::ScalarField>,
 {
     let mut public_inputs = Vec::with_capacity(7);
 
     // 1. Add alpha challenge
     public_inputs.push(alpha);
 
-    // 2. Add c_perm (flattens to 3 elements for Short Weierstrass curves)
-    let c_perm_fields = flatten_curve_point::<G, E::ScalarField>(c_perm)?;
+    // 2. Add c_perm as (x, y, 1)
+    // Affine ToConstraintField may return either [x, y] or [x, y, is_infinity].
+    // Normalize to [x, y, 1] to match circuit input allocation.
+    let mut c_perm_fields = c_perm
+        .into_affine()
+        .to_field_elements()
+        .ok_or_else(|| "Failed to convert c_perm to affine field elements".to_string())?;
+    match c_perm_fields.len() {
+        2 => {
+            c_perm_fields.push(E::ScalarField::one());
+        }
+        3 => {
+            // Overwrite the third element with 1
+            c_perm_fields[2] = E::ScalarField::one();
+        }
+        other => {
+            return Err(format!(
+                "Unexpected number of affine elements for c_perm: {}",
+                other
+            ));
+        }
+    }
     public_inputs.extend(c_perm_fields);
 
-    // 3. Add c_power (flattens to 3 elements for Short Weierstrass curves)
-    let c_power_fields = flatten_curve_point::<G, E::ScalarField>(c_power)?;
+    // 3. Add c_power as (x, y, 1)
+    let mut c_power_fields = c_power
+        .into_affine()
+        .to_field_elements()
+        .ok_or_else(|| "Failed to convert c_power to affine field elements".to_string())?;
+    match c_power_fields.len() {
+        2 => {
+            c_power_fields.push(E::ScalarField::one());
+        }
+        3 => {
+            c_power_fields[2] = E::ScalarField::one();
+        }
+        other => {
+            return Err(format!(
+                "Unexpected number of affine elements for c_power: {}",
+                other
+            ));
+        }
+    }
     public_inputs.extend(c_power_fields);
 
     // Sanity check: we should have exactly 7 elements
@@ -237,9 +276,8 @@ impl<E, G, GV, const N: usize, const LEVELS: usize> ProofSystem
     for Groth16PermutationProofSystem<E, G, GV, N, LEVELS>
 where
     E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField>
-        + CurveAbsorb<E::ScalarField>
-        + ToConstraintField<E::ScalarField>,
+    G: CurveGroup<BaseField = E::ScalarField> + CurveAbsorb<E::ScalarField>,
+    G::Affine: ToConstraintField<E::ScalarField>,
     G::Config: CurveConfig<BaseField = E::ScalarField>,
     GV: CurveVar<G, E::ScalarField>
         + CurveAbsorbGadget<
@@ -319,6 +357,28 @@ where
             &public_input.bg_setup_params.c_power,
         )?;
 
+        // Debug lengths to help diagnose mismatches
+        tracing::debug!(
+            target: "nexus_nova::shuffling::proof_system",
+            "public_inputs len = {}, vk.gamma_abc_g1 len = {}",
+            public_inputs.len(),
+            self.verifying_key.gamma_abc_g1.len()
+        );
+        // Debug first few elements for sanity (alpha and first coords)
+        if public_inputs.len() >= 7 {
+            tracing::debug!(
+                target: "nexus_nova::shuffling::proof_system",
+                "alpha={}, c_perm_x={}, c_perm_y={}, c_perm_inf={}, c_power_x={}, c_power_y={}, c_power_inf={}",
+                public_inputs[0],
+                public_inputs[1],
+                public_inputs[2],
+                public_inputs[3],
+                public_inputs[4],
+                public_inputs[5],
+                public_inputs[6]
+            );
+        }
+
         // Use the prepared verifying key for more efficient verification
         let valid = Groth16::<E>::verify_with_processed_vk(
             &self.prepared_verifying_key,
@@ -337,7 +397,8 @@ impl<E, G, GV, const N: usize, const LEVELS: usize>
     Groth16PermutationProofSystem<E, G, GV, N, LEVELS>
 where
     E: Pairing,
-    G: CurveGroup<BaseField = E::ScalarField> + ToConstraintField<E::ScalarField>,
+    G: CurveGroup<BaseField = E::ScalarField>,
+    G::Affine: ToConstraintField<E::ScalarField>,
     G::BaseField: PrimeField,
     GV: CurveVar<G, E::ScalarField>
         + CurveAbsorbGadget<
