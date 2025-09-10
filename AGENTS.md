@@ -16,6 +16,7 @@
 
 ## Coding Style & Naming Conventions
 - Rust: Edition 2021. Format with `cargo fmt --all` (check: `cargo fmt --all -- --check`). Use `snake_case` for files/functions, `CamelCase` for types. Prefer `anyhow::Result` and `?`; avoid `unwrap()` outside tests.
+- Imports: Always use proper `use` statements at the top of files instead of fully qualified paths. E.g., `use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;` then reference as `PoseidonSpongeVar`, not the full path.
 - Functional Rust: favor iterator chains (`map/filter/fold`) and `std::array::from_fn` over mutable loops.
 - Tracing: use `tracing` macros with targets and spans. Example: `tracing::info!(target="shuffling", ?deck_id, "reshuffled");` and annotate hot paths with `#[tracing::instrument(skip(..), target="r1cs")]`.
 - Linting: `cargo clippy --all-targets --all-features -D warnings` before PRs.
