@@ -97,7 +97,6 @@ where
         nonce: vrf_nonce,
         pk_public: prepared.pk,
         indices_init: prepared.indices_init.map(|x| x.into()),
-        alpha_rs: prepared.vrf_value.into(),
         power_challenge_public: prepared.bg_setup.power_challenge_base.into(),
         c_perm: prepared.bg_setup.permutation_commitment,
         c_power: prepared.bg_setup.power_permutation_commitment,
@@ -208,7 +207,7 @@ pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: 
     // RS (pre-allocated)
     rs_witness_var: &PermutationWitnessTraceVar<ConstraintF<C>, N, LEVELS>,
     indices_init: &[FpVar<ConstraintF<C>>; N],
-    alpha_rs: &FpVar<ConstraintF<C>>, // same alpha reused later for permutation product check
+    // alpha/beta are derived in-circuit from a Poseidon transcript bound to public inputs
     num_samples: usize,               // number of base-field elements used to derive RS bits
     // BG + opening
     power_challenge_public: &FpVar<ConstraintF<C>>, // x in base field
@@ -249,7 +248,21 @@ where
             }
         }
 
-        // 3) RS shuffle constraints on indices
+        // 3) Derive alpha and beta from a fresh Poseidon sponge bound to public inputs
+        let sponge_cfg = crate::config::poseidon_config::<ConstraintF<C>>();
+        let mut chall_sponge = PoseidonSpongeVar::<ConstraintF<C>>::new(cs.clone(), &sponge_cfg);
+        // Optional domain separation tag
+        // Absorb public inputs in the specified order
+        pk_public.curve_absorb_gadget(&mut chall_sponge)?;               // curve
+        chall_sponge.absorb(nonce)?;                   // Fp
+        chall_sponge.absorb(power_challenge_public)?;  // Fp
+        c_perm.curve_absorb_gadget(&mut chall_sponge)?;                  // curve
+        c_power.curve_absorb_gadget(&mut chall_sponge)?;                 // curve
+        // Squeeze one element for alpha, set beta = alpha^2
+        let alpha = chall_sponge.squeeze_field_elements(1)?[0].clone();
+        let beta = &alpha * &alpha;
+
+        // 4) RS shuffle constraints on indices
         let indices_after_shuffle: [FpVar<ConstraintF<C>>; N] =
             std::array::from_fn(|i| rs_witness_var.sorted_levels[LEVELS - 1][i].idx.clone());
         rs_shuffle_indices::<ConstraintF<C>, N, LEVELS>(
@@ -257,10 +270,11 @@ where
             indices_init,
             &indices_after_shuffle,
             rs_witness_var,
-            alpha_rs,
+            &alpha,
+            &beta,
         )?;
 
-        // 4) Bind public x (power_challenge) to c_perm-derived value
+        // 5) Bind public x (power_challenge) to c_perm-derived value
         let mut transcript = new_bayer_groth_transcript_gadget_with_poseidon::<ConstraintF<C>>(
             cs.clone(),
             b"permutation-proof",
@@ -294,8 +308,8 @@ where
 
         // Derive challenges for pair encoding by absorbing alpha into the sponge
         // and squeezing three base-field elements: [rho, alpha1, alpha2]
-        sponge.absorb(alpha_rs)?;
-        let chals = sponge.squeeze_field_elements(3)?;
+        chall_sponge.absorb(&alpha)?;
+        let chals = chall_sponge.squeeze_field_elements(3)?;
         let rho = chals[0].clone();
         let alpha1 = chals[1].clone();
         let alpha2 = chals[2].clone();
@@ -523,9 +537,6 @@ mod tests {
             FpVar::new_witness(cs.clone(), || Ok(indices_init_native[i])).unwrap()
         });
 
-        // RS alpha var (recycle vrf_value as alpha_rs)
-        let alpha_rs = FpVar::new_witness(cs.clone(), || Ok(vrf_value)).unwrap();
-
         // BG + commitment vars
         let power_challenge_public =
             FpVar::<BaseField>::new_input(cs.clone(), || Ok(bg_setup.power_challenge_base))
@@ -572,7 +583,6 @@ mod tests {
             &pk_public,
             &rs_witness_var,
             &indices_init,
-            &alpha_rs,
             num_samples,
             &power_challenge_public,
             &c_perm_var,
