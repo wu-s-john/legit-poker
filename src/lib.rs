@@ -13,6 +13,8 @@ pub mod vrf;
 
 pub mod pedersen_commitment_opening_proof;
 
+pub mod db;
+
 #[cfg(test)]
 pub mod test_utils;
 

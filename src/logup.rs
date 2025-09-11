@@ -145,13 +145,12 @@ pub fn compute_and_constrain_inverses<F: PrimeField>(
         .map(|den| {
             // Witness the inverse
             let inv = FpVar::new_witness(cs.clone(), || {
-                den.value()
-                    .map(|d| d.inverse().unwrap_or(F::zero()))
+                den.value().map(|d| d.inverse().unwrap_or(F::zero()))
             })?;
-            
+
             // Enforce den * inv = 1
             (den * &inv).enforce_equal(&FpVar::<F>::one())?;
-            
+
             Ok(inv)
         })
         .collect()

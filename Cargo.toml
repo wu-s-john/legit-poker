@@ -135,6 +135,8 @@ postgrest = "1.6"
 reqwest = { version = "0.12", features = ["json"] }
 futures = "0.3"
 tokio-tungstenite = "0.24"
+tokio-postgres = "0.7"
+supabase-rust-realtime = "0.4"
 
 # GPU acceleration dependencies (optional)
 icicle-runtime = { git = "https://github.com/ingonyama-zk/icicle.git", optional = true }
