@@ -44,6 +44,21 @@ impl<F: PrimeField> PermutationProduct<F, 2> for IndexPositionPair<F> {
     }
 }
 
+/// Alias for readability when the second component represents a generic "value" (e.g., power)
+pub type IndexedPair<F> = IndexPositionPair<F>;
+
+/// Three-challenge encoding for pairs with a random offset rho.
+///
+/// Encodes a pair (idx, val) as (rho - (alpha*idx + beta*val)), making the
+/// grand-product argument collision-resistant for associated pairs.
+impl<F: PrimeField> PermutationProduct<F, 3> for IndexPositionPair<F> {
+    fn product(&self, challenges: &[FpVar<F>; 3]) -> FpVar<F> {
+        // challenges[0] = rho, challenges[1] = alpha, challenges[2] = beta
+        let encoded = &challenges[1] * &self.idx + &challenges[2] * &self.pos;
+        &challenges[0] - encoded
+    }
+}
+
 /// Generic function to check multiset equality using grand product with any type implementing PermutationProduct
 pub fn check_grand_product<F, T, const N: usize>(
     _cs: ConstraintSystemRef<F>,

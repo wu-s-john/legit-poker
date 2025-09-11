@@ -37,7 +37,7 @@ use crate::shuffling::pedersen_commitment::opening_proof_gadget::{
     verify_scalar_folding_link_gadget, PedersenCommitmentOpeningProofVar,
 };
 use crate::shuffling::rs_shuffle::data_structures::{PermutationWitnessTraceVar, RSShuffleTrace};
-use crate::shuffling::rs_shuffle::permutation::check_grand_product;
+use crate::shuffling::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle_indices;
 use crate::track_constraints;
 use crate::vrf::simple_gadgets::prove_simple_vrf_gadget;
@@ -269,7 +269,7 @@ where
             .derive_power_challenge_from_commitment_base_field::<C, GG>(cs.clone(), c_perm)?;
         x_from_commit.enforce_equal(power_challenge_public)?;
 
-        // 5) Efficient power-permutation check: b is permutation of a = [x, x^2, …, x^N]
+        // 5) Efficient power-permutation check via paired multiset equality.
         // Build base powers a = [x, x^2, ..., x^N] efficiently in base field
         let a_powers: Vec<FpVar<ConstraintF<C>>> = {
             let mut powers = Vec::with_capacity(N);
@@ -284,13 +284,28 @@ where
             powers
         };
 
-        // Use check_grand_product with alpha_rs as the random challenge
-        // This checks that ∏(alpha_rs - a_i) = ∏(alpha_rs - b_i)
-        check_grand_product(
+        // Construct pair lists: left = [(i, x^(i+1))], right = [(π[i], b_i)]
+        let left_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
+            .map(|i| IndexPositionPair::new(indices_init[i].clone(), a_powers[i].clone()))
+            .collect();
+        let right_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
+            .map(|i| IndexPositionPair::new(indices_after_shuffle[i].clone(), power_perm_vec_wit[i].clone()))
+            .collect();
+
+        // Derive challenges for pair encoding by absorbing alpha into the sponge
+        // and squeezing three base-field elements: [rho, alpha1, alpha2]
+        sponge.absorb(alpha_rs)?;
+        let chals = sponge.squeeze_field_elements(3)?;
+        let rho = chals[0].clone();
+        let alpha1 = chals[1].clone();
+        let alpha2 = chals[2].clone();
+
+        // Check multiset equality of associated pairs using 3-challenge product argument
+        check_grand_product::<ConstraintF<C>, IndexPositionPair<ConstraintF<C>>, 3>(
             cs.clone(),
-            &a_powers,
-            power_perm_vec_wit,
-            &[alpha_rs.clone()],
+            &left_pairs,
+            &right_pairs,
+            &[rho, alpha1, alpha2],
         )?;
 
         // 6) Verify Pedersen opening for c_power against b_scalar (witness power_perm_vec_scalar_wit)
