@@ -25,7 +25,6 @@ where
     pub nonce: ConstraintF<C>,
     pub pk_public: C,
     pub indices_init: [ConstraintF<C>; N],
-    pub alpha_rs: ConstraintF<C>,
     pub power_challenge_public: ConstraintF<C>, // x
     pub c_perm: C,
     pub c_power: C,
@@ -125,7 +124,6 @@ where
             nonce: Some(nonce),
             pk_public: Some(prepared.pk),
             indices_init: Some(prepared.indices_init),
-            alpha_rs: Some(prepared.vrf_value),
             power_challenge_public: Some(prepared.bg_setup.power_challenge_base),
             c_perm: Some(prepared.bg_setup.permutation_commitment),
             c_power: Some(prepared.bg_setup.power_permutation_commitment),
@@ -162,7 +160,6 @@ where
             nonce: Some(public.nonce),
             pk_public: Some(public.pk_public),
             indices_init: Some(public.indices_init),
-            alpha_rs: Some(public.alpha_rs),
             power_challenge_public: Some(public.power_challenge_public),
             c_perm: Some(public.c_perm),
             c_power: Some(public.c_power),
@@ -253,13 +250,10 @@ where
         v.push((*x).into());
     }
 
-    // 4) alpha_rs (base field)
-    v.push(public.alpha_rs.into());
-
-    // 5) power_challenge_public (base field)
+    // 4) power_challenge_public (base field)
     v.push(public.power_challenge_public.into());
 
-    // 6) c_perm (full point serialization)
+    // 5) c_perm (full point serialization)
     {
         let elems: Vec<ConstraintF<C>> = public
             .c_perm
@@ -270,7 +264,7 @@ where
         }
     }
 
-    // 7) c_power (full point serialization)
+    // 6) c_power (full point serialization)
     {
         let elems: Vec<ConstraintF<C>> = public
             .c_power
@@ -401,7 +395,6 @@ mod tests {
             nonce,
             pk_public: prepared.pk,
             indices_init: prepared.indices_init,
-            alpha_rs: prepared.vrf_value,
             power_challenge_public: prepared.bg_setup.power_challenge_base,
             c_perm: prepared.bg_setup.permutation_commitment,
             c_power: prepared.bg_setup.power_permutation_commitment,

@@ -45,7 +45,6 @@ where
     pub nonce: Option<ConstraintF<C>>,                 // base field
     pub pk_public: Option<C>,                          // curve point
     pub indices_init: Option<[ConstraintF<C>; N]>,     // base field array
-    pub alpha_rs: Option<ConstraintF<C>>,              // base field
     pub power_challenge_public: Option<ConstraintF<C>>,// base field
     pub c_perm: Option<C>,                             // curve point
     pub c_power: Option<C>,                            // curve point
@@ -83,7 +82,6 @@ where
             nonce: Some(zero_f),
             pk_public: Some(zero_g),
             indices_init: Some(std::array::from_fn(|_| zero_f)),
-            alpha_rs: Some(zero_f),
             power_challenge_public: Some(zero_f),
             c_perm: Some(zero_g),
             c_power: Some(zero_g),
@@ -139,9 +137,6 @@ where
             FpVar::new_input(cs.clone(), || Ok(indices_init_vals[i]))
                 .expect("indices_init input alloc")
         });
-
-        let alpha_rs_val = self.alpha_rs.ok_or(SynthesisError::AssignmentMissing)?;
-        let alpha_rs = FpVar::<ConstraintF<C>>::new_input(cs.clone(), || Ok(alpha_rs_val))?;
 
         let power_challenge_val =
             self.power_challenge_public.ok_or(SynthesisError::AssignmentMissing)?;
@@ -219,7 +214,6 @@ where
             &pk_public,
             &rs_witness_var,
             &indices_init,
-            &alpha_rs,
             self.num_samples,
             &power_challenge_public,
             &c_perm,

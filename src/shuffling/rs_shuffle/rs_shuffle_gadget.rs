@@ -74,6 +74,7 @@ pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
     indices_after_shuffle: &[FpVar<F>],
     witness: &PermutationWitnessTraceVar<F, N, LEVELS>,
     alpha: &FpVar<F>,
+    beta: &FpVar<F>,
 ) -> Result<(), SynthesisError>
 where
     F: PrimeField,
@@ -102,19 +103,16 @@ where
             })
             .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-        // 2. Create beta challenge for level verification (using alpha as base)
-        let beta = alpha * alpha; // beta = alpha^2
-
-        // 3. Level-by-level verification
+        // 2. Level-by-level verification using both challenges
         for level in 0..LEVELS {
             let unsorted = &witness.uns_levels[level];
             let sorted_arr = &witness.sorted_levels[level];
 
             // Verify this shuffle level (row constraints + permutation check)
-            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, &beta)?;
+            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
         }
 
-        // 4. Final permutation check using just indices (1 challenge)
+        // 3. Final permutation check using just indices (1 challenge)
         // This verifies that initial and final indices form the same multiset
         check_grand_product::<F, IndexedValue<F>, 1>(
             cs.clone(),
@@ -604,12 +602,15 @@ where
     track_constraints!(&cs, "rs_shuffle_with_bayer_groth_proof", LOG_TARGET, {
         // Step 1: Verify RS shuffle correctness
         tracing::debug!(target: LOG_TARGET, "Step 1: Verifying RS shuffle correctness");
+        // Derive beta locally for level checks
+        let beta = alpha * alpha;
         rs_shuffle_indices::<F, N, LEVELS>(
             cs.clone(),
             indices_init,
             indices_after_shuffle,
             witness_data,
             alpha,
+            &beta,
         )?;
 
         // Step 2: Run Bayer-Groth protocol to generate challenges

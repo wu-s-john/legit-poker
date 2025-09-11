@@ -385,13 +385,15 @@ where
                 let alpha_var =
                     FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
 
-                // Call the main verification function
+                // Derive beta locally as alpha^2 and call the main verification function
+                let beta_var = &alpha_var * &alpha_var;
                 rs_shuffle_indices::<F, N, LEVELS>(
                     cs.clone(),
                     &indices_init_vars,
                     &indices_after_shuffle_vars,
                     &witness_var,
                     &alpha_var,
+                    &beta_var,
                 )
             }
         )
