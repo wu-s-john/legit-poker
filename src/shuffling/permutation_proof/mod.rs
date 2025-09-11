@@ -82,6 +82,38 @@ where
     pub blinding_s: C::ScalarField,
 }
 
+/// Convenience builder to construct (PublicData, WitnessData) from a prepared bundle
+/// and explicit VRF inputs (nonce, secret key).
+pub fn construct_perm_io<C, const N: usize, const LEVELS: usize>(
+    vrf_nonce: ConstraintF<C>,
+    vrf_sk: C::ScalarField,
+    prepared: &PreparedPermutationWitness<C, N, LEVELS>,
+) -> (PublicData<C, N>, WitnessData<C, N, LEVELS>)
+where
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+{
+    let public = PublicData::<C, N> {
+        nonce: vrf_nonce,
+        pk_public: prepared.pk,
+        indices_init: prepared.indices_init.map(|x| x.into()),
+        alpha_rs: prepared.vrf_value.into(),
+        power_challenge_public: prepared.bg_setup.power_challenge_base.into(),
+        c_perm: prepared.bg_setup.permutation_commitment,
+        c_power: prepared.bg_setup.power_permutation_commitment,
+        power_opening_proof: prepared.power_opening_proof.clone(),
+    };
+
+    let witness = WitnessData::<C, N, LEVELS> {
+        sk: vrf_sk,
+        rs_witness: prepared.rs_trace.witness_trace.clone(),
+        power_perm_vec_wit: prepared.perm_power_vector_base.map(|x| x.into()),
+        power_perm_vec_scalar_wit: prepared.perm_power_vector_scalar,
+    };
+
+    (public, witness)
+}
+
 /// Prepare permutation-related witnesses natively (off-circuit)
 ///
 /// Note: This function is scaffolded for completeness. It wires the existing native

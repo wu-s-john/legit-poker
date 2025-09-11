@@ -19,12 +19,7 @@ use common::{
     perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
 };
 
-use zk_poker::shuffling::{
-    data_structures::ElGamalCiphertext,
-    proof_system::{
-        DummyProofSystem, PermutationPublicInput, PermutationWitness, ReencryptionProofSystem,
-    },
-};
+use zk_poker::shuffling::data_structures::ElGamalCiphertext;
 
 // Constants for demo
 const N: usize = 52; // Standard deck of cards
@@ -35,11 +30,7 @@ const NUM_PLAYERS: usize = 7; // Number of players
 // Type aliases for clarity
 type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
-type DummyIP = DummyProofSystem<
-    PermutationPublicInput<G, GV, N, LEVELS>,
-    PermutationWitness<G, GV, N, LEVELS>,
->;
-type SP = ReencryptionProofSystem<G, N>;
+// Proof system types are internal now
 
 // ============================================================================
 // Main Demo Function
@@ -94,10 +85,7 @@ fn main() {
     println!("3. Creating game configuration...");
     let config_start = Instant::now();
 
-    let shuffling_config = setup_game_config::<G, GV, N, LEVELS>(
-        &shuffler_public_keys,
-        b"poker_shuffle_demo".to_vec(),
-    );
+    let shuffling_config = setup_game_config::<ark_bn254::Bn254, G>(&shuffler_public_keys);
 
     println!(
         "   ✓ Aggregated public key created from {} shufflers",
@@ -133,14 +121,13 @@ fn main() {
         // Time the shuffle with proof
         let shuffle_start = Instant::now();
 
-        let (shuffled_deck, proof) =
-            perform_shuffle_with_proof::<G, GV, DummyIP, SP, _, N, LEVELS>(
-                &shuffling_config,
-                &current_deck,
-                shuffle_seed,
-                &mut rng,
-            )
-            .expect("Shuffling with proof should succeed");
+        let (shuffled_deck, proof) = perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
+            &shuffling_config,
+            &current_deck,
+            shuffle_seed,
+            &mut rng,
+        )
+        .expect("Shuffling with proof should succeed");
 
         let shuffle_time = shuffle_start.elapsed();
 

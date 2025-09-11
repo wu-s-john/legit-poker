@@ -198,6 +198,11 @@ where
         &self.pvk
     }
 
+    /// Access the proving key for external orchestration
+    pub fn proving_key(&self) -> &ProvingKey<E> {
+        &self.pk
+    }
+
     /// Verify a proof against the provided public inputs
     pub fn verify(
         &self,

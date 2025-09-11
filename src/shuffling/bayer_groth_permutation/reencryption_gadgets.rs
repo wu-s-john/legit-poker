@@ -361,18 +361,17 @@ where
 
     tracing::debug!(target: LOG_TARGET, "check1 = {:?}", check1.value().ok());
 
-    // 2) Group-side equality (V2): E(1; z_ρ) · ∏ (C'_i)^{z_{b,i}} = T_grp · (C^a)^c
-    // LHS - compute E_pk(1; z_ρ) · ∏ output_ciphertexts[j]^{z_b[j]}
-    // This matches native encrypt_one_and_combine
+    // 2) Group-side equality (V2): E(0; z_ρ) · ∏ (C'_i)^{z_{b,i}} = T_grp · (C^a)^c
+    // LHS - compute E_pk(0; z_ρ) · ∏ output_ciphertexts[j]^{z_b[j]}
+    // This mirrors native encrypt_one_and_combine (pure rerandomization of zero)
 
     // Get the generator internally (matching native implementation)
     let generator = GG::constant(G::generator());
 
-    // E_pk(1; z_ρ) = (g^z_ρ, g + pk^z_ρ)
+    // E_pk(0; z_ρ) = (g^z_ρ, pk^z_ρ)
     // Using direct multiplication with FieldVar
     let enc_one_c1 = generator.clone() * &proof.sigma_response_rerand;
-    let enc_one_c2_temp = public_key.clone() * &proof.sigma_response_rerand;
-    let enc_one_c2 = &enc_one_c2_temp + &generator; // Add generator for E_pk(1; r)
+    let enc_one_c2 = public_key.clone() * &proof.sigma_response_rerand;
 
     // ∏ (C'_i)^{z_b[i]} - note: using OUTPUT ciphertexts to match native
     let msm = msm_ciphertexts_gadget_emulated(

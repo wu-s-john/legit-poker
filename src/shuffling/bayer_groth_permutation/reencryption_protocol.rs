@@ -2,7 +2,7 @@
 //!
 //! This module implements a type-safe non-interactive Σ-protocol that proves the shuffle identity:
 //!
-//!     ∏_j C_j^{x^j} = E_pk(1; ρ) · ∏_i (C'_i)^{b_i}    with    power_perm_commitment = com(b; s_B)
+//!     ∏_j C_j^{x^j} = E_pk(0; ρ) · ∏_i (C'_i)^{b_i}    with    power_perm_commitment = com(b; s_B)
 //!
 //! where
 //!   - a = (x^1, x^2, …, x^N) with x←FS is the public power vector
@@ -11,15 +11,16 @@
 //!
 //! ## Math identity proved by the Σ‑protocol
 //!
-//! Given a correct shuffle C'_i = C_{π(i)} · E(1; ρ_i), we prove:
+//! Given a correct shuffle C'_i = C_{π(i)} · E(0; ρ_i) (i.e., pure re-randomization that does not
+//! change the plaintext), we prove:
 //!
 //!   ∏_i (C'_i)^{b_i}
-//! = ∏_i (C_{π(i)} · E(1; ρ_i))^{x^{π(i)}}
-//! = ∏_j C_j^{x^j} · E(1; Σ_i x^{π(i)}·ρ_i)     [reindex j = π(i)]
+//! = ∏_i (C_{π(i)} · E(0; ρ_i))^{x^{π(i)}}
+//! = ∏_j C_j^{x^j} · E(0; Σ_i x^{π(i)}·ρ_i)     [reindex j = π(i)]
 //!
 //! Moving the rerandomization to the other side:
-//!   ∏_j C_j^{x^j} = E(1; -Σ_i x^{π(i)}·ρ_i) · ∏_i (C'_i)^{b_i}
-//!                 = E(1; ρ) · ∏_i (C'_i)^{b_i}
+//!   ∏_j C_j^{x^j} = E(0; -Σ_i x^{π(i)}·ρ_i) · ∏_i (C'_i)^{b_i}
+//!                 = E(0; ρ) · ∏_i (C'_i)^{b_i}
 //!
 //! Our Σ‑protocol proves knowledge of (b, s_B, ρ) such that
 //!
@@ -28,7 +29,7 @@
 //! using two Schnorr-style equalities (Fiat–Shamir to make it non-interactive):
 //!
 //!   com(z_b; z_s) = T_com · power_perm_commitment^c                         (V1)
-//!   E(1; z_ρ) · ∏_i (C'_i)^{z_{b,i}} = T_grp · (C^a)^c                     (V2)
+//!   E(0; z_ρ) · ∏_i (C'_i)^{z_{b,i}} = T_grp · (C^a)^c                     (V2)
 //!
 //! **Important:** `com(·)` must be a *linear vector Pedersen* over field scalars, not a byte-Pedersen hash,
 //! so that com(t + c·b; t_s + c·s_B) = com(t; t_s) · com(b; s_B)^c holds coordinate-wise.
@@ -147,20 +148,8 @@ where
 
     let powers: [G::ScalarField; N] = compute_powers_sequence_with_index_1(perm_power_challenge);
 
-    // Normalize input ciphertexts to affine form before MSM
-    // This ensures consistency with the gadget implementation
-    let normalized_input_ciphertexts: [ElGamalCiphertext<G>; N] =
-        std::array::from_fn(|i| ElGamalCiphertext {
-            c1: input_ciphertexts[i].c1.into_affine().into(),
-            c2: input_ciphertexts[i].c2.into_affine().into(),
-        });
-
-    // Compute aggregators C^a using normalized ciphertexts
-    let mut input_ciphertext_aggregator = msm_ciphertexts(&normalized_input_ciphertexts, &powers);
-
-    // Normalize the aggregator to ensure consistent coordinates with gadget
-    input_ciphertext_aggregator.c1 = input_ciphertext_aggregator.c1.into_affine().into();
-    input_ciphertext_aggregator.c2 = input_ciphertext_aggregator.c2.into_affine().into();
+    // Compute aggregator C^a directly on provided ciphertexts
+    let input_ciphertext_aggregator = msm_ciphertexts(input_ciphertexts, &powers);
 
     // Absorb public inputs into transcript
     absorb_public_inputs(
@@ -190,8 +179,8 @@ where
         blinding_factor_for_blinding_factor_commitment,
     );
 
-    // blinding_rerandomization_commitment = E_pk(1; ciphertext_masking_rerand) · ∏ (C'_i)^{t_i}
-    // This is T_grp = E_pk(1;t_ρ) · ∏_{i=1}^N (C'_i)^{t_i}
+    // blinding_rerandomization_commitment = E_pk(0; ciphertext_masking_rerand) · ∏ (C'_i)^{t_i}
+    // This is T_grp = E_pk(0;t_ρ) · ∏_{i=1}^N (C'_i)^{t_i}
     let blinding_rerandomization_commitment: ElGamalCiphertext<G> = encrypt_one_and_combine(
         public_key,
         ciphertext_masking_rerand,
@@ -292,30 +281,8 @@ where
         power_perm_commitment
     );
 
-    // Normalize input ciphertexts to affine form before MSM
-    // This ensures consistency with the gadget implementation which uses affine coordinates
-    let normalized_input_ciphertexts: [ElGamalCiphertext<G>; N] =
-        std::array::from_fn(|i| ElGamalCiphertext {
-            c1: input_ciphertexts[i].c1.into_affine().into(),
-            c2: input_ciphertexts[i].c2.into_affine().into(),
-        });
-
-    // Log normalized input ciphertexts for debugging
-    for (i, ct) in normalized_input_ciphertexts.iter().enumerate() {
-        tracing::trace!(
-            target: LOG_TARGET,
-            "Native verify: normalized_input_ciphertexts[{}].c1 = {:?}",
-            i,
-            ct.c1
-        );
-    }
-
-    // Compute aggregators C^a using normalized ciphertexts
-    let mut input_ciphertext_aggregator = msm_ciphertexts(&normalized_input_ciphertexts, &powers);
-
-    // Normalize the aggregator to ensure consistent coordinates with gadget
-    input_ciphertext_aggregator.c1 = input_ciphertext_aggregator.c1.into_affine().into();
-    input_ciphertext_aggregator.c2 = input_ciphertext_aggregator.c2.into_affine().into();
+    // Compute aggregator C^a directly on provided ciphertexts
+    let input_ciphertext_aggregator = msm_ciphertexts(input_ciphertexts, &powers);
 
     // Trace the input_ciphertext_aggregator
     tracing::trace!(
@@ -384,7 +351,7 @@ where
     }
 
     // 2) Group-side equality (V2)
-    // E_pk(1; z_ρ) · ∏ (C'_i)^{z_{b,i}}
+    // E_pk(0; z_ρ) · ∏ (C'_i)^{z_{b,i}}
     let lhs_grp = encrypt_one_and_combine(
         public_key,
         proof.sigma_response_rerand, // Now a single scalar
@@ -420,10 +387,10 @@ where
 
 #[tracing::instrument(target = LOG_TARGET, skip_all, fields(N = N))]
 
-/// Compute E_pk(1; randomness) · ∏ C_j^{scalar_factors[j]} and return as a single point
+/// Compute E_pk(0; randomness) · ∏ C_j^{scalar_factors[j]} and return as a single point
 /// by adding the two components of the resulting ciphertext.
 ///
-/// Returns: c1 + c2 where (c1, c2) = E_pk(1; randomness) · ∏ C_j^{scalar_factors[j]}
+/// Returns: c1 + c2 where (c1, c2) = E_pk(0; randomness) · ∏ C_j^{scalar_factors[j]}
 pub fn encrypt_one_and_combine<G: CurveGroup, const N: usize>(
     public_key: &G,
     randomness: G::ScalarField,
@@ -442,11 +409,10 @@ where
         randomness
     );
 
-    // E_pk(1; randomness) = (g^randomness, pk^randomness · g)
-    // Note: In ElGamal, encrypting message M=1 (which is the generator G in additive notation)
-    // gives (g^r, pk^r · g) = (g^r, g + pk^r) in additive notation
+    // E_pk(0; randomness) = (g*randomness, pk*randomness)
+    // Re-randomization must NOT change the plaintext, so we encrypt the neutral element (0).
     let rerand_c1 = curve_generator * randomness;
-    let rerand_c2 = curve_generator + *public_key * randomness;
+    let rerand_c2 = *public_key * randomness;
     tracing::trace!(
         target: LOG_TARGET,
         "encrypt_one_and_combine: rerand_c1 = {:?}, rerand_c2 = {:?}",
@@ -463,8 +429,7 @@ where
         msm.c2
     );
 
-    // Combine and return as single point
-    // let result = rerand_c1 + msm.c1 + rerand_c2 + msm.c2;
+    // Combine and return ciphertext components
     let result = ElGamalCiphertext {
         c1: rerand_c1 + msm.c1,
         c2: rerand_c2 + msm.c2,
@@ -541,6 +506,121 @@ mod tests {
             )
             .with(filter)
             .set_default()
+    }
+
+    /// Prove using perm power vector derived from BG transcript helper
+    /// This test derives (x, b, c_power) via `compute_power_challenge_setup`,
+    /// then uses them to run the reencryption Σ‑protocol end-to-end.
+    #[test]
+    fn test_prove_with_bg_transcript_power_vector() {
+        let _guard = setup_test_tracing();
+
+        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+        use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
+        use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
+
+        const N: usize = 8;
+        const LEVELS: usize = 10; // sufficient for up to 1024 elements
+
+        // RNG and keys
+        let mut rng = test_rng();
+        let sk = Fr::rand(&mut rng);
+        let keys = ElGamalKeys::new(sk);
+
+        // Pedersen params: permutation commitment (DeckHashWindow) + power vector (ReencryptionWindow)
+        let perm_params =
+            PedersenCommitment::<G1Projective, DeckHashWindow>::setup(&mut rng).unwrap();
+        let power_params =
+            PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut rng).unwrap();
+
+        // RS permutation via seeded run
+        // Use base-field seed to stay consistent with RS shuffle expectations
+        let seed = Fq::from(12345u64);
+        let input_idx: [usize; N] = core::array::from_fn(|i| i);
+        let rs_trace = run_rs_shuffle_permutation::<Fq, usize, N, LEVELS>(seed, &input_idx);
+
+        // Extract 1-indexed permutation for BG transcript helper and 0-indexed for shuffling
+        let perm_1idx: [usize; N] = rs_trace.extract_permutation_array();
+        let perm_0idx: [usize; N] = core::array::from_fn(|i| perm_1idx[i] - 1);
+
+        // Build input deck and shuffle + rerandomize
+        let (c_in, _enc_r) =
+            generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
+        let (c_out, rerand) =
+            shuffle_and_rerandomize_random(&c_in, &perm_0idx, keys.public_key, &mut rng);
+
+        // Derive (x, b, c_power) via BG transcript helper
+        let mut bg_tr = new_bayer_groth_transcript_with_poseidon::<Fq>(b"reencryption-proof");
+        let blinding_r = Fr::rand(&mut rng); // for c_perm
+        let blinding_s = Fr::rand(&mut rng); // for c_power (we pass this into prove)
+        let (_b_base, b_scalar, setup) = bg_tr.compute_power_challenge_setup::<G1Projective, N>(
+            &perm_params,
+            &power_params,
+            &perm_1idx,
+            blinding_r,
+            blinding_s,
+        );
+
+        // Sanity: recompute b from perm + x and compare
+        let b_check = crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector(
+            &perm_1idx,
+            setup.power_challenge_scalar,
+        );
+        assert_eq!(
+            b_scalar, b_check,
+            "BG helper b vector must match utility computation"
+        );
+
+        // Optional: verify shuffle relation holds prior to proof
+        assert!(
+            crate::shuffling::bayer_groth_permutation::utils::verify_shuffle_relation::<
+                G1Projective,
+                N,
+            >(
+                &keys.public_key,
+                &c_in,
+                &c_out,
+                setup.power_challenge_scalar,
+                &b_scalar,
+                &rerand,
+            ),
+            "Shuffle relation must hold before protocol"
+        );
+
+        // Prove using reencryption Σ‑protocol with derived (x, b, c_power)
+        let cfg = crate::config::poseidon_config::<Fq>();
+        let mut prover_transcript = PoseidonSponge::new(&cfg);
+        let proof = prove::<G1Projective, PoseidonSponge<Fq>, N>(
+            &keys.public_key,
+            &power_params, // must match window used for c_power
+            &c_in,
+            &c_out,
+            setup.power_challenge_scalar,
+            &setup.power_permutation_commitment,
+            &b_scalar,
+            blinding_s,
+            &rerand,
+            &mut prover_transcript,
+            &mut rng,
+        );
+
+        // Verify
+        let mut verifier_transcript = PoseidonSponge::new(&cfg);
+        assert!(verify::<G1Projective, PoseidonSponge<Fq>, N>(
+            &keys.public_key,
+            &power_params,
+            &c_in,
+            &c_out,
+            setup.power_challenge_scalar,
+            &setup.power_permutation_commitment,
+            &proof,
+            &mut verifier_transcript,
+        ));
+
+        tracing::debug!(
+            target = LOG_TARGET,
+            "✓ BG transcript powered reencryption proof verified"
+        );
     }
 
     /// Test instance with all necessary data for a complete test

@@ -20,11 +20,6 @@ use zk_poker::shuffling::{
         combine_blinding_contributions_for_player, generate_committee_decryption_share,
         recover_card_value, PlayerTargetedBlindingContribution,
     },
-    proof_system::{
-        create_dummy_proof_system, create_reencryption_proof_system, DummyProofSystem,
-        PermutationPublicInput, PermutationWitness, ProofSystem, ReencryptionProofSystem,
-        ReencryptionPublicInput, ReencryptionWitness,
-    },
     shuffling_proof::{prove_shuffling, verify_shuffling, ShufflingConfig, ShufflingProof},
 };
 
@@ -89,38 +84,20 @@ where
 }
 
 /// Create game configuration with aggregated shuffler public keys and proof systems
-pub fn setup_game_config<G, GV, const N: usize, const LEVELS: usize>(
-    shuffler_public_keys: &[G],
-    domain: Vec<u8>,
-) -> ShufflingConfig<
-    DummyProofSystem<
-        PermutationPublicInput<G, GV, N, LEVELS>,
-        PermutationWitness<G, GV, N, LEVELS>,
-    >,
-    ReencryptionProofSystem<G, N>,
-    G,
->
+pub fn setup_game_config<E, G>(shuffler_public_keys: &[G]) -> ShufflingConfig<E, G>
 where
-    G: CurveGroup + CurveAbsorb<G::BaseField>,
-    G::BaseField: PrimeField + Absorb,
-    G::ScalarField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField>,
+    E: ark_ec::pairing::Pairing,
+    G: CurveGroup,
 {
     // Aggregate all shuffler public keys
     let aggregated_public_key = shuffler_public_keys
         .iter()
         .fold(G::zero(), |acc, pk| acc + pk);
 
-    // Create proof systems
-    let permutation_proof_system = create_dummy_proof_system();
-    let reencryption_proof_system = create_reencryption_proof_system::<G, N>();
-
     ShufflingConfig {
-        domain,
         generator: G::generator(),
         public_key: aggregated_public_key,
-        permutation_proof_system,
-        reencryption_proof_system,
+        perm_snark_keys: Default::default(),
     }
 }
 
@@ -146,42 +123,41 @@ where
 // ============================================================================
 
 /// Perform a single shuffle with complete proof generation and verification
-pub fn perform_shuffle_with_proof<G, GV, IP, SP, R, const N: usize, const LEVELS: usize>(
-    config: &ShufflingConfig<IP, SP, G>,
+pub fn perform_shuffle_with_proof<E, G, GV, R, const N: usize, const LEVELS: usize>(
+    config: &ShufflingConfig<E, G>,
     current_deck: &[ElGamalCiphertext<G>; N],
-    shuffle_seed: G::BaseField,
+    vrf_nonce: G::BaseField,
     rng: &mut R,
-) -> Result<([ElGamalCiphertext<G>; N], ShufflingProof<IP, SP, G, N>), Box<dyn std::error::Error>>
+) -> Result<([ElGamalCiphertext<G>; N], ShufflingProof<E, G, N>), Box<dyn std::error::Error>>
 where
-    G: CurveGroup + CurveAbsorb<G::BaseField>,
+    E: ark_ec::pairing::Pairing<ScalarField = G::BaseField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField> + ark_ff::ToConstraintField<G::BaseField>,
     G::Config: CurveConfig,
     G::ScalarField: PrimeField + Absorb + UniformRand,
     G::BaseField: PrimeField + Absorb,
-    GV: CurveVar<G, G::BaseField> + CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<
+            G::BaseField,
+            PoseidonSpongeVar<G::BaseField>,
+        >,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
-    IP: ProofSystem<
-        PublicInput = PermutationPublicInput<G, GV, N, LEVELS>,
-        Witness = PermutationWitness<G, GV, N, LEVELS>,
+    for<'a> &'a GV: CurveAbsorbGadget<
+        G::BaseField,
+        PoseidonSpongeVar<G::BaseField>,
     >,
-    SP: ProofSystem<
-        PublicInput = ReencryptionPublicInput<G, N>,
-        Witness = ReencryptionWitness<G, N>,
-    >,
-    IP::Error: Into<Box<dyn std::error::Error>>,
-    SP::Error: Into<Box<dyn std::error::Error>>,
     R: RngCore + CryptoRng,
 {
     // Generate proof
-    let (shuffled_deck, proof) =
-        prove_shuffling::<G, GV, IP, SP, N, LEVELS>(config, current_deck, shuffle_seed, rng)?;
+    let (shuffled_deck, proof, bg_setup) =
+        prove_shuffling::<E, G, GV, N, LEVELS>(config, current_deck, vrf_nonce, rng)?;
 
     // Verify proof
-    let is_valid = verify_shuffling::<G, GV, IP, SP, N, LEVELS>(
+    let is_valid = verify_shuffling::<E, G, N>(
         config,
+        &bg_setup,
         current_deck,
         &shuffled_deck,
         &proof,
-        shuffle_seed,
     )?;
 
     if !is_valid {

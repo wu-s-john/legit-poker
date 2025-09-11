@@ -38,23 +38,15 @@ use zk_poker::game::user_interface::{
 };
 use zk_poker::player_service::DatabaseClient;
 use zk_poker::shuffler_service::ShufflerService;
-use zk_poker::shuffling::{
-    data_structures::ElGamalCiphertext,
-    player_decryption::recover_card_value,
-    proof_system::{DummyProofSystem, PermutationPublicInput, PermutationWitness, ReencryptionProofSystem},
-    unified_shuffler,
-};
+use zk_poker::shuffling::{data_structures::ElGamalCiphertext, player_decryption::recover_card_value, unified_shuffler};
 
 // Constants for the game
 const N: usize = 52; // Standard deck of cards
 const LEVELS: usize = 5; // RS shuffle levels
 
-// Type aliases for clarity
 type G = GrumpkinProjective;
 type GV = ProjectiveVar<GrumpkinConfig, FpVar<Fr>>;
-type DummyIP =
-    DummyProofSystem<PermutationPublicInput<G, GV, N, LEVELS>, PermutationWitness<G, GV, N, LEVELS>>;
-type SP = ReencryptionProofSystem<G, N>;
+// Proof system types are internal in the library now
 
 /// Helper function to format a list field, showing only first 2 elements
 #[allow(dead_code)]
@@ -440,10 +432,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ✓ {} players initialized", NUM_PLAYERS);
 
     // Create game configuration with aggregated shuffler keys
-    let shuffling_config = setup_game_config::<G, GV, N, LEVELS>(
-        &shuffler_public_keys,
-        b"poker_game_shuffle".to_vec(),
-    );
+    let shuffling_config = setup_game_config::<ark_bn254::Bn254, G>(&shuffler_public_keys);
     println!("   ✓ Game configuration created with aggregated public key");
     println!("   ✓ Proof systems initialized");
 
@@ -470,14 +459,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Perform shuffle with proof generation and verification
         let proof_start = Instant::now();
-        let (shuffled_deck, _proof) =
-            perform_shuffle_with_proof::<G, GV, DummyIP, SP, _, N, LEVELS>(
-                &shuffling_config,
-                &current_deck,
-                shuffle_seed,
-                &mut rng,
-            )
-            .expect("Shuffling with proof should succeed");
+        let (shuffled_deck, _proof) = perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
+            &shuffling_config,
+            &current_deck,
+            shuffle_seed,
+            &mut rng,
+        )
+        .expect("Shuffling with proof should succeed");
         let total_time = proof_start.elapsed();
 
         // Estimate proof and verify times (roughly 70% proof, 30% verify)
