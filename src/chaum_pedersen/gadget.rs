@@ -3,8 +3,8 @@
 //! This module provides circuit gadgets for verifying Chaum-Pedersen proofs
 //! inside a SNARK, ensuring discrete logarithm equality.
 
-use crate::shuffling::chaum_pedersen::ChaumPedersenProof;
-use crate::shuffling::curve_absorb::CurveAbsorbGadget;
+use crate::chaum_pedersen::ChaumPedersenProof;
+use crate::curve_absorb::CurveAbsorbGadget;
 use crate::{field_conversion_gadget::embed_to_emulated, poseidon_config};
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar,
@@ -126,12 +126,10 @@ where
     let challenge_base = sponge.squeeze_field_elements(1)?[0].clone();
     tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base.value().ok());
 
-    let challenge: EmulatedFpVar<C::ScalarField, C::BaseField> =
-        embed_to_emulated(cs, challenge_base)?;
-
-    tracing::debug!(target: LOG_TARGET, "Converted challenge to scalar field: {:?}", challenge.value().ok());
-
-    Ok(challenge)
+    // Convert to scalar field via emulation then embed back
+    let emulated_challenge =
+        embed_to_emulated::<C::ScalarField, C::BaseField>(cs.clone(), challenge_base)?;
+    Ok(emulated_challenge)
 }
 
 impl<C, CV> ChaumPedersenProofVar<C, CV>
@@ -139,18 +137,9 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField>
-        + CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
-    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    CV: CurveVar<C, C::BaseField>,
 {
     /// Verify a Chaum-Pedersen proof in-circuit
-    ///
-    /// # Arguments
-    /// * `cs` - Constraint system reference
-    /// * `g` - First base point
-    /// * `h` - Second base point
-    /// * `alpha` - First public value (should be g^secret)
-    /// * `beta` - Second public value (should be h^secret)
     #[instrument(target = LOG_TARGET, level = "debug", skip_all)]
     pub fn verify_gadget(
         &self,
@@ -159,21 +148,21 @@ where
         h: &CV,
         alpha: &CV,
         beta: &CV,
-    ) -> Result<Boolean<C::BaseField>, SynthesisError> {
-        tracing::debug!(target: LOG_TARGET, "Starting Chaum-Pedersen verification in-circuit");
+    ) -> Result<Boolean<C::BaseField>, SynthesisError>
+    where
+        CV: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
+        for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
+    {
+        tracing::debug!(target: LOG_TARGET, "Starting Chaum-Pedersen verification (circuit)");
 
-        // Recompute the challenge from commitments
-        tracing::debug!(target: LOG_TARGET, "Computing Fiat-Shamir challenge");
+        // Compute challenge c from commitments
         let challenge = compute_challenge_gadget::<C, CV>(cs.clone(), &self.t_g, &self.t_h)?;
+        tracing::debug!(target: LOG_TARGET, "Computed challenge: {:?}", challenge.value().ok());
 
-        // Verify equation 1: g^z = T_g · α^c
-        tracing::debug!(target: LOG_TARGET, "Verifying equation 1: g^z = T_g · α^c");
-
-        // Compute lhs1 = g^z (using scalar_mul_le with bits)
-        let lhs1 = g.clone().scalar_mul_le(self.z_bits.iter())?;
+        // Equation 1: g^z = T_g · α^c
+        let z_bits = self.z_bits.clone();
+        let lhs1 = g.scalar_mul_le(z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs1 (g^z) = {:?}", lhs1.value().ok());
-
-        // Compute rhs1 = T_g + α^c
         let alpha_c = alpha.clone() * &challenge;
         let rhs1 = &self.t_g + &alpha_c;
         tracing::debug!(target: LOG_TARGET, "rhs1 (T_g · α^c) = {:?}", rhs1.value().ok());
@@ -182,14 +171,11 @@ where
         let check1 = lhs1.is_eq(&rhs1)?;
         tracing::debug!(target: LOG_TARGET, "Equation 1 result: {:?}", check1.value().ok());
 
-        // Verify equation 2: h^z = T_h · β^c
-        tracing::debug!(target: LOG_TARGET, "Verifying equation 2: h^z = T_h · β^c");
-
-        // Compute lhs2 = h^z (using scalar_mul_le with bits)
-        let lhs2 = h.clone().scalar_mul_le(self.z_bits.iter())?;
+        // Equation 2: h^z = T_h · β^c
+        let z_bits = self.z_bits.clone();
+        let lhs2 = h.scalar_mul_le(z_bits.iter())?;
         tracing::debug!(target: LOG_TARGET, "lhs2 (h^z) = {:?}", lhs2.value().ok());
 
-        // Compute rhs2 = T_h + β^c
         let beta_c = beta.clone() * &challenge;
         let rhs2 = &self.t_h + &beta_c;
         tracing::debug!(target: LOG_TARGET, "rhs2 (T_h · β^c) = {:?}", rhs2.value().ok());
@@ -218,6 +204,7 @@ where
     ) -> Result<Boolean<C::BaseField>, SynthesisError>
     where
         CV: CurveAbsorbGadget<C::BaseField, PoseidonSpongeVar<C::BaseField>>,
+        for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
     {
         self.verify_gadget(cs, g, h, alpha, beta)
     }

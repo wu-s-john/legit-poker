@@ -126,10 +126,11 @@ where
         tracing::debug!(target: LOG_TARGET, "Computed challenge (base field): {:?}", challenge_base);
 
         // Convert to scalar field - must match circuit's embed_to_emulated behavior
-        // For curves where base field != scalar field, we need proper conversion
-        let challenge_bytes = challenge_base.into_bigint().to_bytes_le();
-        let challenge_scalar = C::ScalarField::from_le_bytes_mod_order(&challenge_bytes);
-        tracing::debug!(target: LOG_TARGET, "Computed challenge (scalar field): {:?}", challenge_scalar);
+        let bytes = challenge_base.into_bigint().to_bytes_le();
+        let challenge_scalar = C::ScalarField::from_le_bytes_mod_order(&bytes);
+
+        tracing::debug!(target: LOG_TARGET, "Converted challenge (scalar field): {:?}", challenge_scalar);
+
         challenge_scalar
     }
 }

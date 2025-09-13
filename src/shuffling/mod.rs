@@ -1,7 +1,7 @@
 pub mod bayer_groth;
 pub mod bayer_groth_permutation;
-pub mod chaum_pedersen;
-pub mod chaum_pedersen_gadget;
+// Re-export top-level Chaum-Pedersen module for backward compatibility
+pub use crate::chaum_pedersen;
 pub mod circuit;
 pub mod community_decryption;
 // Re-export `crate::curve_absorb` here so existing imports like
@@ -29,7 +29,6 @@ pub use community_decryption::*;
 pub use data_structures::*;
 pub use encryption::*;
 pub use error::*;
-pub use game_events::*;
 pub use player_decryption::*;
 pub use prove::*;
 pub use setup::*;

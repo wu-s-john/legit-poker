@@ -5,7 +5,7 @@
 //! - Recovering card values using player secret and committee shares
 //! - Verifying Chaum-Pedersen proofs in-circuit
 
-use super::chaum_pedersen_gadget::ChaumPedersenProofVar;
+use crate::chaum_pedersen::ChaumPedersenProofVar;
 use super::curve_absorb::CurveAbsorbGadget;
 use super::data_structures::ElGamalCiphertextVar;
 use super::player_decryption::{
