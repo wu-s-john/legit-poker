@@ -22,8 +22,14 @@
 - Linting: `cargo clippy --all-targets --all-features -D warnings` before PRs.
 - Frontend: ESLint + Prettier. Run `npm run check`. Components `PascalCase.tsx`, utilities `camelCase.ts`, shared types in `zk_poker_frontend/src/types/`.
 
+## Database Access (Rust)
+- Prefer the "seaborn" DSL libraries (SeaORM/SeaQuery) for queries rather than raw SQL strings to maintain type safety.
+- Avoid constructing SQL with `format!`/string concatenation; use the ORM/query builder APIs and compile-time checked macros when available.
+
 ## Testing Guidelines
 - Rust: Unit tests are colocated (e.g., `mod tests {}`) and in files like `src/vrf/tests.rs`; E2E in `src/showdown/e2e.rs`. Make tests deterministic (fixed RNG seeds), prefer small fixtures. Run: `RUST_LOG=info cargo test -- --nocapture` and avoid `--release` to keep iteration fast.
+- No Mocks: Avoid mocking frameworks. Use trait-based interfaces with test implementations for stubbing dependencies. This ensures type safety and clearer test intent.
+- Card Game Test Data: When generating ElGamal ciphertexts for card games (especially 52-card decks), always use `shuffling::generate_random_ciphertexts::<C, 52>(&public_key, &mut rng)` from `src/shuffling/mod.rs`. This ensures consistent card encoding (value = index + 1) and proper ElGamal structure across all tests.
 - Circuit debugging: use namespaces with `ark_relations::ns!` for clear constraint names; debug with `if !cs.is_satisfied()? { cs.which_is_unsatisfied()?; }`. Track size via `cs.num_constraints()`.
 - Frontend: No test runner configured; rely on `npm run check` and manual verification. If adding tests, propose tooling in PR.
 
@@ -38,3 +44,5 @@
 - Keep gadgets focused and composable; test in isolation before integrating.
 - Use constant-string namespaces only (`ns!(cs, "hash_check")`), not dynamic strings.
 - Prefer structured logging over `println!`; enable with `RUST_LOG=r1cs=trace,zk_poker=info` during development.
+- Generic Sponges: Always use generic type parameters with `CryptographicSponge` or `CryptographicSpongeVar` trait bounds instead of concrete types like `PoseidonSponge`. This ensures modularity and testability.
+- Curve Absorption: Use traits from `src/shuffling/curve_absorb.rs` for consistent curve point absorption in transcripts.

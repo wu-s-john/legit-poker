@@ -164,11 +164,40 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
   ```
   This pattern makes logs more readable and allows easy filtering by variable names.
 
+- **Database Queries (Rust)**: Prefer the "seaborn" DSL libraries (SeaORM/SeaQuery) over raw SQL strings for stronger type safety. Avoid building SQL via `format!`/string concatenation; use the ORM/query builder APIs and compile-time checked macros where available.
+
 ### Testing Approach
 - Unit tests throughout individual crates
 - Integration tests via smoke testing scripts
 - Benchmark-driven performance validation
 - CI/CD with multiple validation stages
+- **No Mocking**: Avoid mock objects and mocking frameworks. Instead, use trait-based interfaces with test implementations:
+  ```rust
+  // ✅ PREFERRED - Trait with test implementation
+  trait StorageBackend {
+      fn get(&self, key: &str) -> Result<Vec<u8>>;
+      fn put(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
+  }
+  
+  struct TestStorage {
+      data: HashMap<String, Vec<u8>>,
+  }
+  
+  impl StorageBackend for TestStorage {
+      fn get(&self, key: &str) -> Result<Vec<u8>> {
+          self.data.get(key).cloned().ok_or(Error::NotFound)
+      }
+      fn put(&mut self, key: &str, value: Vec<u8>) -> Result<()> {
+          self.data.insert(key.to_string(), value);
+          Ok(())
+      }
+  }
+  
+  // ❌ AVOID - Mock objects
+  let mock_storage = MockStorage::new();
+  mock_storage.expect_get().returning(|_| Ok(vec![1, 2, 3]));
+  ```
+  This approach provides better type safety, clearer intent, and easier debugging
 
 ### Debugging
 - Use `cargo nexus run -v` for detailed VM execution traces
@@ -294,6 +323,30 @@ The following tools provide efficient, language-aware code analysis:
 
 # Rust Programming types
 - If the return type is under a `Result` or and `Option` type, use the `?` operator to propagate errors.
+
+# Domain-Specific Testing Utilities
+
+## Generating Test Data for Card Games
+
+When creating unit tests that require ElGamal ciphertexts for a deck of cards (especially a standard 52-card deck), always use the utility function from `src/shuffling/mod.rs`:
+
+```rust
+use crate::shuffling::generate_random_ciphertexts;
+
+// Generate a deck of 52 encrypted cards
+let (ciphertexts, randomness) = generate_random_ciphertexts::<G1Projective, 52>(&public_key, &mut rng);
+```
+
+This function:
+- Creates N ciphertexts with sequential message values (1, 2, ..., N)
+- Returns both the ciphertexts and their corresponding randomness values
+- Ensures consistent card encoding across all tests (card value = index + 1)
+- Is optimized for the poker domain where cards have distinct integer values
+
+**Important**: Never manually create test ciphertexts for card games. Always use this standardized function to ensure:
+- Consistent card value encoding
+- Proper ElGamal encryption structure
+- Reproducible test data when using seeded RNGs
 
 # SNARK Programming Tips
 
@@ -644,4 +697,46 @@ tracing::debug!(
 7. **Keep circuits static**. No secret-dependent branches
 8. **Minimize public inputs** and version everything
 
-- Can you add that if a curve value needs to be added to a transcript, please use @src/shuffling/curve_absorb.rs . It makes things easier to use
+## 15. Transcript and Sponge Usage Guidelines
+
+### Generic Sponge Pattern
+When implementing functions that use cryptographic sponges, always use generic type parameters with trait bounds rather than concrete types. This ensures modularity and testability:
+
+```rust
+// ✅ CORRECT - Generic sponge with trait bound
+fn verify_proof<RO>(
+    sponge: &mut RO,
+    proof: &Proof,
+) -> Result<bool, Error>
+where
+    RO: CryptographicSponge,
+{
+    // Implementation
+}
+
+// ✅ CORRECT - Circuit version with generic sponge variable
+fn verify_proof_gadget<ROVar>(
+    sponge: &mut ROVar,
+    proof_var: &ProofVar,
+) -> Result<Boolean<F>, SynthesisError>
+where
+    ROVar: CryptographicSpongeVar<F, PoseidonSponge<F>>,
+{
+    // Circuit implementation
+}
+
+// ❌ INCORRECT - Hardcoded concrete type
+fn verify_proof(
+    sponge: &mut PoseidonSponge<Fr>,
+    proof: &Proof,
+) -> Result<bool, Error> {
+    // Less flexible implementation
+}
+```
+
+### Curve Absorption
+When curve values need to be added to a transcript, use the traits defined in `src/shuffling/curve_absorb.rs`:
+- Native: implement `CurveAbsorb` trait
+- Circuit: implement `CurveAbsorbGadget` trait
+
+This ensures consistent absorption across native and circuit implementations.
