@@ -5,9 +5,7 @@
 //! This ensures consistency between native and SNARK circuit implementations.
 
 use ark_crypto_primitives::sponge::{
-    constraints::CryptographicSpongeVar,
-    poseidon::PoseidonSponge,
-    CryptographicSponge,
+    constraints::CryptographicSpongeVar, poseidon::PoseidonSponge, CryptographicSponge,
 };
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -315,3 +313,4 @@ mod tests {
         tracing::info!(target: "test", "✅ Identity point test passed!");
     }
 }
+

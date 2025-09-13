@@ -6,6 +6,7 @@ pub mod macros;
 pub mod showdown;
 pub mod shuffling;
 pub mod vrf;
+pub mod curve_absorb;
 
 pub mod pedersen_commitment_opening_proof;
 

@@ -4,7 +4,9 @@ pub mod chaum_pedersen;
 pub mod chaum_pedersen_gadget;
 pub mod circuit;
 pub mod community_decryption;
-pub mod curve_absorb;
+// Re-export `crate::curve_absorb` here so existing imports like
+// `crate::shuffling::curve_absorb::...` continue to work after moving the file.
+pub use crate::curve_absorb;
 pub mod data_structures;
 pub mod encryption;
 pub mod error;
