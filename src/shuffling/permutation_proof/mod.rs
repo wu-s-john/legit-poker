@@ -132,7 +132,9 @@ where
     RO: CryptographicSponge,
 {
     use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
-    use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
+    use crate::shuffling::pedersen_commitment::opening_proof::{
+        prove_with_flexible_size, PedersenParams,
+    };
     use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
     use ark_std::vec::Vec;
 
@@ -169,13 +171,17 @@ where
             blinding_s,
         );
 
-    // 4) Pedersen opening proof for c_power (fixed N)
-    let ped_params = PedersenParams::<C>::from_arkworks::<N>(params.power_params.clone());
-    let vc = crate::shuffling::pedersen_commitment::WithCommitment::<C, N> {
-        comm: bg_power_challenge_setup.power_permutation_commitment,
-        value: perm_power_vector_scalar,
-    };
-    let opening = prove(&ped_params, &vc, blinding_s, params.rng);
+    // 4) Pedersen opening proof for c_power (flexible size; pads to next power of 2)
+    let padded_size = if N.is_power_of_two() { N } else { N.next_power_of_two() };
+    let ped_params =
+        PedersenParams::<C>::from_arkworks_dynamic(params.power_params.clone(), padded_size);
+    let opening = prove_with_flexible_size(
+        &ped_params,
+        bg_power_challenge_setup.power_permutation_commitment,
+        &perm_power_vector_scalar,
+        blinding_s,
+        params.rng,
+    );
 
     // 5) Indices init (0..N-1) in base field
     let indices_init = std::array::from_fn(|i| C::BaseField::from(i as u64));

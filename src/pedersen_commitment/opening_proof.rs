@@ -39,6 +39,25 @@ impl<C: CurveGroup> PedersenParams<C> {
         }
     }
 
+    /// Create from arkworks Parameters, extracting a dynamic number of bases
+    pub fn from_arkworks_dynamic(arkworks_params: Parameters<C>, n: usize) -> Self {
+        // Use the first randomness generator as blinding base (normalize to ensure consistent repr)
+        let h: C = arkworks_params.randomness_generator[0].into_affine().into();
+        // Flatten the generator table and take the first n bases (normalize each)
+        let g: Vec<C> = arkworks_params
+            .generators
+            .iter()
+            .flat_map(|row| row.iter())
+            .take(n)
+            .map(|p| p.into_affine().into())
+            .collect();
+        Self {
+            arkworks_params,
+            g,
+            h,
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.g.len()
     }
@@ -413,6 +432,63 @@ where
         tracing::debug!(target: LOG_TARGET, "Verification failed: p_final != rhs");
         tracing::debug!(target: LOG_TARGET, "p_final: {:?}", p_final);
         tracing::debug!(target: LOG_TARGET, "rhs: {:?}", rhs);
+        Err(PedersenCommitmentOpeningError::BadProof)
+    }
+}
+
+/// Flexible-size verifier: uses the length of `params.g` as N (must be power of two)
+#[tracing::instrument(target = LOG_TARGET, skip_all)]
+pub fn verify_flexible<C>(
+    params: &PedersenParams<C>,
+    c_commit: &C,
+    proof: &PedersenCommitmentOpeningProof<C>,
+) -> Result<(), PedersenCommitmentOpeningError>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField,
+{
+    let n = params.len();
+    if n == 0 || !n.is_power_of_two() {
+        return Err(PedersenCommitmentOpeningError::NotPowerOfTwo);
+    }
+    let t = proof.folding_challenge_commitment_rounds.len();
+    if (1usize << t) != n {
+        return Err(PedersenCommitmentOpeningError::BadProof);
+    }
+
+    // Initialize P0 = C (anchor at commitment itself)
+    let p0 = *c_commit;
+    tracing::debug!(target: LOG_TARGET, ?p0, "Verify: Using P0 = C (anchoring at commitment)");
+
+    // Initialize Fiat-Shamir transcript
+    let config = poseidon_config::<C::BaseField>();
+    let mut transcript = PoseidonSponge::<C::BaseField>::new(&config);
+    tracing::debug!(target: LOG_TARGET, "Verify: Absorbing P0 into fresh transcript");
+    p0.curve_absorb(&mut transcript);
+
+    // Recursive folding to get final P and coefficients
+    let (p_final, coefficients) = verify_recursive(
+        &proof.folding_challenge_commitment_rounds,
+        p0,
+        n,
+        &mut transcript,
+    );
+
+    // MSM over generators with computed coefficients
+    let g_final = coefficients
+        .iter()
+        .zip(params.g.iter())
+        .map(|(coeff, g_base)| *g_base * coeff)
+        .fold(C::zero(), |acc, point| acc + point);
+
+    let rhs = g_final * proof.a_final + params.h * proof.r_final;
+    tracing::debug!(target: LOG_TARGET, ?g_final, "Computed G_final (flex)");
+    tracing::debug!(target: LOG_TARGET, ?rhs, "Computed RHS (flex)");
+
+    if p_final == rhs {
+        Ok(())
+    } else {
         Err(PedersenCommitmentOpeningError::BadProof)
     }
 }

@@ -97,16 +97,14 @@ pub fn pedersen_commit_scalars<G: CurveGroup, const N: usize>(
     values: &[G::ScalarField; N],
     randomness: G::ScalarField,
 ) -> G {
-    let (blinding_base, message_bases) = extract_pedersen_bases::<G, N>(params);
-
-    // Compute: H^randomness * Π_j G_j^{values[j]}
-    // Using fold for more functional style
-    let commitment = message_bases
+    // Blinding base H as the first randomness generator (normalize for consistency)
+    let h: G = params.randomness_generator[0].into_affine().into();
+    // Start from H^randomness and accumulate G_j^{values[j]} for the first N bases
+    params
+        .generators
         .iter()
+        .flat_map(|row| row.iter())
+        .take(N)
         .zip(values.iter())
-        .fold(blinding_base * randomness, |acc, (base, value)| {
-            acc + (*base * value)
-        });
-
-    commitment
+        .fold(h * randomness, |acc, (base, value)| acc + (base.into_affine().into() * value))
 }

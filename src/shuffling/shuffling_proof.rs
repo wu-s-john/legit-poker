@@ -344,11 +344,16 @@ where
         "verify_shuffling: SNARK verification passed"
     );
 
-    // 2) Verify Pedersen opening of c_power (natively)
+    // 2) Verify Pedersen opening of c_power (flexible, pad N to next power-of-two)
     let mut power_rng = StdRng::seed_from_u64(43);
     let power_params_raw = PedersenReenc::<G>::setup(&mut power_rng)?;
-    let ped_params = PedersenParams::<G>::from_arkworks::<N>(power_params_raw.clone());
-    verify_pedersen_opening::<G, N>(
+    let padded_n = if N.is_power_of_two() {
+        N
+    } else {
+        N.next_power_of_two()
+    };
+    let ped_params = PedersenParams::<G>::from_arkworks_dynamic(power_params_raw.clone(), padded_n);
+    crate::shuffling::pedersen_commitment::opening_proof::verify_flexible::<G>(
         &ped_params,
         &bg_setup.power_permutation_commitment,
         &proof.power_opening_proof,
@@ -358,7 +363,7 @@ where
     })?;
     tracing::info!(
         target = LOG_TARGET,
-        "verify_shuffling: Pedersen opening verified"
+        "verify_shuffling: Pedersen opening verified (flex)"
     );
 
     // 3) Verify native re-encryption Σ‑protocol
@@ -401,13 +406,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shuffling::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
     use crate::{
         rs_shuffle::native::run_rs_shuffle_permutation,
         shuffling::data_structures::ElGamalCiphertext,
     };
     use ark_bn254::{Bn254, Fr as BaseField};
-    use ark_ec::PrimeGroup;
-    use ark_ff::UniformRand;
+    use ark_crypto_primitives::sponge::{poseidon::constraints::PoseidonSpongeVar, Absorb};
+    use ark_ec::{CurveConfig, CurveGroup, PrimeGroup};
+    use ark_ff::{PrimeField, UniformRand};
     use ark_grumpkin::{Fr as ScalarField, GrumpkinConfig, Projective as G};
     use ark_r1cs_std::{
         fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar as SWVar,
@@ -507,6 +514,110 @@ mod tests {
         tracing::info!(
             target = LOG_TARGET,
             "test: shuffling proof verified successfully"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Generic test runner to exercise prove/verify for arbitrary size/curve
+    // ------------------------------------------------------------------------
+    fn run_prove_and_verify_shuffling_generic<
+        E,
+        GCurve,
+        GCurveVar,
+        const N: usize,
+        const LEVELS: usize,
+    >(
+        rng_seed: u64,
+    ) where
+        E: ark_ec::pairing::Pairing<ScalarField = GCurve::BaseField>,
+        GCurve: CurveGroup
+            + CurveAbsorb<GCurve::BaseField>
+            + ark_ff::ToConstraintField<GCurve::BaseField>,
+        GCurve::Config: CurveConfig,
+        GCurve::BaseField: PrimeField + Absorb,
+        GCurve::ScalarField: PrimeField + Absorb + UniformRand,
+        GCurveVar: CurveVar<GCurve, GCurve::BaseField>
+            + CurveAbsorbGadget<GCurve::BaseField, PoseidonSpongeVar<GCurve::BaseField>>,
+        for<'a> &'a GCurveVar: ark_r1cs_std::groups::GroupOpsBounds<'a, GCurve, GCurveVar>
+            + CurveAbsorbGadget<GCurve::BaseField, PoseidonSpongeVar<GCurve::BaseField>>,
+    {
+        let mut rng = StdRng::seed_from_u64(rng_seed);
+
+        // Public config
+        let generator = GCurve::generator();
+        let sk = GCurve::ScalarField::rand(&mut rng);
+        let pk = generator * sk;
+        let mut config: ShufflingConfig<E, GCurve> = ShufflingConfig {
+            generator,
+            public_key: pk,
+            perm_snark_keys: Default::default(),
+        };
+
+        // Input deck (standardized helper for card games)
+        let (ct_input, _rand) =
+            crate::shuffling::generate_random_ciphertexts::<GCurve, N>(&pk, &mut rng);
+
+        // VRF nonce in E::ScalarField == G::BaseField
+        let nonce: GCurve::BaseField = GCurve::BaseField::rand(&mut rng);
+
+        // Preload Groth16 keys in config for this num_samples
+        let rs_for_keys =
+            run_rs_shuffle_permutation::<GCurve::BaseField, ElGamalCiphertext<GCurve>, N, LEVELS>(
+                nonce, &ct_input,
+            );
+        let ns = rs_for_keys.num_samples;
+        let perm_sys = crate::shuffling::permutation_proof::proof_system::PermutationGroth16::<
+            E,
+            GCurve,
+            GCurveVar,
+            N,
+            LEVELS,
+        >::setup(&mut rng, ns)
+        .expect("perm setup");
+        config.perm_snark_keys.insert(
+            ns,
+            (
+                perm_sys.proving_key().clone(),
+                perm_sys.prepared_vk().clone(),
+            ),
+        );
+
+        // Prove and verify using the unified API
+        let (ct_output, proof, bg_setup) =
+            prove_shuffling::<E, GCurve, GCurveVar, N, LEVELS>(&config, &ct_input, nonce, &mut rng)
+                .expect("prove_shuffling");
+
+        let ok =
+            verify_shuffling::<E, GCurve, N>(&config, &bg_setup, &ct_input, &ct_output, &proof)
+                .expect("verify_shuffling call");
+        assert!(ok, "shuffling proof should verify");
+    }
+
+    /// Same as the BN254/Grumpkin test above but with a 52-card deck.
+    /// Uses 5 RS levels to mirror the demo binary configuration.
+    #[test]
+    fn test_prove_and_verify_shuffling_bn254_52() {
+        // Keep the guard alive for the whole test so logs are emitted
+        let _guard = setup_test_tracing();
+        tracing::info!(
+            target = TEST_TARGET,
+            "test: starting prove_and_verify_shuffling_bn254_52"
+        );
+
+        // Pairing curve E = BN254; inner curve G = Grumpkin
+        const N: usize = 52;
+        const LEVELS: usize = 5;
+
+        // Reuse the concrete aliases for this instantiation
+        type E = Bn254;
+        type Inner = G; // Grumpkin projective
+        type InnerVar = GVar;
+
+        run_prove_and_verify_shuffling_generic::<E, Inner, InnerVar, N, LEVELS>(123456789);
+
+        tracing::info!(
+            target = LOG_TARGET,
+            "test: shuffling proof (52-card) verified successfully"
         );
     }
 }

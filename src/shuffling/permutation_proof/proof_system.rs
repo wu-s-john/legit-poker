@@ -7,6 +7,7 @@ use ark_r1cs_std::fields::emulated_fp::{params::OptimizationType, AllocatedEmula
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_snark::SNARK;
 use ark_std::{marker::PhantomData, rand::RngCore, vec::Vec};
+use ark_std::{One, Zero};
 use rand::SeedableRng;
 
 use super::circuit::PermutationProofCircuit;
@@ -88,7 +89,8 @@ where
         // Build a concrete dummy circuit with consistent public inputs and witnesses
         // using the same flow as native preparation to avoid AssignmentMissing during setup.
         use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
-        use crate::shuffling::permutation_proof::{prepare_witness, PermutationParameters};
+        use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
+        use crate::vrf::simple::prove_simple_vrf;
         use ark_crypto_primitives::commitment::{
             pedersen::Commitment as PedersenCommitment, CommitmentScheme,
         };
@@ -109,30 +111,56 @@ where
             ConstraintF<C>,
         >());
 
-        // Prepare witnesses off-circuit
-        let mut prep = PermutationParameters::<C, _> {
-            perm_params: &perm_params,
-            power_params: &power_params,
-            rng: &mut local_rng,
+        // Minimal off-circuit preparation (avoid heavy opening for keygen)
+        // VRF
+        let pk = C::generator() * sk;
+        let vrf_value = prove_simple_vrf::<C, _>(&mut sponge, &nonce, &sk, &pk);
+        // RS witnesses
+        let input_indices: [usize; N] = core::array::from_fn(|i| i);
+        let rs_trace = run_rs_shuffle_permutation::<ConstraintF<C>, usize, N, LEVELS>(
+            vrf_value, &input_indices,
+        );
+        let indices_init: [ConstraintF<C>; N] = core::array::from_fn(|i| ConstraintF::<C>::from(i as u64));
+        // Lightweight placeholders for BG setup to avoid heavy work during setup
+        let power_vec_base: [ConstraintF<C>; N] = core::array::from_fn(|_| ConstraintF::<C>::zero());
+        let power_vec_scalar: [C::ScalarField; N] = core::array::from_fn(|_| C::ScalarField::zero());
+        let bg_setup = crate::shuffling::bayer_groth_permutation::bg_setup::BGPowerChallengeSetup::<
+            ConstraintF<C>,
+            C::ScalarField,
+            C,
+        > {
+            power_challenge_base: ConstraintF::<C>::one(),
+            power_challenge_scalar: C::ScalarField::one(),
+            permutation_commitment: C::zero(),
+            power_permutation_commitment: C::zero(),
         };
-        let prepared = prepare_witness::<C, _, _, N, LEVELS>(&mut prep, nonce, sk, &mut sponge)?;
+        // Dummy opening proof sized for padded length
+        let padded = if N.is_power_of_two() { N } else { N.next_power_of_two() };
+        let num_rounds = (padded.trailing_zeros()) as usize;
+        let opening_dummy = crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof::<C> {
+            folding_challenge_commitment_rounds: core::iter::repeat((C::zero(), C::zero()))
+                .take(num_rounds)
+                .collect(),
+            a_final: C::ScalarField::zero(),
+            r_final: C::ScalarField::zero(),
+        };
 
         // Construct a circuit instance
         let circ = PermutationProofCircuit::<C, GG, N, LEVELS> {
             num_samples,
             // Public
             nonce: Some(nonce),
-            pk_public: Some(prepared.pk),
-            indices_init: Some(prepared.indices_init),
-            power_challenge_public: Some(prepared.bg_setup.power_challenge_base),
-            c_perm: Some(prepared.bg_setup.permutation_commitment),
-            c_power: Some(prepared.bg_setup.power_permutation_commitment),
-            power_opening_proof: Some(prepared.power_opening_proof.clone()),
+            pk_public: Some(pk),
+            indices_init: Some(indices_init),
+            power_challenge_public: Some(bg_setup.power_challenge_base),
+            c_perm: Some(bg_setup.permutation_commitment),
+            c_power: Some(bg_setup.power_permutation_commitment),
+            power_opening_proof: Some(opening_dummy.clone()),
             // Witness
             sk: Some(sk),
-            rs_witness: Some(prepared.rs_trace.witness_trace.clone()),
-            power_perm_vec_wit: Some(prepared.perm_power_vector_base),
-            power_perm_vec_scalar_wit: Some(prepared.perm_power_vector_scalar),
+            rs_witness: Some(rs_trace.witness_trace.clone()),
+            power_perm_vec_wit: Some(power_vec_base),
+            power_perm_vec_scalar_wit: Some(power_vec_scalar),
             _pd: PhantomData,
         };
 

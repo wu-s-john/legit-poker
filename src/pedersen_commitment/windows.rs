@@ -24,7 +24,8 @@ pub struct DeckHashWindow;
 
 impl PedersenWindow for DeckHashWindow {
     const WINDOW_SIZE: usize = 8;
-    const NUM_WINDOWS: usize = 52; // For 52 cards in a deck
+    // Use 64 windows to align with padded deck size (52 → 64)
+    const NUM_WINDOWS: usize = 64;
 }
 
 /// Window configuration for reencryption protocol commitments
@@ -37,4 +38,3 @@ impl PedersenWindow for ReencryptionWindow {
     // Large enough that setup() yields many generators; > N is sufficient (we use ~52 max).
     const NUM_WINDOWS: usize = 416;
 }
-
