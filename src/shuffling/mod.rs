@@ -1,26 +1,19 @@
 pub mod bayer_groth;
 pub mod bayer_groth_permutation;
-// Re-export top-level Chaum-Pedersen module for backward compatibility
 pub use crate::chaum_pedersen;
-pub mod circuit;
+pub mod og_shuffling;
+pub use og_shuffling as circuit;
 pub mod community_decryption;
-// Re-export `crate::curve_absorb` here so existing imports like
-// `crate::shuffling::curve_absorb::...` continue to work after moving the file.
 pub use crate::curve_absorb;
 pub mod data_structures;
 pub mod encryption;
 pub mod error;
-// Re-export field conversion gadgets moved to crate root
 pub use crate::field_conversion_gadget;
-// Re-export top-level Pedersen module for backward compatibility
 pub use crate::pedersen_commitment;
 pub mod permutation_proof;
 pub mod player_decryption;
-// Backward-compat alias: expose gadget submodule under old name
 pub use player_decryption::gadget as player_decryption_gadget;
 pub mod proof_system;
-pub mod prove;
-// Public key setup helpers (inlined here for simpler docs/tests)
 use ark_ff::Field;
 use ark_std::rand::Rng;
 
@@ -52,13 +45,11 @@ pub mod rs_shuffle;
 pub mod shuffling_proof;
 pub mod utils;
 
-pub use circuit::*;
 pub use community_decryption::*;
 pub use data_structures::*;
 pub use encryption::*;
 pub use error::*;
 pub use player_decryption::*;
-pub use prove::*;
 
 // ============================================================================
 // Core Shuffling Utility Functions
