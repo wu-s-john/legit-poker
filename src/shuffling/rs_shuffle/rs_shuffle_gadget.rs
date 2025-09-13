@@ -957,7 +957,8 @@ mod tests {
 
         // Additional verification: Check that the permutation equality holds
         // Extract the permutation as Fr values
-        let permutation_fr: [Fr; N] = std::array::from_fn(|i| Fr::from(rs_shuffle_trace.permuted_output[i] as u64));
+        let permutation_fr: [Fr; N] =
+            std::array::from_fn(|i| Fr::from(rs_shuffle_trace.permuted_output[i] as u64));
 
         // Use the power vector from the native protocol
         let perm_power_vector_fr: [Fr; N] = native_perm_power_vector;
@@ -1476,48 +1477,6 @@ mod tests {
 
         tracing::debug!(target: TEST_TARGET, "✓ Level 2 shuffle verification passed");
         tracing::debug!(target: TEST_TARGET, "✓ Test passed: Two successive shuffle levels verification");
-    }
-
-    #[ignore]
-    #[test]
-    fn test_rs_shuffle_with_random_blinding() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
-        let mut rng = test_rng();
-
-        // Test with random seed and blinding factors
-        let seed = Fr::rand(&mut rng);
-        let blinding_r = Fr::rand(&mut rng);
-        let blinding_s = Fr::rand(&mut rng);
-
-        tracing::debug!(
-            target: TEST_TARGET,
-            ?seed,
-            ?blinding_r,
-            ?blinding_s,
-            "Testing RS shuffle with random blinding factors"
-        );
-
-        test_rs_shuffle_with_params(seed, blinding_r, blinding_s)
-    }
-
-    #[ignore]
-    #[test]
-    fn test_rs_shuffle_with_zero_blinding() -> Result<(), SynthesisError> {
-        let _guard = setup_test_tracing();
-        let mut rng = test_rng();
-
-        // Test with random seed but zero blinding factors
-        let seed = Fr::rand(&mut rng);
-        let blinding_r = Fr::zero();
-        let blinding_s = Fr::zero();
-
-        tracing::debug!(
-            target: TEST_TARGET,
-            ?seed,
-            "Testing RS shuffle with zero blinding factors"
-        );
-
-        test_rs_shuffle_with_params(seed, blinding_r, blinding_s)
     }
 
     #[test]
