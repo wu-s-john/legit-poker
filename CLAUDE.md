@@ -129,7 +129,7 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
 - **Readability Over Brevity**: Prioritize code that is easy to understand over minimal line counts
 
 ### Rust Coding Guidelines
-- **Imports**: Always use proper `use` statements at the top of files instead of fully qualified paths. For example, use `use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;` and then reference as `PoseidonSpongeVar` rather than using the full path `ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar` throughout the code
+- **Imports**: Place all imports at the top of the file. Do not import within function or block scope, and avoid inserting imports mid-file. Use `use` statements instead of fully qualified paths. If multiple modules export the same symbol, alias to avoid conflicts (e.g., `use foo::Type as FooType;` and `use bar::Type as BarType;`). For TypeScript in the frontend, keep imports at the module top and alias conflicts (`import { Type as FooType } from '...';`).
 - **Error Handling**: Use `?` operator for Result and Option types instead of explicit pattern matching. For custom errors, specify the error type and provide tracing for error propagation
 - **Functional Iteration**: Always prefer functional constructs (`.map()`, `.filter()`, `.fold()`, etc.) over traditional for loops when iterating collections like vectors or hashmaps
 - **Array/Vector Construction**: Strongly prefer functional array construction over mutation. Use `std::array::from_fn()` for arrays or iterator chains with `.collect()` for vectors. Avoid mutable initialization followed by for loops.
