@@ -11,7 +11,6 @@ pub mod data_structures;
 pub mod encryption;
 pub mod error;
 pub mod field_conversion_gadget;
-pub mod game_events;
 pub mod pedersen_commitment;
 pub mod permutation_proof;
 pub mod player_decryption;
@@ -22,7 +21,6 @@ pub mod public_key_setup;
 pub mod rs_shuffle;
 pub mod setup;
 pub mod shuffling_proof;
-pub mod unified_shuffler;
 pub mod utils;
 
 pub use chaum_pedersen::*;

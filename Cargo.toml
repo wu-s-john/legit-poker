@@ -7,9 +7,6 @@ edition = "2021"
 name = "bayer_groth_demo"
 path = "src/bin/bayer_groth_demo.rs"
 
-[[bin]]
-name = "game_demo"
-path = "src/bin/game_demo.rs"
 
 [[bin]]
 name = "rs_shuffle_reencrypt_bench"
