@@ -6,9 +6,9 @@
 //! - Verifying Chaum-Pedersen proofs in-circuit
 
 use crate::chaum_pedersen::ChaumPedersenProofVar;
-use super::curve_absorb::CurveAbsorbGadget;
-use super::data_structures::ElGamalCiphertextVar;
-use super::player_decryption::{
+use crate::curve_absorb::CurveAbsorbGadget;
+use crate::shuffling::data_structures::ElGamalCiphertextVar;
+use super::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
 use ark_ec::CurveGroup;

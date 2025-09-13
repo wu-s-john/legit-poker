@@ -2,7 +2,9 @@
 //!
 //! This module implements a type-safe non-interactive Σ-protocol that proves the shuffle identity:
 //!
-//!     ∏_j C_j^{x^j} = E_pk(0; ρ) · ∏_i (C'_i)^{b_i}    with    power_perm_commitment = com(b; s_B)
+//! ```text
+//! ∏_j C_j^{x^j} = E_pk(0; ρ) · ∏_i (C'_i)^{b_i}    with    power_perm_commitment = com(b; s_B)
+//! ```
 //!
 //! where
 //!   - a = (x^1, x^2, …, x^N) with x←FS is the public power vector
@@ -14,13 +16,17 @@
 //! Given a correct shuffle C'_i = C_{π(i)} · E(0; ρ_i) (i.e., pure re-randomization that does not
 //! change the plaintext), we prove:
 //!
+//! ```text
 //!   ∏_i (C'_i)^{b_i}
 //! = ∏_i (C_{π(i)} · E(0; ρ_i))^{x^{π(i)}}
 //! = ∏_j C_j^{x^j} · E(0; Σ_i x^{π(i)}·ρ_i)     [reindex j = π(i)]
+//! ```
 //!
 //! Moving the rerandomization to the other side:
+//! ```text
 //!   ∏_j C_j^{x^j} = E(0; -Σ_i x^{π(i)}·ρ_i) · ∏_i (C'_i)^{b_i}
 //!                 = E(0; ρ) · ∏_i (C'_i)^{b_i}
+//! ```
 //!
 //! Our Σ‑protocol proves knowledge of (b, s_B, ρ) such that
 //!
@@ -46,7 +52,7 @@
 //! - The Pedersen commitment is a *scalar-vector* Pedersen over N coordinates.
 //! - No π^{-1} computation required - we work directly with π
 
-use crate::pedersen_commitment_opening_proof::ReencryptionWindow;
+use crate::pedersen_commitment::bytes_opening::ReencryptionWindow;
 use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::data_structures::ElGamalCiphertext;
@@ -106,7 +112,9 @@ pub struct ReencryptionProof<G: CurveGroup, const N: usize> {
 ///
 /// Prover: Generate a non-interactive Σ‑proof that
 ///
-///     ∏_j C_j^{x^j} = E_pk(1; ρ) · ∏_i (C'_i)^{b_i}
+/// ```text
+/// ∏_j C_j^{x^j} = E_pk(1; ρ) · ∏_i (C'_i)^{b_i}
+/// ```
 ///
 /// with a commitment power_perm_commitment = com(b; s_B).
 ///
@@ -515,7 +523,7 @@ mod tests {
     fn test_prove_with_bg_transcript_power_vector() {
         let _guard = setup_test_tracing();
 
-        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
         use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
 

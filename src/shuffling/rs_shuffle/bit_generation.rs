@@ -87,7 +87,7 @@ where
         }
 
         // Trim first and last bits
-        if value_bits.len() > 2usize {
+        if value_bits.len() > 2 {
             bit_stream.extend_from_slice(&value_bits[1..value_bits.len() - 1]);
         }
     }

@@ -11,7 +11,7 @@ use super::data_structures::ElGamalCiphertext;
 use crate::shuffling::bayer_groth_permutation::bg_setup::BGPowerChallengeSetup;
 
 use crate::curve_absorb::CurveAbsorb;
-use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
 use crate::shuffling::permutation_proof::circuit::PermutationProofCircuit;
 use ark_crypto_primitives::commitment::pedersen::Commitment as PedersenCommitment;
 use ark_crypto_primitives::commitment::CommitmentScheme;

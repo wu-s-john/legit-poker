@@ -32,37 +32,6 @@
 //! 2. **Soundness**: Invalid shuffle cannot produce accepting proof (except with negligible probability)
 //! 3. **Zero-Knowledge**: Proof reveals nothing about permutation π or rerandomization factors
 //! 4. **Non-Interactive**: Uses Fiat-Shamir transform with Poseidon hash
-//!
-//! ## Usage Example
-//!
-//! ```rust,ignore
-//! // Generate proof that C_out is valid shuffle of C_in
-//! let proof = prove_sigma_linkage_ni::<Fr, G, 52>(
-//!     &keys,
-//!     &pedersen_params,
-//!     &C_in,
-//!     &C_out,
-//!     challenge_x,
-//!     &commitment_cB,
-//!     &permuted_powers_b,
-//!     commitment_randomness,
-//!     aggregate_rerandomization,
-//!     &mut transcript,
-//!     &mut rng,
-//! );
-//!
-//! // Verify the proof
-//! let valid = verify_sigma_linkage_ni::<Fr, G, 52>(
-//!     &keys,
-//!     &pedersen_params,
-//!     &C_in,
-//!     &C_out,
-//!     challenge_x,
-//!     &commitment_cB,
-//!     &proof,
-//!     &mut transcript,
-//! );
-//! ```
 
 pub mod bg_setup;
 pub mod bg_setup_gadget;

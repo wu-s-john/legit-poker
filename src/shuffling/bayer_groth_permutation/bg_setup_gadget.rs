@@ -316,7 +316,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+    use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
     use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::{

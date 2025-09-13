@@ -228,7 +228,6 @@ struct IncomingMessage<T = serde_json::Value> {
     topic: String,
     event: String,
     payload: Option<T>,
-    r#ref: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -241,8 +240,6 @@ struct Change<T> {
     // Supabase may use either "eventType" or "type"
     #[serde(rename = "eventType", alias = "type")]
     event_type: String,
-    schema: String,
-    table: String,
     // And either "new"/"old" or "record"/"old_record"
     #[serde(rename = "new", alias = "record")]
     new: Option<T>,

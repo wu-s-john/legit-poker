@@ -330,7 +330,7 @@ where
 mod tests {
 
     use super::*;
-    use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+    use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
     use ark_bn254::{Fq, Fr, G1Projective};
     use ark_crypto_primitives::commitment::{
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,

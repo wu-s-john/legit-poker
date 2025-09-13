@@ -32,7 +32,7 @@ use super::rs_shuffle::{
     native::run_rs_shuffle_permutation,
 };
 use crate::curve_absorb::{CurveAbsorb, CurveAbsorbGadget};
-use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
 use ark_crypto_primitives::{
     commitment::{
         pedersen::{Commitment as PedersenCommitment, Parameters},

@@ -10,20 +10,48 @@ pub use crate::curve_absorb;
 pub mod data_structures;
 pub mod encryption;
 pub mod error;
-pub mod field_conversion_gadget;
-pub mod pedersen_commitment;
+// Re-export field conversion gadgets moved to crate root
+pub use crate::field_conversion_gadget;
+// Re-export top-level Pedersen module for backward compatibility
+pub use crate::pedersen_commitment;
 pub mod permutation_proof;
 pub mod player_decryption;
-pub mod player_decryption_gadget;
+// Backward-compat alias: expose gadget submodule under old name
+pub use player_decryption::gadget as player_decryption_gadget;
 pub mod proof_system;
 pub mod prove;
-pub mod public_key_setup;
+// Public key setup helpers (inlined here for simpler docs/tests)
+use ark_ff::Field;
+use ark_std::rand::Rng;
+
+/// Draw a random shuffler secret/public key pair.
+/// Returns `(secret_key, public_key)`.
+pub fn draw_shuffler_public_key<C, R>(rng: &mut R) -> (C::ScalarField, C)
+where
+    C: CurveGroup,
+    C::ScalarField: Field,
+    R: Rng,
+{
+    let secret_key = C::ScalarField::rand(rng);
+    let generator = C::generator();
+    let public_key = generator * secret_key;
+    (secret_key, public_key)
+}
+
+/// Merge multiple shuffler public keys to create the global public key.
+/// `pk_global = sum(pk_i) = (sum(sk_i)) * G`.
+pub fn make_global_public_keys<C>(shuffler_keys: Vec<C>) -> C
+where
+    C: CurveGroup,
+{
+    shuffler_keys
+        .into_iter()
+        .fold(C::zero(), |acc, pk| acc + pk)
+}
 pub mod rs_shuffle;
-pub mod setup;
 pub mod shuffling_proof;
 pub mod utils;
 
-pub use chaum_pedersen::*;
 pub use circuit::*;
 pub use community_decryption::*;
 pub use data_structures::*;
@@ -31,7 +59,6 @@ pub use encryption::*;
 pub use error::*;
 pub use player_decryption::*;
 pub use prove::*;
-pub use setup::*;
 
 // ============================================================================
 // Core Shuffling Utility Functions
@@ -39,7 +66,6 @@ pub use setup::*;
 
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand};
-use ark_std::rand::Rng;
 
 /// Generate N random ElGamal ciphertexts with sequential message values (1, 2, ..., N).
 ///
@@ -50,8 +76,17 @@ use ark_std::rand::Rng;
 /// - Array of N randomness values used for encryption
 ///
 /// # Example
-/// ```ignore
-/// let (ciphertexts, randomness) = generate_random_ciphertexts::<G1Projective, 52>(&keys.public_key, &mut rng);
+/// ```rust
+/// use ark_bn254::G1Projective;
+/// use ark_std::test_rng;
+/// use zk_poker::shuffling;
+///
+/// let mut rng = test_rng();
+/// let (_sk1, pk1) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let (_sk2, pk2) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let public_key = shuffling::make_global_public_keys(vec![pk1, pk2]);
+/// let (_ciphertexts, _randomness) =
+///     shuffling::generate_random_ciphertexts::<G1Projective, 4>(&public_key, &mut rng);
 /// ```
 pub fn generate_random_ciphertexts<C: CurveGroup, const N: usize>(
     public_key: &C,
@@ -85,8 +120,18 @@ where
 /// `C'[i] = C[permutation[i]].add_encryption_layer(rerandomizations[i], public_key)`
 ///
 /// # Example
-/// ```ignore
-/// let shuffled = shuffle_and_rerandomize(&input_deck, &permutation, &rerandomizations, public_key);
+/// ```rust
+/// use ark_bn254::{Fr, G1Projective};
+/// use ark_std::test_rng;
+/// use zk_poker::shuffling;
+/// let mut rng = test_rng();
+/// let (_sk1, pk1) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let (_sk2, pk2) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let public_key = shuffling::make_global_public_keys(vec![pk1, pk2]);
+/// let (deck, _) = shuffling::generate_random_ciphertexts::<G1Projective, 4>(&public_key, &mut rng);
+/// let permutation = [1usize, 0, 3, 2];
+/// let rerandomizations = [Fr::from(1u64); 4];
+/// let _shuffled = shuffling::shuffle_and_rerandomize(&deck, &permutation, &rerandomizations, public_key);
 /// ```
 pub fn shuffle_and_rerandomize<C: CurveGroup, const N: usize>(
     input_deck: &[ElGamalCiphertext<C>; N],
@@ -111,12 +156,21 @@ where
 /// - Array of randomness values used for rerandomization
 ///
 /// # Example
-/// ```ignore
-/// let (shuffled_deck, rerandomizations) = shuffle_and_rerandomize_random(
-///     &input_deck,
+/// ```rust
+/// use ark_bn254::G1Projective;
+/// use ark_std::test_rng;
+/// use zk_poker::shuffling;
+/// let mut rng = test_rng();
+/// let (_sk1, pk1) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let (_sk2, pk2) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let public_key = shuffling::make_global_public_keys(vec![pk1, pk2]);
+/// let (deck, _) = shuffling::generate_random_ciphertexts::<G1Projective, 4>(&public_key, &mut rng);
+/// let permutation = [1usize, 0, 3, 2];
+/// let (_shuffled, _rerand) = shuffling::shuffle_and_rerandomize_random(
+///     &deck,
 ///     &permutation,
 ///     public_key,
-///     &mut rng
+///     &mut rng,
 /// );
 /// ```
 pub fn shuffle_and_rerandomize_random<C: CurveGroup, const N: usize>(
@@ -143,8 +197,17 @@ where
 /// Useful for tests that need to verify permutation logic separately from rerandomization.
 ///
 /// # Example
-/// ```ignore
-/// let permuted_deck = apply_permutation(&input_deck, &permutation);
+/// ```rust
+/// use ark_bn254::G1Projective;
+/// use ark_std::test_rng;
+/// use zk_poker::shuffling;
+/// let mut rng = test_rng();
+/// let (_sk1, pk1) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let (_sk2, pk2) = shuffling::draw_shuffler_public_key::<G1Projective, _>(&mut rng);
+/// let public_key = shuffling::make_global_public_keys(vec![pk1, pk2]);
+/// let (deck, _) = shuffling::generate_random_ciphertexts::<G1Projective, 4>(&public_key, &mut rng);
+/// let permutation = [1usize, 0, 3, 2];
+/// let _permuted = shuffling::apply_permutation(&deck, &permutation);
 /// ```
 pub fn apply_permutation<C: CurveGroup, const N: usize>(
     input_deck: &[ElGamalCiphertext<C>; N],

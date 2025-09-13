@@ -44,3 +44,4 @@ pub fn embed_to_emulated<TargetF: PrimeField, BaseF: PrimeField>(
 
     Ok(y)
 }
+

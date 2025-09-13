@@ -538,7 +538,7 @@ mod tests {
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
     type Pedersen<G> =
-        PedersenCommitment<G, crate::pedersen_commitment_opening_proof::ReencryptionWindow>;
+        PedersenCommitment<G, crate::pedersen_commitment::bytes_opening::ReencryptionWindow>;
 
     const TEST_TARGET: &str = "nexus_nova";
 

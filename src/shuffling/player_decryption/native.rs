@@ -1,6 +1,6 @@
-use super::chaum_pedersen::ChaumPedersenProof;
-use super::curve_absorb::CurveAbsorb;
-use super::data_structures::ElGamalCiphertext;
+use crate::chaum_pedersen::ChaumPedersenProof;
+use crate::curve_absorb::CurveAbsorb;
+use crate::shuffling::data_structures::ElGamalCiphertext;
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::{AffineRepr, CurveGroup};

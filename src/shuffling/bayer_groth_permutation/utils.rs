@@ -21,12 +21,6 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 /// # Returns
 /// An array [x^1, x^2, ..., x^N]
 ///
-/// # Example
-/// ```
-/// let x = Fr::from(2u64);
-/// let powers = compute_powers_sequence::<Fr, 4>(x);
-/// // powers = [2, 4, 8, 16]
-/// ```
 pub(crate) fn compute_powers_sequence_with_index_1<F: PrimeField, const N: usize>(x: F) -> [F; N] {
     // Use scan pattern to accumulate powers
     let mut powers = Vec::with_capacity(N);

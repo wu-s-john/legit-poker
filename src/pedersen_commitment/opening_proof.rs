@@ -8,7 +8,7 @@
 use super::error::PedersenCommitmentOpeningError;
 use super::{extract_pedersen_bases, WithCommitment};
 use crate::config::poseidon_config;
-use crate::shuffling::curve_absorb::CurveAbsorb;
+use crate::curve_absorb::CurveAbsorb;
 use ark_crypto_primitives::commitment::pedersen::Parameters;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;

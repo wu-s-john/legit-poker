@@ -87,7 +87,7 @@ where
     ) -> anyhow::Result<Self> {
         // Build a concrete dummy circuit with consistent public inputs and witnesses
         // using the same flow as native preparation to avoid AssignmentMissing during setup.
-        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::permutation_proof::{prepare_witness, PermutationParameters};
         use ark_crypto_primitives::commitment::{
             pedersen::Commitment as PedersenCommitment, CommitmentScheme,
@@ -363,7 +363,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(12345);
 
         // ---------- Native preparation via prepare_witness ----------
-        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
 
         // Setup Pedersen parameters (inner curve C=Grumpkin)
         let perm_params = PedersenCommitment::<C, DeckHashWindow>::setup(&mut rng).unwrap();

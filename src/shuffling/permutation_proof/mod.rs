@@ -370,7 +370,7 @@ mod tests {
     /// Mini-test: BG folding link consistency using verify_scalar_folding_link_gadget
     #[test]
     fn test_bg_power_challenge_and_opening_consistency() {
-        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+    use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
         use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
         use ark_crypto_primitives::commitment::{
@@ -448,7 +448,7 @@ mod tests {
     /// scalar permutation check → Pedersen opening link
     #[test]
     fn test_end_to_end_permutation_proof() {
-        use crate::pedersen_commitment_opening_proof::{DeckHashWindow, ReencryptionWindow};
+        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
         use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
         use crate::shuffling::rs_shuffle::bit_generation::derive_split_bits;

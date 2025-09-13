@@ -11,7 +11,7 @@
 
 use super::opening_proof::PedersenCommitmentOpeningProof;
 use crate::config::poseidon_config;
-use crate::shuffling::curve_absorb::CurveAbsorbGadget;
+use crate::curve_absorb::CurveAbsorbGadget;
 use ark_crypto_primitives::sponge::{
     constraints::CryptographicSpongeVar, poseidon::constraints::PoseidonSpongeVar, Absorb,
 };
