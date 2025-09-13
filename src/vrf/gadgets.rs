@@ -265,6 +265,7 @@ where
 ///
 /// # Returns
 /// * `(proof, nonce_k, beta)` - The proof, nonce, and VRF output
+#[zk_poker_macros::track_constraints(target = "vrf::gadgets")]
 pub fn prove_vrf_gadget<C, GG, RO, ROVar>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
     params: &VrfParams<C>,
@@ -289,7 +290,6 @@ where
     ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
     for<'a> &'a GG: ark_r1cs_std::groups::GroupOpsBounds<'a, C, GG>,
 {
-    track_constraints!(&cs, "prove_vrf_gadget", LOG_TARGET, {
         // Allocate Pedersen parameters as constants
         let pedersen_params_var = PedersenCRHParamsVar::<C, GG>::new_constant(
             cs.clone(),
@@ -359,5 +359,4 @@ where
         };
 
         Ok((proof, k, beta))
-    })
 }

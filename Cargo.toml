@@ -104,6 +104,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 sha3 = { version = "0.10", default-features = false }
 hex = "0.4.3"
+zk_poker_macros = { path = "zk_poker_macros" }
 
 # Backend dependencies
 tokio = { version = "1.40", features = ["full"] }

@@ -11,14 +11,14 @@ use ark_std::rand::Rng;
 const LOG_TARGET: &str = "shuffle::encryption";
 
 /// Generate an array of N random scalar field elements for rerandomization
-/// 
+///
 /// This centralized function provides a consistent way to generate
 /// randomization arrays throughout the shuffling implementation.
-/// 
+///
 /// # Type Parameters
 /// - `C`: The curve configuration
 /// - `N`: The size of the array to generate
-/// 
+///
 /// # Returns
 /// An array of N random scalar field elements
 pub fn generate_randomization_array<C, const N: usize>(
@@ -104,6 +104,7 @@ where
     /// Re-randomization circuit for shuffling
     /// Implements: c1' = c1 + r' * g, c2' = c2 + r' * pk_shuffler
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
+    #[zk_poker_macros::track_constraints_impl(target = "shuffle::encryption")]
     pub fn rerandomize_ciphertext<CV>(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,
@@ -114,33 +115,29 @@ where
     where
         CV: CurveVar<C, C::BaseField>,
     {
-        let n = ns!(cs, "rerandomize");
-        let cs = n.cs();
+        // Convert randomization to bits
+        let r_bits = rerandomization.to_bits_le()?;
 
-        crate::track_constraints!(&cs, "rerandomize_ciphertext", LOG_TARGET, {
-            // Convert randomization to bits
-            let r_bits = rerandomization.to_bits_le()?;
+        // Fixed-base multiplication using precomputed powers: r' * g
+        let mut r_g = CV::zero();
+        r_g.precomputed_base_scalar_mul_le(r_bits.iter().zip(&self.generator_powers))?;
 
-            // Fixed-base multiplication using precomputed powers: r' * g
-            let mut r_g = CV::zero();
-            r_g.precomputed_base_scalar_mul_le(r_bits.iter().zip(&self.generator_powers))?;
+        // Variable-base multiplication: r' * pk_shuffler
+        let r_pk = shuffler_pk.scalar_mul_le(r_bits.iter())?;
 
-            // Variable-base multiplication: r' * pk_shuffler
-            let r_pk = shuffler_pk.scalar_mul_le(r_bits.iter())?;
+        // c1' = c1 + r' * g
+        let c1_prime = ciphertext.c1.clone() + r_g;
 
-            // c1' = c1 + r' * g
-            let c1_prime = ciphertext.c1.clone() + r_g;
+        // c2' = c2 + r' * pk_shuffler
+        let c2_prime = ciphertext.c2.clone() + r_pk;
 
-            // c2' = c2 + r' * pk_shuffler
-            let c2_prime = ciphertext.c2.clone() + r_pk;
-
-            Ok(ElGamalCiphertextVar::new(c1_prime, c2_prime))
-        })
+        Ok(ElGamalCiphertextVar::new(c1_prime, c2_prime))
     }
 
     /// Re-encrypt a deck of cards with new randomization values
     /// This function applies re-randomization to each card in the input deck
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
+    #[zk_poker_macros::track_constraints_impl(target = "shuffle::encryption")]
     pub fn reencrypt_cards_with_new_randomization<CV>(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,
@@ -151,38 +148,36 @@ where
     where
         CV: CurveVar<C, C::BaseField>,
     {
-        crate::track_constraints!(&cs, "reencrypt_cards_with_new_randomization", LOG_TARGET, {
-            if input_deck.len() != encryption_randomizations.len() {
-                return Err(SynthesisError::Unsatisfiable);
-            }
+        if input_deck.len() != encryption_randomizations.len() {
+            return Err(SynthesisError::Unsatisfiable);
+        }
 
-            let mut output_deck = Vec::with_capacity(input_deck.len());
+        let mut output_deck = Vec::with_capacity(input_deck.len());
 
-            for (i, (card, encryption_randomization)) in input_deck
-                .iter()
-                .zip(encryption_randomizations.iter())
-                .enumerate()
-            {
-                tracing::info!(
-                    target: LOG_TARGET,
-                    "Rerandomizing card {} of {}",
-                    i + 1,
-                    input_deck.len()
-                );
+        for (i, (card, encryption_randomization)) in input_deck
+            .iter()
+            .zip(encryption_randomizations.iter())
+            .enumerate()
+        {
+            tracing::info!(
+                target: LOG_TARGET,
+                "Rerandomizing card {} of {}",
+                i + 1,
+                input_deck.len()
+            );
 
-                // Apply rerandomization to the ciphertext
-                let rerandomized_card = self.rerandomize_ciphertext(
-                    cs.clone(),
-                    card,
-                    encryption_randomization,
-                    shuffler_pk,
-                )?;
+            // Apply rerandomization to the ciphertext
+            let rerandomized_card = self.rerandomize_ciphertext(
+                cs.clone(),
+                card,
+                encryption_randomization,
+                shuffler_pk,
+            )?;
 
-                output_deck.push(rerandomized_card);
-            }
+            output_deck.push(rerandomized_card);
+        }
 
-            Ok(output_deck)
-        })
+        Ok(output_deck)
     }
 
     /// Verify that a deck has been correctly re-randomized

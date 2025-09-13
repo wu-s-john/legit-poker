@@ -39,12 +39,9 @@ use crate::shuffling::pedersen_commitment::opening_proof_gadget::{
 use crate::shuffling::rs_shuffle::data_structures::{PermutationWitnessTraceVar, RSShuffleTrace};
 use crate::shuffling::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle_indices;
-use crate::track_constraints;
 use crate::vrf::simple_gadgets::prove_simple_vrf_gadget;
 
 type ConstraintF<C> = <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField;
-
-const LOG_TARGET: &str = "nexus_nova::shuffling::permutation_proof";
 
 // Submodules providing the circuit wrapper and Groth16 proof system
 pub mod circuit;
@@ -172,7 +169,11 @@ where
         );
 
     // 4) Pedersen opening proof for c_power (flexible size; pads to next power of 2)
-    let padded_size = if N.is_power_of_two() { N } else { N.next_power_of_two() };
+    let padded_size = if N.is_power_of_two() {
+        N
+    } else {
+        N.next_power_of_two()
+    };
     let ped_params =
         PedersenParams::<C>::from_arkworks_dynamic(params.power_params.clone(), padded_size);
     let opening = prove_with_flexible_size(
@@ -203,6 +204,7 @@ where
 
 /// Main permutation gadget: emits constraints tying VRF→RS→BG and Pedersen opening together.
 #[allow(clippy::too_many_arguments)]
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::permutation_proof")]
 pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
     sponge: &mut ROVar,
@@ -214,7 +216,7 @@ pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: 
     rs_witness_var: &PermutationWitnessTraceVar<ConstraintF<C>, N, LEVELS>,
     indices_init: &[FpVar<ConstraintF<C>>; N],
     // alpha/beta are derived in-circuit from a Poseidon transcript bound to public inputs
-    num_samples: usize,               // number of base-field elements used to derive RS bits
+    num_samples: usize, // number of base-field elements used to derive RS bits
     // BG + opening
     power_challenge_public: &FpVar<ConstraintF<C>>, // x in base field
     c_perm: &GG,
@@ -237,107 +239,109 @@ where
     RO: CryptographicSponge,
     ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
 {
-    track_constraints!(&cs, "prove_permutation_gadget", LOG_TARGET, {
-        // 1) Simple VRF gadget in-circuit to derive vrf_value from (nonce, sk)
-        let vrf_value =
-            prove_simple_vrf_gadget::<C, GG, RO, ROVar>(sponge, nonce, &sk_var, pk_public)?;
+    // 1) Simple VRF gadget in-circuit to derive vrf_value from (nonce, sk)
+    let vrf_value = prove_simple_vrf_gadget::<C, GG, RO, ROVar>(sponge, nonce, &sk_var, pk_public)?;
 
-        // 2) RS bit binding: derive the RS bit-matrix from vrf_value and enforce equality
-        let derived_bits = crate::shuffling::rs_shuffle::bit_generation::derive_split_bits_gadget::<
-            ConstraintF<C>,
-            N,
-            LEVELS,
-        >(cs.clone(), &vrf_value, num_samples)?;
-        for level in 0..LEVELS {
-            for i in 0..N {
-                rs_witness_var.bits_mat[level][i].enforce_equal(&derived_bits[level][i])?;
+    // 2) RS bit binding: derive the RS bit-matrix from vrf_value and enforce equality
+    let derived_bits = crate::shuffling::rs_shuffle::bit_generation::derive_split_bits_gadget::<
+        ConstraintF<C>,
+        N,
+        LEVELS,
+    >(cs.clone(), &vrf_value, num_samples)?;
+    for level in 0..LEVELS {
+        for i in 0..N {
+            rs_witness_var.bits_mat[level][i].enforce_equal(&derived_bits[level][i])?;
+        }
+    }
+
+    // 3) Derive alpha and beta from a fresh Poseidon sponge bound to public inputs
+    let sponge_cfg = crate::config::poseidon_config::<ConstraintF<C>>();
+    let mut chall_sponge = PoseidonSpongeVar::<ConstraintF<C>>::new(cs.clone(), &sponge_cfg);
+    // Optional domain separation tag
+    // Absorb public inputs in the specified order
+    pk_public.curve_absorb_gadget(&mut chall_sponge)?; // curve
+    chall_sponge.absorb(nonce)?; // Fp
+    chall_sponge.absorb(power_challenge_public)?; // Fp
+    c_perm.curve_absorb_gadget(&mut chall_sponge)?; // curve
+    c_power.curve_absorb_gadget(&mut chall_sponge)?; // curve
+                                                     // Squeeze one element for alpha, set beta = alpha^2
+    let alpha = chall_sponge.squeeze_field_elements(1)?[0].clone();
+    let beta = &alpha * &alpha;
+
+    // 4) RS shuffle constraints on indices
+    let indices_after_shuffle: [FpVar<ConstraintF<C>>; N] =
+        std::array::from_fn(|i| rs_witness_var.sorted_levels[LEVELS - 1][i].idx.clone());
+    rs_shuffle_indices::<ConstraintF<C>, N, LEVELS>(
+        cs.clone(),
+        indices_init,
+        &indices_after_shuffle,
+        rs_witness_var,
+        &alpha,
+        &beta,
+    )?;
+
+    // 5) Bind public x (power_challenge) to c_perm-derived value
+    let mut transcript = new_bayer_groth_transcript_gadget_with_poseidon::<ConstraintF<C>>(
+        cs.clone(),
+        b"permutation-proof",
+    )?;
+    let x_from_commit = transcript
+        .derive_power_challenge_from_commitment_base_field::<C, GG>(cs.clone(), c_perm)?;
+    x_from_commit.enforce_equal(power_challenge_public)?;
+
+    // 5) Efficient power-permutation check via paired multiset equality.
+    // Build base powers a = [x, x^2, ..., x^N] efficiently in base field
+    let a_powers: Vec<FpVar<ConstraintF<C>>> = {
+        let mut powers = Vec::with_capacity(N);
+        if N > 0 {
+            let mut current = power_challenge_public.clone();
+            powers.push(current.clone());
+            for _ in 1..N {
+                current *= power_challenge_public;
+                powers.push(current.clone());
             }
         }
+        powers
+    };
 
-        // 3) Derive alpha and beta from a fresh Poseidon sponge bound to public inputs
-        let sponge_cfg = crate::config::poseidon_config::<ConstraintF<C>>();
-        let mut chall_sponge = PoseidonSpongeVar::<ConstraintF<C>>::new(cs.clone(), &sponge_cfg);
-        // Optional domain separation tag
-        // Absorb public inputs in the specified order
-        pk_public.curve_absorb_gadget(&mut chall_sponge)?;               // curve
-        chall_sponge.absorb(nonce)?;                   // Fp
-        chall_sponge.absorb(power_challenge_public)?;  // Fp
-        c_perm.curve_absorb_gadget(&mut chall_sponge)?;                  // curve
-        c_power.curve_absorb_gadget(&mut chall_sponge)?;                 // curve
-        // Squeeze one element for alpha, set beta = alpha^2
-        let alpha = chall_sponge.squeeze_field_elements(1)?[0].clone();
-        let beta = &alpha * &alpha;
+    // Construct pair lists: left = [(i, x^(i+1))], right = [(π[i], b_i)]
+    let left_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
+        .map(|i| IndexPositionPair::new(indices_init[i].clone(), a_powers[i].clone()))
+        .collect();
+    let right_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
+        .map(|i| {
+            IndexPositionPair::new(
+                indices_after_shuffle[i].clone(),
+                power_perm_vec_wit[i].clone(),
+            )
+        })
+        .collect();
 
-        // 4) RS shuffle constraints on indices
-        let indices_after_shuffle: [FpVar<ConstraintF<C>>; N] =
-            std::array::from_fn(|i| rs_witness_var.sorted_levels[LEVELS - 1][i].idx.clone());
-        rs_shuffle_indices::<ConstraintF<C>, N, LEVELS>(
-            cs.clone(),
-            indices_init,
-            &indices_after_shuffle,
-            rs_witness_var,
-            &alpha,
-            &beta,
-        )?;
+    // Derive challenges for pair encoding by absorbing alpha into the sponge
+    // and squeezing three base-field elements: [rho, alpha1, alpha2]
+    chall_sponge.absorb(&alpha)?;
+    let chals = chall_sponge.squeeze_field_elements(3)?;
+    let rho = chals[0].clone();
+    let alpha1 = chals[1].clone();
+    let alpha2 = chals[2].clone();
 
-        // 5) Bind public x (power_challenge) to c_perm-derived value
-        let mut transcript = new_bayer_groth_transcript_gadget_with_poseidon::<ConstraintF<C>>(
-            cs.clone(),
-            b"permutation-proof",
-        )?;
-        let x_from_commit = transcript
-            .derive_power_challenge_from_commitment_base_field::<C, GG>(cs.clone(), c_perm)?;
-        x_from_commit.enforce_equal(power_challenge_public)?;
+    // Check multiset equality of associated pairs using 3-challenge product argument
+    check_grand_product::<ConstraintF<C>, IndexPositionPair<ConstraintF<C>>, 3>(
+        cs.clone(),
+        &left_pairs,
+        &right_pairs,
+        &[rho, alpha1, alpha2],
+    )?;
 
-        // 5) Efficient power-permutation check via paired multiset equality.
-        // Build base powers a = [x, x^2, ..., x^N] efficiently in base field
-        let a_powers: Vec<FpVar<ConstraintF<C>>> = {
-            let mut powers = Vec::with_capacity(N);
-            if N > 0 {
-                let mut current = power_challenge_public.clone();
-                powers.push(current.clone());
-                for _ in 1..N {
-                    current *= power_challenge_public;
-                    powers.push(current.clone());
-                }
-            }
-            powers
-        };
+    // 6) Verify Pedersen opening for c_power against b_scalar (witness power_perm_vec_scalar_wit)
+    verify_scalar_folding_link_gadget::<C, GG>(
+        cs.clone(),
+        c_power,
+        power_opening_proof_var,
+        power_perm_vec_scalar_wit,
+    )?;
 
-        // Construct pair lists: left = [(i, x^(i+1))], right = [(π[i], b_i)]
-        let left_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
-            .map(|i| IndexPositionPair::new(indices_init[i].clone(), a_powers[i].clone()))
-            .collect();
-        let right_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
-            .map(|i| IndexPositionPair::new(indices_after_shuffle[i].clone(), power_perm_vec_wit[i].clone()))
-            .collect();
-
-        // Derive challenges for pair encoding by absorbing alpha into the sponge
-        // and squeezing three base-field elements: [rho, alpha1, alpha2]
-        chall_sponge.absorb(&alpha)?;
-        let chals = chall_sponge.squeeze_field_elements(3)?;
-        let rho = chals[0].clone();
-        let alpha1 = chals[1].clone();
-        let alpha2 = chals[2].clone();
-
-        // Check multiset equality of associated pairs using 3-challenge product argument
-        check_grand_product::<ConstraintF<C>, IndexPositionPair<ConstraintF<C>>, 3>(
-            cs.clone(),
-            &left_pairs,
-            &right_pairs,
-            &[rho, alpha1, alpha2],
-        )?;
-
-        // 6) Verify Pedersen opening for c_power against b_scalar (witness power_perm_vec_scalar_wit)
-        verify_scalar_folding_link_gadget::<C, GG>(
-            cs.clone(),
-            c_power,
-            power_opening_proof_var,
-            power_perm_vec_scalar_wit,
-        )?;
-
-        Ok(())
-    })
+    Ok(())
 }
 
 #[cfg(test)]
@@ -376,7 +380,7 @@ mod tests {
     /// Mini-test: BG folding link consistency using verify_scalar_folding_link_gadget
     #[test]
     fn test_bg_power_challenge_and_opening_consistency() {
-    use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
+        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::bayer_groth_permutation::bg_setup::new_bayer_groth_transcript_with_poseidon;
         use crate::shuffling::pedersen_commitment::opening_proof::{prove, PedersenParams};
         use ark_crypto_primitives::commitment::{

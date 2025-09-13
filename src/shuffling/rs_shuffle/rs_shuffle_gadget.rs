@@ -68,6 +68,7 @@ impl<F: PrimeField> PermutationProduct<F, 1> for IndexedValue<F> {
 /// # Returns
 /// - `Ok(())` if all shuffle constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     indices_init: &[FpVar<F>],
@@ -79,50 +80,48 @@ pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
 where
     F: PrimeField,
 {
-    track_constraints!(&cs, "rs shuffle indices", LOG_TARGET, {
-        // 1. Create indexed values by zipping witness indices with input indices
-        // Initial: Use indices from first level unsorted array
-        let values_initial: Vec<IndexedValue<F>> = witness.uns_levels[0]
-            .iter()
-            .zip(indices_init.iter())
-            .map(|(row, idx)| {
-                // Verify that the index matches
-                row.idx.enforce_equal(idx)?;
-                Ok(IndexedValue::new(row.idx.clone()))
-            })
-            .collect::<Result<Vec<_>, SynthesisError>>()?;
+    // 1. Create indexed values by zipping witness indices with input indices
+    // Initial: Use indices from first level unsorted array
+    let values_initial: Vec<IndexedValue<F>> = witness.uns_levels[0]
+        .iter()
+        .zip(indices_init.iter())
+        .map(|(row, idx)| {
+            // Verify that the index matches
+            row.idx.enforce_equal(idx)?;
+            Ok(IndexedValue::new(row.idx.clone()))
+        })
+        .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-        // Final: Use indices from last level sorted array
-        let values_final: Vec<IndexedValue<F>> = witness.sorted_levels[LEVELS - 1]
-            .iter()
-            .zip(indices_after_shuffle.iter())
-            .map(|(row, idx)| {
-                // Verify that the index matches
-                row.idx.enforce_equal(idx)?;
-                Ok(IndexedValue::new(row.idx.clone()))
-            })
-            .collect::<Result<Vec<_>, SynthesisError>>()?;
+    // Final: Use indices from last level sorted array
+    let values_final: Vec<IndexedValue<F>> = witness.sorted_levels[LEVELS - 1]
+        .iter()
+        .zip(indices_after_shuffle.iter())
+        .map(|(row, idx)| {
+            // Verify that the index matches
+            row.idx.enforce_equal(idx)?;
+            Ok(IndexedValue::new(row.idx.clone()))
+        })
+        .collect::<Result<Vec<_>, SynthesisError>>()?;
 
-        // 2. Level-by-level verification using both challenges
-        for level in 0..LEVELS {
-            let unsorted = &witness.uns_levels[level];
-            let sorted_arr = &witness.sorted_levels[level];
+    // 2. Level-by-level verification using both challenges
+    for level in 0..LEVELS {
+        let unsorted = &witness.uns_levels[level];
+        let sorted_arr = &witness.sorted_levels[level];
 
-            // Verify this shuffle level (row constraints + permutation check)
-            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
-        }
+        // Verify this shuffle level (row constraints + permutation check)
+        verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
+    }
 
-        // 3. Final permutation check using just indices (1 challenge)
-        // This verifies that initial and final indices form the same multiset
-        check_grand_product::<F, IndexedValue<F>, 1>(
-            cs.clone(),
-            &values_initial,
-            &values_final,
-            &[alpha.clone()],
-        )?;
+    // 3. Final permutation check using just indices (1 challenge)
+    // This verifies that initial and final indices form the same multiset
+    check_grand_product::<F, IndexedValue<F>, 1>(
+        cs.clone(),
+        &values_initial,
+        &values_final,
+        &[alpha.clone()],
+    )?;
 
-        Ok(())
-    })
+    Ok(())
 }
 
 /// Verify RS shuffle constraints in a SNARK circuit
@@ -148,6 +147,7 @@ where
 /// # Returns
 /// - `Ok(())` if all shuffle constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>],
@@ -161,7 +161,6 @@ where
     C::BaseField: PrimeField,
     CV: CurveVar<C, C::BaseField>,
 {
-    track_constraints!(&cs, "rs shuffle", LOG_TARGET, {
         // 1. Create indexed ciphertexts by zipping witness indices with ciphertexts
         // Initial: Use indices from first level unsorted array
         let ciphertexts_initial: Vec<IndexedElGamalCiphertext<C, CV>> = witness.uns_levels[0]
@@ -213,7 +212,6 @@ where
         )?;
 
         Ok(())
-    })
 }
 
 /// Verify RS shuffle with re-encryption in a SNARK circuit
@@ -241,6 +239,7 @@ where
 /// # Returns
 /// - `Ok(Vec<ElGamalCiphertextVar<G>>)` containing the re-encrypted ciphertexts if successful
 /// - `Err(SynthesisError)` if any constraint fails
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>; N],
@@ -257,7 +256,6 @@ where
     C::BaseField: PrimeField,
     CV: CurveVar<C, C::BaseField>,
 {
-    track_constraints!(&cs, "rs shuffle with reencryption", LOG_TARGET, {
         // Step 1: Verify the shuffle from initial to intermediate ciphertexts
         tracing::debug!(target: LOG_TARGET, "Verifying RS shuffle");
         rs_shuffle::<C, _, N, LEVELS>(
@@ -289,7 +287,6 @@ where
 
         tracing::debug!(target: LOG_TARGET, "RS shuffle with re-encryption completed successfully");
         Ok(reencrypted_deck)
-    })
 }
 
 /// Verify row-local constraints for one level using circuit variables
@@ -564,6 +561,7 @@ where
 /// # Returns
 /// - `Ok((CV, BayerGrothSetupParametersGadget<F, CV>))`: A tuple containing the complete proof point (including randomness factor) and the Bayer-Groth parameters
 /// - `Err(SynthesisError)`: If any constraint fails
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_with_bayer_groth_linking_proof<
     F,
     C,
@@ -599,7 +597,6 @@ where
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
     C::BaseField: PrimeField,
 {
-    track_constraints!(&cs, "rs_shuffle_with_bayer_groth_proof", LOG_TARGET, {
         // Step 1: Verify RS shuffle correctness
         tracing::debug!(target: LOG_TARGET, "Step 1: Verifying RS shuffle correctness");
         // Derive beta locally for level checks
@@ -660,7 +657,6 @@ where
 
         tracing::debug!(target: LOG_TARGET, "Successfully generated RS shuffle + Bayer-Groth proof");
         Ok((proof_point, bg_params))
-    })
 }
 
 #[cfg(test)]

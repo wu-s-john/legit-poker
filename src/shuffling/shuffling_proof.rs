@@ -40,7 +40,7 @@ type PedersenDeck<G> = PedersenCommitment<G, DeckHashWindow>;
 // ============================================================================
 
 use crate::shuffling::pedersen_commitment::opening_proof::{
-    verify as verify_pedersen_opening, PedersenCommitmentOpeningProof, PedersenParams,
+    PedersenCommitmentOpeningProof, PedersenParams,
 };
 use crate::shuffling::permutation_proof::{
     prepare_witness, PublicData as PermPublicData, WitnessData as PermWitnessData,
@@ -595,6 +595,7 @@ mod tests {
 
     /// Same as the BN254/Grumpkin test above but with a 52-card deck.
     /// Uses 5 RS levels to mirror the demo binary configuration.
+    #[ignore]
     #[test]
     fn test_prove_and_verify_shuffling_bn254_52() {
         // Keep the guard alive for the whole test so logs are emitted

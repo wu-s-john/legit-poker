@@ -133,6 +133,7 @@ where
 ///
 /// # Returns
 /// Ok(()) if the constraint is satisfied, error otherwise
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget")]
 pub fn verify_scalar_folding_link_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
     c_commit_var: &GG,
@@ -229,6 +230,7 @@ where
 ///
 /// # Returns
 /// The final folded scalar as a circuit variable
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget")]
 fn fold_scalars_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
     c_commit_var: &GG,
@@ -372,6 +374,7 @@ where
 ///
 /// # Returns
 /// Ok(()) if the constraint is satisfied, error otherwise
+#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget")]
 fn verify_scalar_folding_link_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
     c_commit_var: &GG,

@@ -10,7 +10,6 @@ use crate::showdown::gadget::{uint8_sub, verify_and_score_from_indices, HandCate
 use crate::shuffling::player_decryption_gadget::{
     recover_card_point_gadget, PartialUnblindingShareVar, PlayerAccessibleCiphertextVar,
 };
-use crate::track_constraints;
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -87,6 +86,7 @@ where
 ///
 /// # Returns
 /// * Score and tie-break values for the hand
+#[zk_poker_macros::track_constraints(target = "nexus_nova::showdown::hand_reveal_showdown_gadget")]
 pub fn hand_reveal_showdown_gadget<C, CV>(
     cs: ConstraintSystemRef<C::BaseField>,
     community_cards: &[CommunityCardVar<C::BaseField>; 5],
@@ -105,19 +105,17 @@ where
     CV: CurveVar<C, C::BaseField>,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
-    track_constraints!(cs.clone(), "hand_reveal_showdown_gadget", LOG_TARGET, {
-        hand_reveal_showdown_gadget_inner::<C, CV>(
-            cs,
-            community_cards,
-            hidden_cards,
-            player_secret,
-            unblinding_shares,
-            expected_members,
-            selected_cards,
-            claimed_cat,
-            alpha,
-        )
-    })
+    hand_reveal_showdown_gadget_inner::<C, CV>(
+        cs,
+        community_cards,
+        hidden_cards,
+        player_secret,
+        unblinding_shares,
+        expected_members,
+        selected_cards,
+        claimed_cat,
+        alpha,
+    )
 }
 
 fn hand_reveal_showdown_gadget_inner<C, CV>(

@@ -4839,6 +4839,16 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "zeroize",
+ "zk_poker_macros",
+]
+
+[[package]]
+name = "zk_poker_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[patch.unused]]

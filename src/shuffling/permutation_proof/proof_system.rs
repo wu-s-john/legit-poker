@@ -86,23 +86,13 @@ where
         rng: &mut (impl RngCore + rand::CryptoRng),
         num_samples: usize,
     ) -> anyhow::Result<Self> {
-        // Build a concrete dummy circuit with consistent public inputs and witnesses
-        // using the same flow as native preparation to avoid AssignmentMissing during setup.
-        use crate::pedersen_commitment::bytes_opening::{DeckHashWindow, ReencryptionWindow};
         use crate::shuffling::rs_shuffle::native::run_rs_shuffle_permutation;
         use crate::vrf::simple::prove_simple_vrf;
-        use ark_crypto_primitives::commitment::{
-            pedersen::Commitment as PedersenCommitment, CommitmentScheme,
-        };
         use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
         use ark_std::UniformRand;
 
         // Deterministic small setup for params and secrets
         let mut local_rng = rand::rngs::StdRng::seed_from_u64(42);
-        let perm_params = PedersenCommitment::<C, DeckHashWindow>::setup(&mut local_rng)
-            .map_err(|e| anyhow::anyhow!("pedersen deck params setup: {e}"))?;
-        let power_params = PedersenCommitment::<C, ReencryptionWindow>::setup(&mut local_rng)
-            .map_err(|e| anyhow::anyhow!("pedersen reencryption params setup: {e}"))?;
 
         // Prover secrets and nonce
         let sk = C::ScalarField::rand(&mut local_rng);
@@ -118,12 +108,16 @@ where
         // RS witnesses
         let input_indices: [usize; N] = core::array::from_fn(|i| i);
         let rs_trace = run_rs_shuffle_permutation::<ConstraintF<C>, usize, N, LEVELS>(
-            vrf_value, &input_indices,
+            vrf_value,
+            &input_indices,
         );
-        let indices_init: [ConstraintF<C>; N] = core::array::from_fn(|i| ConstraintF::<C>::from(i as u64));
+        let indices_init: [ConstraintF<C>; N] =
+            core::array::from_fn(|i| ConstraintF::<C>::from(i as u64));
         // Lightweight placeholders for BG setup to avoid heavy work during setup
-        let power_vec_base: [ConstraintF<C>; N] = core::array::from_fn(|_| ConstraintF::<C>::zero());
-        let power_vec_scalar: [C::ScalarField; N] = core::array::from_fn(|_| C::ScalarField::zero());
+        let power_vec_base: [ConstraintF<C>; N] =
+            core::array::from_fn(|_| ConstraintF::<C>::zero());
+        let power_vec_scalar: [C::ScalarField; N] =
+            core::array::from_fn(|_| C::ScalarField::zero());
         let bg_setup = crate::shuffling::bayer_groth_permutation::bg_setup::BGPowerChallengeSetup::<
             ConstraintF<C>,
             C::ScalarField,
@@ -135,15 +129,22 @@ where
             power_permutation_commitment: C::zero(),
         };
         // Dummy opening proof sized for padded length
-        let padded = if N.is_power_of_two() { N } else { N.next_power_of_two() };
-        let num_rounds = (padded.trailing_zeros()) as usize;
-        let opening_dummy = crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof::<C> {
-            folding_challenge_commitment_rounds: core::iter::repeat((C::zero(), C::zero()))
-                .take(num_rounds)
-                .collect(),
-            a_final: C::ScalarField::zero(),
-            r_final: C::ScalarField::zero(),
+        let padded = if N.is_power_of_two() {
+            N
+        } else {
+            N.next_power_of_two()
         };
+        let num_rounds = (padded.trailing_zeros()) as usize;
+        let opening_dummy =
+            crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof::<
+                C,
+            > {
+                folding_challenge_commitment_rounds: core::iter::repeat((C::zero(), C::zero()))
+                    .take(num_rounds)
+                    .collect(),
+                a_final: C::ScalarField::zero(),
+                r_final: C::ScalarField::zero(),
+            };
 
         // Construct a circuit instance
         let circ = PermutationProofCircuit::<C, GG, N, LEVELS> {
