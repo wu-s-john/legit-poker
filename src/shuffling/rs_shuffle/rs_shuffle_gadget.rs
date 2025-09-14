@@ -14,7 +14,6 @@ use crate::shuffling::bayer_groth_permutation::{
 };
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
-use crate::track_constraints;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::groups::GroupOpsBounds;
@@ -466,6 +465,7 @@ where
 /// # Returns
 /// - `Ok(())` if all constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
+#[zk_poker_macros::track_constraints(target = LOG_TARGET)]
 pub(crate) fn verify_shuffle_level<F, const N: usize>(
     cs: ConstraintSystemRef<F>,
     unsorted_arr: &[UnsortedRowVar<F>; N],
@@ -476,32 +476,30 @@ pub(crate) fn verify_shuffle_level<F, const N: usize>(
 where
     F: PrimeField,
 {
-    track_constraints!(&cs, "verify shuffle level", LOG_TARGET, {
-        // Step 1: Verify row-local constraints
-        let idx_next_pos_pairs = verify_row_constraints::<_, N>(cs.clone(), unsorted_arr)?;
+    // Step 1: Verify row-local constraints
+    let idx_next_pos_pairs = verify_row_constraints::<_, N>(cs.clone(), unsorted_arr)?;
 
-        // Step 2: Build right-side pairs (idx, pos) from next array
-        let idx_pos_pairs: Vec<IndexPositionPair<F>> = sorted_arr
-            .iter()
-            .enumerate()
-            .map(|(j, nr)| {
-                IndexPositionPair::new(
-                    nr.idx.clone(),
-                    FpVar::new_constant(cs.clone(), F::from(j as u64)).unwrap(),
-                )
-            })
-            .collect();
+    // Step 2: Build right-side pairs (idx, pos) from next array
+    let idx_pos_pairs: Vec<IndexPositionPair<F>> = sorted_arr
+        .iter()
+        .enumerate()
+        .map(|(j, nr)| {
+            IndexPositionPair::new(
+                nr.idx.clone(),
+                FpVar::new_constant(cs.clone(), F::from(j as u64)).unwrap(),
+            )
+        })
+        .collect();
 
-        // Step 3: Check multiset equality for this level using 2 challenges
-        check_grand_product::<F, IndexPositionPair<F>, 2>(
-            cs.clone(),
-            &idx_next_pos_pairs,
-            &idx_pos_pairs,
-            &[alpha.clone(), beta.clone()],
-        )?;
+    // Step 3: Check multiset equality for this level using 2 challenges
+    check_grand_product::<F, IndexPositionPair<F>, 2>(
+        cs.clone(),
+        &idx_next_pos_pairs,
+        &idx_pos_pairs,
+        &[alpha.clone(), beta.clone()],
+    )?;
 
-        Ok(())
-    })
+    Ok(())
 }
 
 /// Compute the randomness factor gadget: generator^(y*r + s)

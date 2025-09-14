@@ -86,39 +86,8 @@ where
 ///
 /// # Returns
 /// * Score and tie-break values for the hand
-#[zk_poker_macros::track_constraints(target = "nexus_nova::showdown::hand_reveal_showdown_gadget")]
+#[zk_poker_macros::track_constraints(target = LOG_TARGET)]
 pub fn hand_reveal_showdown_gadget<C, CV>(
-    cs: ConstraintSystemRef<C::BaseField>,
-    community_cards: &[CommunityCardVar<C::BaseField>; 5],
-    hidden_cards: &[HiddenCardVar<C, CV, C::BaseField>; 2],
-    player_secret: &EmulatedFpVar<C::ScalarField, C::BaseField>,
-    unblinding_shares: &[PartialUnblindingShareVar<C, CV>],
-    expected_members: usize,
-    selected_cards: &[FpVar<C::BaseField>; 5],
-    claimed_cat: HandCategoryVar<C::BaseField>,
-    alpha: &FpVar<C::BaseField>,
-) -> Result<(FpVar<C::BaseField>, [UInt8<C::BaseField>; 5]), SynthesisError>
-where
-    C: CurveGroup + PrimeGroup,
-    C::BaseField: PrimeField,
-    C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField>,
-    for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
-{
-    hand_reveal_showdown_gadget_inner::<C, CV>(
-        cs,
-        community_cards,
-        hidden_cards,
-        player_secret,
-        unblinding_shares,
-        expected_members,
-        selected_cards,
-        claimed_cat,
-        alpha,
-    )
-}
-
-fn hand_reveal_showdown_gadget_inner<C, CV>(
     cs: ConstraintSystemRef<C::BaseField>,
     community_cards: &[CommunityCardVar<C::BaseField>; 5],
     hidden_cards: &[HiddenCardVar<C, CV, C::BaseField>; 2],
@@ -266,6 +235,8 @@ where
 
     Ok((score, tiebreak))
 }
+
+// inlined: former hand_reveal_showdown_gadget_inner removed
 
 #[cfg(test)]
 mod tests {

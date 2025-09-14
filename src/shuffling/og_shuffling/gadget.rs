@@ -7,11 +7,12 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
-use std::ops::Not;
 use ark_relations::ns;
+use std::ops::Not;
 
 const LOG_TARGET: &str = "shuffle::og_shuffling::gadget";
 
+#[zk_poker_macros::track_constraints(target = LOG_TARGET)]
 pub fn generate_random_values_for_deck<C: CurveGroup>(
     cs: ConstraintSystemRef<C::BaseField>,
     seed: &FpVar<C::BaseField>,
@@ -20,18 +21,16 @@ pub fn generate_random_values_for_deck<C: CurveGroup>(
 where
     C::BaseField: PrimeField + Absorb + Copy,
 {
-    crate::track_constraints!(&cs, "constructing random values for deck", LOG_TARGET, {
-        let config = poseidon_config::<C::BaseField>();
-        let mut sponge = PoseidonSpongeVar::new(cs.clone(), &config);
-        sponge.absorb(seed)?;
+    let config = poseidon_config::<C::BaseField>();
+    let mut sponge = PoseidonSpongeVar::new(cs.clone(), &config);
+    sponge.absorb(seed)?;
 
-        let random_values: Result<Vec<_>, _> = (0..deck_size)
-            .map(|_| sponge.squeeze_field_elements(1).map(|vals| vals[0].clone()))
-            .collect();
-        let random_values = random_values?;
-        assert_eq!(random_values.len(), deck_size);
-        Ok(random_values)
-    })
+    let random_values: Result<Vec<_>, _> = (0..deck_size)
+        .map(|_| sponge.squeeze_field_elements(1).map(|vals| vals[0].clone()))
+        .collect();
+    let random_values = random_values?;
+    assert_eq!(random_values.len(), deck_size);
+    Ok(random_values)
 }
 
 pub fn compute_deck_product<'a, C, CV, I>(

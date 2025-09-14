@@ -8,7 +8,6 @@ use super::{LEVELS, N};
 use crate::bayer_groth_permutation::bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon;
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::{ElGamalCiphertext, ElGamalCiphertextVar};
-use crate::track_constraints;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -225,122 +224,113 @@ where
     C::BaseField: PrimeField + Absorb,
     CV: CurveVar<C, C::BaseField>,
 {
+    #[zk_poker_macros::track_constraints_impl(target = LOG_TARGET)]
     fn generate_constraints(
         self,
         cs: ConstraintSystemRef<C::BaseField>,
     ) -> Result<(), SynthesisError> {
-        track_constraints!(
-            &cs,
-            "rs shuffle with reencryption and variable allocation",
-            LOG_TARGET,
-            {
-                // Allocate seed as public input
-                let seed_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
+        {
+            // Allocate seed as public input
+            let seed_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
 
-                // Use prepare_rs_witness_data_circuit to create witness trace from seed
-                let witness_var = super::native::prepare_rs_witness_data_circuit::<
-                    C::BaseField,
-                    N,
-                    LEVELS,
-                >(
-                    cs.clone(), &seed_var, &self.witness, self.num_samples
-                )?;
+            // Use prepare_rs_witness_data_circuit to create witness trace from seed
+            let witness_var = super::native::prepare_rs_witness_data_circuit::<
+                C::BaseField,
+                N,
+                LEVELS,
+            >(cs.clone(), &seed_var, &self.witness, self.num_samples)?;
 
-                // Allocate initial ElGamal ciphertexts as public inputs
-                let ct_init_vars: [ElGamalCiphertextVar<C, CV>; N] = self
-                    .ct_init_pub
-                    .iter()
-                    .map(|ct| {
-                        ElGamalCiphertextVar::<C, CV>::new_variable(
-                            cs.clone(),
-                            || Ok(ct),
-                            AllocationMode::Input,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .try_into()
-                    .map_err(|_| SynthesisError::Unsatisfiable)?;
+            // Allocate initial ElGamal ciphertexts as public inputs
+            let ct_init_vars: [ElGamalCiphertextVar<C, CV>; N] = self
+                .ct_init_pub
+                .iter()
+                .map(|ct| {
+                    ElGamalCiphertextVar::<C, CV>::new_variable(
+                        cs.clone(),
+                        || Ok(ct),
+                        AllocationMode::Input,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| SynthesisError::Unsatisfiable)?;
 
-                // Allocate intermediate shuffled ciphertexts as witness
-                let ct_after_shuffle_vars: [ElGamalCiphertextVar<C, CV>; N] = self
-                    .ct_after_shuffle
-                    .iter()
-                    .map(|ct| {
-                        ElGamalCiphertextVar::<C, CV>::new_variable(
-                            cs.clone(),
-                            || Ok(ct),
-                            AllocationMode::Witness,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-                    .try_into()
-                    .map_err(|_| SynthesisError::Unsatisfiable)?;
+            // Allocate intermediate shuffled ciphertexts as witness
+            let ct_after_shuffle_vars: [ElGamalCiphertextVar<C, CV>; N] = self
+                .ct_after_shuffle
+                .iter()
+                .map(|ct| {
+                    ElGamalCiphertextVar::<C, CV>::new_variable(
+                        cs.clone(),
+                        || Ok(ct),
+                        AllocationMode::Witness,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| SynthesisError::Unsatisfiable)?;
 
-                // Allocate final re-encrypted ciphertexts as public inputs
-                let ct_final_reencrypted_vars: Vec<ElGamalCiphertextVar<C, CV>> = self
-                    .ct_final_reencrypted
-                    .iter()
-                    .map(|ct| {
-                        ElGamalCiphertextVar::<C, CV>::new_variable(
-                            cs.clone(),
-                            || Ok(ct),
-                            AllocationMode::Input,
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+            // Allocate final re-encrypted ciphertexts as public inputs
+            let ct_final_reencrypted_vars: Vec<ElGamalCiphertextVar<C, CV>> = self
+                .ct_final_reencrypted
+                .iter()
+                .map(|ct| {
+                    ElGamalCiphertextVar::<C, CV>::new_variable(
+                        cs.clone(),
+                        || Ok(ct),
+                        AllocationMode::Input,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
 
-                // Allocate shuffler public key as public input
-                let shuffler_pk_var: CV = AllocVar::new_variable(
-                    cs.clone(),
-                    || Ok(self.shuffler_pk),
-                    AllocationMode::Input,
-                )?;
+            // Allocate shuffler public key as public input
+            let shuffler_pk_var: CV =
+                AllocVar::new_variable(cs.clone(), || Ok(self.shuffler_pk), AllocationMode::Input)?;
 
-                // Allocate re-encryption randomizations as witness
-                let encryption_randomizations_vars: [FpVar<C::BaseField>; N] = self
-                    .encryption_randomizations
-                    .iter()
-                    .map(|r| FpVar::new_variable(cs.clone(), || Ok(*r), AllocationMode::Witness))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .try_into()
-                    .map_err(|_| SynthesisError::Unsatisfiable)?;
+            // Allocate re-encryption randomizations as witness
+            let encryption_randomizations_vars: [FpVar<C::BaseField>; N] = self
+                .encryption_randomizations
+                .iter()
+                .map(|r| FpVar::new_variable(cs.clone(), || Ok(*r), AllocationMode::Witness))
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .map_err(|_| SynthesisError::Unsatisfiable)?;
 
-                // Allocate challenges as public inputs
-                let alpha_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
-                let beta_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.beta), AllocationMode::Input)?;
+            // Allocate challenges as public inputs
+            let alpha_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
+            let beta_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.beta), AllocationMode::Input)?;
 
-                // Call the main verification function directly with arrays
-                let reencrypted_result = rs_shuffle_with_reencryption::<C, _, N, LEVELS>(
-                    cs.clone(),
-                    &ct_init_vars,
-                    &ct_after_shuffle_vars,
-                    &witness_var,
-                    &encryption_randomizations_vars,
-                    &shuffler_pk_var,
-                    &alpha_var,
-                    &beta_var,
-                    &self.generator_powers,
-                )?;
+            // Call the main verification function directly with arrays
+            let reencrypted_result = rs_shuffle_with_reencryption::<C, _, N, LEVELS>(
+                cs.clone(),
+                &ct_init_vars,
+                &ct_after_shuffle_vars,
+                &witness_var,
+                &encryption_randomizations_vars,
+                &shuffler_pk_var,
+                &alpha_var,
+                &beta_var,
+                &self.generator_powers,
+            )?;
 
-                // Verify that the result matches the expected final ciphertexts
-                if reencrypted_result.len() != ct_final_reencrypted_vars.len() {
-                    return Err(SynthesisError::Unsatisfiable);
-                }
-
-                for (result_ct, expected_ct) in reencrypted_result
-                    .iter()
-                    .zip(ct_final_reencrypted_vars.iter())
-                {
-                    result_ct.c1.enforce_equal(&expected_ct.c1)?;
-                    result_ct.c2.enforce_equal(&expected_ct.c2)?;
-                }
-
-                Ok(())
+            // Verify that the result matches the expected final ciphertexts
+            if reencrypted_result.len() != ct_final_reencrypted_vars.len() {
+                return Err(SynthesisError::Unsatisfiable);
             }
-        )
+
+            for (result_ct, expected_ct) in reencrypted_result
+                .iter()
+                .zip(ct_final_reencrypted_vars.iter())
+            {
+                result_ct.c1.enforce_equal(&expected_ct.c1)?;
+                result_ct.c2.enforce_equal(&expected_ct.c2)?;
+            }
+
+            Ok(())
+        }
     }
 }
 
@@ -349,54 +339,50 @@ impl<F, const N: usize, const LEVELS: usize> ConstraintSynthesizer<F>
 where
     F: PrimeField + Absorb,
 {
+    #[zk_poker_macros::track_constraints_impl(target = LOG_TARGET)]
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        track_constraints!(
-            &cs,
-            "rs shuffle indices with variable allocation",
-            LOG_TARGET,
-            {
-                // Allocate seed as public input
-                let seed_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
+        {
+            // Allocate seed as public input
+            let seed_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.seed), AllocationMode::Input)?;
 
-                // Use prepare_rs_witness_data_circuit to create witness trace from seed
-                let witness_var = super::native::prepare_rs_witness_data_circuit::<F, N, LEVELS>(
-                    cs.clone(),
-                    &seed_var,
-                    &self.witness,
-                    self.num_samples,
-                )?;
+            // Use prepare_rs_witness_data_circuit to create witness trace from seed
+            let witness_var = super::native::prepare_rs_witness_data_circuit::<F, N, LEVELS>(
+                cs.clone(),
+                &seed_var,
+                &self.witness,
+                self.num_samples,
+            )?;
 
-                // Allocate initial indices as public inputs
-                let indices_init_vars: Vec<FpVar<F>> = self
-                    .indices_init
-                    .iter()
-                    .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
-                    .collect::<Result<Vec<_>, _>>()?;
+            // Allocate initial indices as public inputs
+            let indices_init_vars: Vec<FpVar<F>> = self
+                .indices_init
+                .iter()
+                .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
+                .collect::<Result<Vec<_>, _>>()?;
 
-                // Allocate shuffled indices as public inputs
-                let indices_after_shuffle_vars: Vec<FpVar<F>> = self
-                    .indices_after_shuffle
-                    .iter()
-                    .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
-                    .collect::<Result<Vec<_>, _>>()?;
+            // Allocate shuffled indices as public inputs
+            let indices_after_shuffle_vars: Vec<FpVar<F>> = self
+                .indices_after_shuffle
+                .iter()
+                .map(|idx| FpVar::new_variable(cs.clone(), || Ok(*idx), AllocationMode::Input))
+                .collect::<Result<Vec<_>, _>>()?;
 
-                // Allocate challenge as public input
-                let alpha_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
+            // Allocate challenge as public input
+            let alpha_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
 
-                // Derive beta locally as alpha^2 and call the main verification function
-                let beta_var = &alpha_var * &alpha_var;
-                rs_shuffle_indices::<F, N, LEVELS>(
-                    cs.clone(),
-                    &indices_init_vars,
-                    &indices_after_shuffle_vars,
-                    &witness_var,
-                    &alpha_var,
-                    &beta_var,
-                )
-            }
-        )
+            // Derive beta locally as alpha^2 and call the main verification function
+            let beta_var = &alpha_var * &alpha_var;
+            rs_shuffle_indices::<F, N, LEVELS>(
+                cs.clone(),
+                &indices_init_vars,
+                &indices_after_shuffle_vars,
+                &witness_var,
+                &alpha_var,
+                &beta_var,
+            )
+        }
     }
 }
 
@@ -415,152 +401,147 @@ where
         > + Clone,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
+    #[zk_poker_macros::track_constraints_impl(target = LOG_TARGET)]
     fn generate_constraints(
         self,
         cs: ConstraintSystemRef<C::BaseField>,
     ) -> Result<(), SynthesisError> {
-        track_constraints!(
-            &cs,
-            "rs shuffle with bayer groth linking proof",
-            LOG_TARGET,
-            {
-                // ============ Step 1: Allocate Public Inputs ============
-                tracing::debug!(target: LOG_TARGET, "Allocating public inputs");
+        {
+            // ============ Step 1: Allocate Public Inputs ============
+            tracing::debug!(target: LOG_TARGET, "Allocating public inputs");
 
-                // Allocate alpha challenge as public input
-                let alpha_var =
-                    FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
+            // Allocate alpha challenge as public input
+            let alpha_var =
+                FpVar::new_variable(cs.clone(), || Ok(self.alpha), AllocationMode::Input)?;
 
-                // Allocate commitment to permutation vector as public input
-                let c_perm_var =
-                    CV::new_variable(cs.clone(), || Ok(self.c_perm), AllocationMode::Input)?;
+            // Allocate commitment to permutation vector as public input
+            let c_perm_var =
+                CV::new_variable(cs.clone(), || Ok(self.c_perm), AllocationMode::Input)?;
 
-                // Allocate commitment to power vector as public input
-                let c_power_var =
-                    CV::new_variable(cs.clone(), || Ok(self.c_power), AllocationMode::Input)?;
+            // Allocate commitment to power vector as public input
+            let c_power_var =
+                CV::new_variable(cs.clone(), || Ok(self.c_power), AllocationMode::Input)?;
 
-                // ============ Step 2: Allocate Private Inputs ============
-                tracing::debug!(target: LOG_TARGET, "Allocating private inputs");
+            // ============ Step 2: Allocate Private Inputs ============
+            tracing::debug!(target: LOG_TARGET, "Allocating private inputs");
 
-                // Allocate permutation as EmulatedFpVar (scalar field in base field circuit)
-                let permutation_vars: [EmulatedFpVar<C::ScalarField, C::BaseField>; N] =
-                    std::array::from_fn(|i| {
-                        EmulatedFpVar::new_variable(
-                            cs.clone(),
-                            || Ok(self.permutation[i]),
-                            AllocationMode::Witness,
-                        )
-                        .expect("Failed to allocate permutation element")
-                    });
-
-                // Allocate witness data
-                let witness_var = PermutationWitnessTraceVar::new_variable(
-                    cs.clone(),
-                    || Ok(&self.witness),
-                    AllocationMode::Witness,
-                )?;
-
-                // Allocate initial indices
-                let indices_init_vars: [FpVar<C::BaseField>; N] = std::array::from_fn(|i| {
-                    FpVar::new_variable(
+            // Allocate permutation as EmulatedFpVar (scalar field in base field circuit)
+            let permutation_vars: [EmulatedFpVar<C::ScalarField, C::BaseField>; N] =
+                std::array::from_fn(|i| {
+                    EmulatedFpVar::new_variable(
                         cs.clone(),
-                        || Ok(self.indices_init[i]),
+                        || Ok(self.permutation[i]),
                         AllocationMode::Witness,
                     )
-                    .expect("Failed to allocate initial index")
+                    .expect("Failed to allocate permutation element")
                 });
 
-                // Allocate shuffled indices
-                let indices_after_shuffle_vars: [FpVar<C::BaseField>; N] =
-                    std::array::from_fn(|i| {
-                        FpVar::new_variable(
-                            cs.clone(),
-                            || Ok(self.indices_after_shuffle[i]),
-                            AllocationMode::Witness,
-                        )
-                        .expect("Failed to allocate shuffled index")
-                    });
+            // Allocate witness data
+            let witness_var = PermutationWitnessTraceVar::new_variable(
+                cs.clone(),
+                || Ok(&self.witness),
+                AllocationMode::Witness,
+            )?;
 
-                // Allocate blinding factors as EmulatedFpVar
-                let blinding_r_var = EmulatedFpVar::new_variable(
+            // Allocate initial indices
+            let indices_init_vars: [FpVar<C::BaseField>; N] = std::array::from_fn(|i| {
+                FpVar::new_variable(
                     cs.clone(),
-                    || Ok(self.blinding_factors.0),
+                    || Ok(self.indices_init[i]),
                     AllocationMode::Witness,
-                )?;
-                let blinding_s_var = EmulatedFpVar::new_variable(
+                )
+                .expect("Failed to allocate initial index")
+            });
+
+            // Allocate shuffled indices
+            let indices_after_shuffle_vars: [FpVar<C::BaseField>; N] = std::array::from_fn(|i| {
+                FpVar::new_variable(
                     cs.clone(),
-                    || Ok(self.blinding_factors.1),
+                    || Ok(self.indices_after_shuffle[i]),
                     AllocationMode::Witness,
-                )?;
-                let blinding_factors_var = (blinding_r_var, blinding_s_var);
+                )
+                .expect("Failed to allocate shuffled index")
+            });
 
-                // ============ Step 3: Allocate Constants ============
-                tracing::debug!(target: LOG_TARGET, "Allocating constants");
+            // Allocate blinding factors as EmulatedFpVar
+            let blinding_r_var = EmulatedFpVar::new_variable(
+                cs.clone(),
+                || Ok(self.blinding_factors.0),
+                AllocationMode::Witness,
+            )?;
+            let blinding_s_var = EmulatedFpVar::new_variable(
+                cs.clone(),
+                || Ok(self.blinding_factors.1),
+                AllocationMode::Witness,
+            )?;
+            let blinding_factors_var = (blinding_r_var, blinding_s_var);
 
-                // Allocate generator as constant
-                let generator_var = CV::new_constant(cs.clone(), self.generator)?;
+            // ============ Step 3: Allocate Constants ============
+            tracing::debug!(target: LOG_TARGET, "Allocating constants");
 
-                // ============ Step 4: Create Transcript Gadget ============
-                tracing::debug!(target: LOG_TARGET, "Creating transcript gadget");
+            // Allocate generator as constant
+            let generator_var = CV::new_constant(cs.clone(), self.generator)?;
 
-                // Create transcript gadget using the new_with_poseidon helper
-                // Since new_with_poseidon returns a specific type with PoseidonSponge/PoseidonSpongeVar,
-                // we need to ensure RO and ROVar match those types
-                let mut transcript_gadget = new_bayer_groth_transcript_gadget_with_poseidon::<
+            // ============ Step 4: Create Transcript Gadget ============
+            tracing::debug!(target: LOG_TARGET, "Creating transcript gadget");
+
+            // Create transcript gadget using the new_with_poseidon helper
+            // Since new_with_poseidon returns a specific type with PoseidonSponge/PoseidonSpongeVar,
+            // we need to ensure RO and ROVar match those types
+            let mut transcript_gadget = new_bayer_groth_transcript_gadget_with_poseidon::<
+                C::BaseField,
+            >(cs.clone(), &self.domain)?;
+
+            // ============ Step 5: Run Combined Protocol ============
+            tracing::debug!(target: LOG_TARGET, "Running RS shuffle + Bayer-Groth protocol");
+
+            let (_proof_point, _bg_params) = rs_shuffle_with_bayer_groth_linking_proof::<
+                C::BaseField,
+                C,
+                CV,
+                ark_crypto_primitives::sponge::poseidon::PoseidonSponge<C::BaseField>,
+                ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
                     C::BaseField,
-                >(cs.clone(), &self.domain)?;
+                >,
+                N,
+                LEVELS,
+            >(
+                cs.clone(),
+                &alpha_var,
+                &c_perm_var,
+                &c_power_var,
+                &generator_var,
+                &permutation_vars,
+                &witness_var,
+                &indices_init_vars,
+                &indices_after_shuffle_vars,
+                &blinding_factors_var,
+                &mut transcript_gadget,
+            )?;
 
-                // ============ Step 5: Run Combined Protocol ============
-                tracing::debug!(target: LOG_TARGET, "Running RS shuffle + Bayer-Groth protocol");
+            // The proof_point and bg_params are now constrained by the gadget
+            // No additional constraints needed as the gadget handles all verification
 
-                let (_proof_point, _bg_params) = rs_shuffle_with_bayer_groth_linking_proof::<
-                    C::BaseField,
-                    C,
-                    CV,
-                    ark_crypto_primitives::sponge::poseidon::PoseidonSponge<C::BaseField>,
-                    ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<
-                        C::BaseField,
-                    >,
-                    N,
-                    LEVELS,
-                >(
-                    cs.clone(),
-                    &alpha_var,
-                    &c_perm_var,
-                    &c_power_var,
-                    &generator_var,
-                    &permutation_vars,
-                    &witness_var,
-                    &indices_init_vars,
-                    &indices_after_shuffle_vars,
-                    &blinding_factors_var,
-                    &mut transcript_gadget,
-                )?;
+            tracing::debug!(
+                target: LOG_TARGET,
+                "Successfully generated constraints for RS shuffle + Bayer-Groth proof"
+            );
 
-                // The proof_point and bg_params are now constrained by the gadget
-                // No additional constraints needed as the gadget handles all verification
+            // Optionally, we could expose the proof_point as a public output
+            // by allocating it as an Input variable and enforcing equality
+            // For now, the verification is complete within the circuit
 
-                tracing::debug!(
-                    target: LOG_TARGET,
-                    "Successfully generated constraints for RS shuffle + Bayer-Groth proof"
-                );
-
-                // Optionally, we could expose the proof_point as a public output
-                // by allocating it as an Input variable and enforcing equality
-                // For now, the verification is complete within the circuit
-
-                Ok(())
-            }
-        )
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rs_shuffle::native::prepare_rs_witness_data_circuit;
     use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle;
     use crate::test_utils::check_cs_satisfied;
+    use crate::{rs_shuffle::native::prepare_rs_witness_data_circuit, track_constraints};
     use ark_ec::short_weierstrass::Projective;
     use ark_ec::CurveConfig;
     use ark_ff::AdditiveGroup;
@@ -621,7 +602,8 @@ mod tests {
 
         // 2. Use a regular seed value to generate witness trace with mixed bits
         let seed = BaseField::from(42u64);
-        let (rs_witness_trace, num_samples) = prepare_rs_witness_trace::<BaseField, N, LEVELS>(seed);
+        let (rs_witness_trace, num_samples) =
+            prepare_rs_witness_trace::<BaseField, N, LEVELS>(seed);
 
         tracing::debug!(
             target: TEST_TARGET,
@@ -726,7 +708,10 @@ mod tests {
 
         // Check that the bits across all levels are mixed (not all 0s or all 1s)
         for level in 0..LEVELS {
-            let ones_count = rs_witness_trace.bits_mat[level].iter().filter(|&&b| b).count();
+            let ones_count = rs_witness_trace.bits_mat[level]
+                .iter()
+                .filter(|&&b| b)
+                .count();
             tracing::debug!(
                 target: TEST_TARGET,
                 "Level {} has {} ones out of {} bits",

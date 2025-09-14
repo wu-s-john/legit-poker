@@ -3,51 +3,31 @@ use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{
-    parse_macro_input, spanned::Spanned, Expr, ExprLit, FnArg, ItemFn, Lit, LitStr, Meta, Pat,
-    Token,
+    parse_macro_input, spanned::Spanned, Expr, FnArg, ItemFn, Meta, Pat, Token,
 };
 
 struct TrackArgs {
-    operation: Option<LitStr>,
-    target: Option<LitStr>,
+    operation: Option<Expr>,
+    target: Option<Expr>,
 }
 
 impl Parse for TrackArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let metas: Punctuated<Meta, Token![,]> = Punctuated::parse_terminated(input)?;
-        let mut operation: Option<LitStr> = None;
-        let mut target: Option<LitStr> = None;
+        let mut operation: Option<Expr> = None;
+        let mut target: Option<Expr> = None;
         for meta in metas {
             match meta {
                 Meta::NameValue(nv) => {
-                    let value_span = nv.value.span();
                     let key = nv.path;
                     match (key.is_ident("operation"), key.is_ident("target")) {
                         (true, _) => {
-                            if let Expr::Lit(ExprLit {
-                                lit: Lit::Str(s), ..
-                            }) = nv.value
-                            {
-                                operation = Some(s);
-                            } else {
-                                return Err(syn::Error::new(
-                                    value_span,
-                                    "operation must be a string literal",
-                                ));
-                            }
+                            // Accept any expression; type is checked at call site.
+                            operation = Some(nv.value);
                         }
                         (_, true) => {
-                            if let Expr::Lit(ExprLit {
-                                lit: Lit::Str(s), ..
-                            }) = nv.value
-                            {
-                                target = Some(s);
-                            } else {
-                                return Err(syn::Error::new(
-                                    value_span,
-                                    "target must be a string literal",
-                                ));
-                            }
+                            // Accept any expression; type is checked at call site.
+                            target = Some(nv.value);
                         }
                         _ => {
                             return Err(syn::Error::new(
@@ -162,12 +142,12 @@ pub fn track_constraints_impl(attr: TokenStream, item: TokenStream) -> TokenStre
 fn wrap_function(
     mut func: ItemFn,
     cs_ident: syn::Ident,
-    operation: Option<LitStr>,
-    target: Option<LitStr>,
+    operation: Option<Expr>,
+    target: Option<Expr>,
     fn_name: syn::Ident,
 ) -> TokenStream {
-    let op_tokens = if let Some(s) = operation {
-        quote!(#s)
+    let op_tokens = if let Some(expr) = operation {
+        quote!(#expr)
     } else {
         quote!(::core::concat!(
             ::core::module_path!(),
@@ -177,8 +157,8 @@ fn wrap_function(
             stringify!(#fn_name)
         ))
     };
-    let target_tokens = if let Some(s) = target {
-        quote!(#s)
+    let target_tokens = if let Some(expr) = target {
+        quote!(#expr)
     } else {
         quote!("r1cs")
     };
