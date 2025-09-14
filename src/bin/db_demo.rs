@@ -8,9 +8,10 @@ use zk_poker::db::{self, entity::test};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Logging with file:line
+    // Logging with sensible default if RUST_LOG is unset
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("db=info"));
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .with_file(true)
         .with_line_number(true)
         .init();
@@ -21,9 +22,9 @@ async fn main() -> Result<()> {
     let conn = db::connect().await?;
 
     // Supabase Realtime subscription (WebSocket): prints INSERT/UPDATE with before/after
-    // Requires (run once on the DB):
-    //   alter publication supabase_realtime add table public.test;
-    //   alter table public.test replica identity full;
+    // Schema + Realtime setup is applied via Supabase migration:
+    //   supabase/migrations/20250914090000_init_schema.sql
+    // That migration creates public.test and enables Realtime on it.
     let supabase_url =
         std::env::var("SUPABASE_URL").unwrap_or_else(|_| "http://127.0.0.1:54321".into());
     let supabase_key = std::env::var("SUPABASE_ANON_KEY").expect("SUPABASE_ANON_KEY not set");

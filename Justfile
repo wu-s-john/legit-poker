@@ -62,28 +62,28 @@ fmt-check:
 fmt:
     cargo fmt --all
 
-# One-shot backend dev setup: start Supabase, wait for DB, clear DB, regen Prisma client, apply Prisma+Supabase migrations
-# Optional NAME argument forwarded to `migrate` for naming new Prisma migration
-backend-setup NAME='':
+# One-shot backend dev setup: start Supabase, wait for DB, apply Supabase SQL migrations
+backend-setup:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Setting up backend dev environment (supabase up, clear DB, prisma migrate, supabase migrate)"
+    echo "Setting up backend dev environment (supabase up, apply migrations)"
     if ! command -v supabase >/dev/null 2>&1; then
-    echo "Supabase CLI not found. Install: https://supabase.com/docs/guides/cli" >&2
-    exit 1
+        echo "Supabase CLI not found. Install: https://supabase.com/docs/guides/cli" >&2
+        exit 1
     fi
     echo "Ensuring local Supabase stack is running..."
     if ! supabase status -o env >/dev/null 2>&1; then
-    supabase start
+        supabase start
     else
-    echo "Supabase already running."
+        echo "Supabase already running."
     fi
     just wait-db
-    just prisma-generate
-    just db-clean
-    just migrate {{ NAME }}
+    echo "Resetting local database and applying migrations (idempotent)..."
+    # Reset ensures local DB matches supabase/migrations even if prior remote-linked versions exist
+    # Uses seed configured in supabase/config.toml if present
+    supabase db reset --local --yes
 
-# --- Database / Supabase / Prisma (replaces Makefile) ---
+# --- Database / Supabase (replaces Makefile) ---
 
 # Start local Supabase stack
 supabase-start:
@@ -94,41 +94,10 @@ supabase-start:
 supabase-status:
     supabase status -o env
 
-# Generate Prisma client
-prisma-generate:
-    echo "Generating Prisma client..."
-    npx prisma generate
-
-# Run Prisma migrate dev (name overridable). Example: `just prisma-migrate schema_change`
-prisma-migrate NAME='init_test':
-    echo "Running Prisma migrate dev..."
-    echo "Using DATABASE_URL={{ DATABASE_URL }}"
-    DATABASE_URL="{{ DATABASE_URL }}" npx prisma migrate dev --name "{{ NAME }}"
-
 # Apply Supabase SQL migrations (local)
 supabase-migrate:
     echo "Applying Supabase SQL migrations (local) ..."
     supabase migration up
-
-# Run Prisma migrate, then apply Supabase migrations
-
-# Usage: `just migrate` or `just migrate descriptive_change`
-migrate NAME='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Running Prisma migrate dev (then Supabase migrations)..."
-    echo "Using DATABASE_URL={{ DATABASE_URL }}"
-    if [[ -n "{{ NAME }}" ]]; then
-        DATABASE_URL="{{ DATABASE_URL }}" npx prisma migrate dev --name "{{ NAME }}"
-    else
-        DATABASE_URL="{{ DATABASE_URL }}" npx prisma migrate dev
-    fi
-    echo "Applying Supabase SQL migrations..."
-    supabase migration up
-
-# Backwards-compat alias
-migrate-all NAME='':
-    just migrate {{ NAME }}
 
 # Inspect local DB for realtime readiness and applied migrations
 inspect-realtime:
@@ -142,8 +111,6 @@ inspect-realtime:
     psql "{{ DATABASE_URL }}" -At -c "select c.relname, c.relrowsecurity, c.relforcerowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='{{ SCHEMA }}' and c.relname='{{ TABLE }}';"
     echo "\n== Policies on {{ SCHEMA }}.{{ TABLE }} =="
     psql "{{ DATABASE_URL }}" -P pager=off -c "select schemaname, tablename, policyname, cmd, roles, permissive, qual, with_check from pg_policies where schemaname='{{ SCHEMA }}' and tablename='{{ TABLE }}';"
-    echo "\n== Prisma migrations (_prisma_migrations) =="
-    psql "{{ DATABASE_URL }}" -At -c 'select id, name, to_char(started_at, ''YYYY-MM-DD HH24:MI:SS''), to_char(finished_at, ''YYYY-MM-DD HH24:MI:SS'') from _prisma_migrations order by started_at desc nulls last;' || true
     echo "\n== Supabase migrations registry (if present) =="
     psql "{{ DATABASE_URL }}" -At -c 'select version, name, to_char(applied_at, ''YYYY-MM-DD HH24:MI:SS'') from supabase_migrations.schema_migrations order by applied_at desc;' || true
 

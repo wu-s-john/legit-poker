@@ -1,7 +1,7 @@
 use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::curve_absorb::CurveAbsorb;
-use crate::shuffling::data_structures::ElGamalCiphertext;
 use crate::poseidon_config;
+use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;

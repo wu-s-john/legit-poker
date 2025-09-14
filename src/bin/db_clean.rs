@@ -7,10 +7,9 @@ use zk_poker::db::{self, entity::test};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Logging
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Logging with default if RUST_LOG is unset
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("db=info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     dotenv::dotenv().ok();
 
@@ -22,4 +21,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

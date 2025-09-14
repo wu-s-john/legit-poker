@@ -1,8 +1,8 @@
-Local DB + Prisma + Realtime (Rust)
+Local DB + Supabase Migrations + Realtime (Rust)
 
 Prereqs
 - Docker and Supabase CLI installed
-- Node (for Prisma CLI), Rust toolchain
+- Rust toolchain
 
 1) Start Supabase locally
   supabase init
@@ -15,16 +15,14 @@ Prereqs
   SUPABASE_URL="http://127.0.0.1:54321"
   SUPABASE_ANON_KEY="<from supabase status -o env>"
 
-3) Apply Prisma schema
-  npm i -D prisma && npm i @prisma/client
-  npx prisma generate
-  npx prisma migrate dev --name init_test
+3) Apply schema via Supabase migrations
+  # Single migration creates public.test and enables Realtime on it:
+  #   supabase/migrations/20250914090000_init_schema.sql
+  # For a clean, idempotent local setup, reset the DB to match local migrations:
+  supabase db reset  # WARNING: resets local DB and runs all SQL in supabase/migrations
 
-4) Enable Realtime on the table
-This repo includes a Supabase migration:
-  supabase/migrations/20250911115900_enable_realtime_test.sql
-Run it via Supabase SQL editor or:
-  supabase db reset   # WARNING: resets local DB and runs migrations in supabase/migrations
+4) (Optional) Re-apply migrations without reset (not recommended when linked to remote)
+  supabase migration up
 
 5) Run the Rust demo
   RUST_LOG=db=info cargo run --bin db_demo
@@ -37,5 +35,4 @@ What the demo does
 
 Notes
 - All database writes use SeaORM’s type-safe DSL. No raw SQL is used in Rust.
-- Prisma owns DDL for the test table; Supabase migration only configures Realtime publication + replica identity.
-
+- Supabase migrations own both DDL for the test table and Realtime configuration (publication + replica identity).
