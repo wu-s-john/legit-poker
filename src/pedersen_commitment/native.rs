@@ -106,5 +106,7 @@ pub fn pedersen_commit_scalars<G: CurveGroup, const N: usize>(
         .flat_map(|row| row.iter())
         .take(N)
         .zip(values.iter())
-        .fold(h * randomness, |acc, (base, value)| acc + (base.into_affine().into() * value))
+        .fold(h * randomness, |acc, (base, value)| {
+            acc + (base.into_affine().into() * value)
+        })
 }

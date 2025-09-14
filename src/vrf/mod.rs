@@ -84,8 +84,12 @@ impl pedersen::Window for VrfPedersenWindow {
 
 /// VRF parameters containing Pedersen CRH setup for hash-to-curve and sponge config
 #[derive(Clone)]
-pub struct VrfParams<C, SP = ark_crypto_primitives::sponge::poseidon::PoseidonConfig<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>>
-where
+pub struct VrfParams<
+    C,
+    SP = ark_crypto_primitives::sponge::poseidon::PoseidonConfig<
+        <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField,
+    >,
+> where
     C: CurveGroup,
     SP: Clone,
 {
@@ -107,7 +111,13 @@ where
     }
 }
 
-impl<C> VrfParams<C, ark_crypto_primitives::sponge::poseidon::PoseidonConfig<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>>
+impl<C>
+    VrfParams<
+        C,
+        ark_crypto_primitives::sponge::poseidon::PoseidonConfig<
+            <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField,
+        >,
+    >
 where
     C: CurveGroup,
     <<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField: PrimeField,
@@ -117,7 +127,8 @@ where
         use ark_crypto_primitives::crh::CRHScheme;
         let pedersen_crh_params = <pedersen::CRH<C, VrfPedersenWindow> as CRHScheme>::setup(rng)
             .expect("Pedersen CRH setup should not fail");
-        let sponge_params = poseidon_config::<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>();
+        let sponge_params =
+            poseidon_config::<<<C as CurveGroup>::BaseField as ark_ff::Field>::BasePrimeField>();
         Self {
             pedersen_crh_params,
             sponge_params,

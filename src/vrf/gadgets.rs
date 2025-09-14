@@ -64,14 +64,14 @@ where
 
         // Allocate gamma as curve variable
         let gamma = GG::new_variable(cs.clone(), || Ok(proof.gamma), mode)?;
-        
+
         // Allocate c as non-native scalar field variable
         let c = EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_variable(
             cs.clone(),
             || Ok(proof.c),
             mode,
         )?;
-        
+
         // Allocate s as non-native scalar field variable
         let s = EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_variable(
             cs.clone(),
@@ -125,8 +125,7 @@ pub fn generate_nonce_var<C, GG, RO, ROVar>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>>
-        + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     RO: CryptographicSponge,
@@ -188,8 +187,7 @@ pub fn generate_challenge_var<C, GG, RO, ROVar>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>>
-        + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     RO: CryptographicSponge,
@@ -224,8 +222,7 @@ pub fn beta_from_gamma_var<C, GG, RO, ROVar>(
 ) -> Result<FpVar<ConstraintF<C>>, SynthesisError>
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>>
-        + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
     ConstraintF<C>: PrimeField + Absorb,
     RO: CryptographicSponge,
     ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
@@ -282,81 +279,88 @@ pub fn prove_vrf_gadget<C, GG, RO, ROVar>(
 >
 where
     C: CurveGroup,
-    GG: CurveVar<C, ConstraintF<C>>
-        + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
+    GG: CurveVar<C, ConstraintF<C>> + CurveAbsorbGadget<ConstraintF<C>, ROVar>,
     ConstraintF<C>: PrimeField + Absorb,
     C::ScalarField: PrimeField,
     RO: CryptographicSponge,
     ROVar: CryptographicSpongeVar<ConstraintF<C>, RO>,
     for<'a> &'a GG: ark_r1cs_std::groups::GroupOpsBounds<'a, C, GG>,
 {
-        // Allocate Pedersen parameters as constants
-        let pedersen_params_var = PedersenCRHParamsVar::<C, GG>::new_constant(
+    // Allocate Pedersen parameters as constants
+    let pedersen_params_var = PedersenCRHParamsVar::<C, GG>::new_constant(
+        cs.clone(),
+        params.pedersen_crh_params.clone(),
+    )?;
+
+    // 1. H = HashToCurve(msg)
+    let h = track_constraints!(&cs, "hash_to_curve", LOG_TARGET, {
+        hash_to_curve_var::<C, GG>(&pedersen_params_var, msg_bytes)?
+    });
+    tracing::debug!(target: LOG_TARGET, "Hash to curve in SNARK: {:?}", h.value());
+
+    // 2. Compute pk = x * G (needed for challenge generation)
+    let x_bits = x_wit.to_bits_le()?;
+    let g = GG::constant(C::generator());
+    let pk = track_constraints!(&cs, "pk = x * G", LOG_TARGET, {
+        g.scalar_mul_le(x_bits.iter())?
+    });
+
+    // 3. Γ = x * H
+    let gamma = track_constraints!(&cs, "x * H", LOG_TARGET, {
+        h.scalar_mul_le(x_bits.iter())?
+    });
+    tracing::debug!(target: LOG_TARGET, "Gamma in SNARK: {:?}", gamma.value());
+
+    // 4. Generate nonce k
+    let (k, k_bits) = track_constraints!(&cs, "generate_nonce", LOG_TARGET, {
+        generate_nonce_var::<C, GG, RO, ROVar>(cs.clone(), sponge_params, &x_wit, &h, msg_bytes)?
+    });
+    tracing::debug!(target: LOG_TARGET, "Generated nonce in SNARK: {:?}", k.value());
+
+    // 5. U = k * G
+    let u = track_constraints!(&cs, "k * G", LOG_TARGET, {
+        g.scalar_mul_le(k_bits.iter())?
+    });
+
+    // 6. V = k * H
+    let v = track_constraints!(&cs, "k * H", LOG_TARGET, {
+        h.scalar_mul_le(k_bits.iter())?
+    });
+
+    // 7. Generate challenge c
+    let (c, _c_bits) = track_constraints!(&cs, "generate_challenge", LOG_TARGET, {
+        generate_challenge_var::<C, GG, RO, ROVar>(
             cs.clone(),
-            params.pedersen_crh_params.clone(),
-        )?;
+            sponge_params,
+            &pk,
+            &h,
+            &gamma,
+            &u,
+            &v,
+        )?
+    });
+    tracing::debug!(target: LOG_TARGET, "Generated challenge in SNARK: {:?}", c.value());
 
-        // 1. H = HashToCurve(msg)
-        let h = track_constraints!(&cs, "hash_to_curve", LOG_TARGET, {
-            hash_to_curve_var::<C, GG>(&pedersen_params_var, msg_bytes)?
-        });
-        tracing::debug!(target: LOG_TARGET, "Hash to curve in SNARK: {:?}", h.value());
+    // 8. s = k + c * x (mod r)
+    let s = track_constraints!(&cs, "s = k + c * x", LOG_TARGET, {
+        // c * x in non-native field
+        let cx = c.clone() * &x_wit;
+        // s = k + cx
+        &k + &cx
+    });
 
-        // 2. Compute pk = x * G (needed for challenge generation)
-        let x_bits = x_wit.to_bits_le()?;
-        let g = GG::constant(C::generator());
-        let pk = track_constraints!(&cs, "pk = x * G", LOG_TARGET, {
-            g.scalar_mul_le(x_bits.iter())?
-        });
+    // 9. β = HashToOutput(Γ)
+    let beta = track_constraints!(&cs, "beta_from_gamma", LOG_TARGET, {
+        beta_from_gamma_var::<C, GG, RO, ROVar>(cs.clone(), sponge_params, &gamma)?
+    });
+    tracing::debug!(target: LOG_TARGET, "Generated beta in SNARK {:?}", beta.value());
 
-        // 3. Γ = x * H
-        let gamma = track_constraints!(&cs, "x * H", LOG_TARGET, {
-            h.scalar_mul_le(x_bits.iter())?
-        });
-        tracing::debug!(target: LOG_TARGET, "Gamma in SNARK: {:?}", gamma.value());
+    // Construct VRF proof variable
+    let proof = VrfProofVar {
+        gamma: gamma.clone(),
+        c: c.clone(),
+        s: s.clone(),
+    };
 
-        // 4. Generate nonce k
-        let (k, k_bits) = track_constraints!(&cs, "generate_nonce", LOG_TARGET, {
-            generate_nonce_var::<C, GG, RO, ROVar>(cs.clone(), sponge_params, &x_wit, &h, msg_bytes)?
-        });
-        tracing::debug!(target: LOG_TARGET, "Generated nonce in SNARK: {:?}", k.value());
-
-        // 5. U = k * G
-        let u = track_constraints!(&cs, "k * G", LOG_TARGET, {
-            g.scalar_mul_le(k_bits.iter())?
-        });
-
-        // 6. V = k * H
-        let v = track_constraints!(&cs, "k * H", LOG_TARGET, {
-            h.scalar_mul_le(k_bits.iter())?
-        });
-
-        // 7. Generate challenge c
-        let (c, _c_bits) = track_constraints!(&cs, "generate_challenge", LOG_TARGET, {
-            generate_challenge_var::<C, GG, RO, ROVar>(cs.clone(), sponge_params, &pk, &h, &gamma, &u, &v)?
-        });
-        tracing::debug!(target: LOG_TARGET, "Generated challenge in SNARK: {:?}", c.value());
-
-        // 8. s = k + c * x (mod r)
-        let s = track_constraints!(&cs, "s = k + c * x", LOG_TARGET, {
-            // c * x in non-native field
-            let cx = c.clone() * &x_wit;
-            // s = k + cx
-            &k + &cx
-        });
-
-        // 9. β = HashToOutput(Γ)
-        let beta = track_constraints!(&cs, "beta_from_gamma", LOG_TARGET, {
-            beta_from_gamma_var::<C, GG, RO, ROVar>(cs.clone(), sponge_params, &gamma)?
-        });
-        tracing::debug!(target: LOG_TARGET, "Generated beta in SNARK {:?}", beta.value());
-
-        // Construct VRF proof variable
-        let proof = VrfProofVar {
-            gamma: gamma.clone(),
-            c: c.clone(),
-            s: s.clone(),
-        };
-
-        Ok((proof, k, beta))
+    Ok((proof, k, beta))
 }

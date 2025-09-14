@@ -3,10 +3,7 @@
 //! This module contains all the shared functionality used by both
 //! bayer_groth_demo.rs and game_demo.rs to avoid code duplication.
 
-use ark_crypto_primitives::sponge::{
-    poseidon::constraints::PoseidonSpongeVar,
-    Absorb,
-};
+use ark_crypto_primitives::sponge::{poseidon::constraints::PoseidonSpongeVar, Absorb};
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
@@ -136,15 +133,9 @@ where
     G::ScalarField: PrimeField + Absorb + UniformRand,
     G::BaseField: PrimeField + Absorb,
     GV: CurveVar<G, G::BaseField>
-        + CurveAbsorbGadget<
-            G::BaseField,
-            PoseidonSpongeVar<G::BaseField>,
-        >,
+        + CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
     for<'a> &'a GV: GroupOpsBounds<'a, G, GV>,
-    for<'a> &'a GV: CurveAbsorbGadget<
-        G::BaseField,
-        PoseidonSpongeVar<G::BaseField>,
-    >,
+    for<'a> &'a GV: CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
     R: RngCore + CryptoRng,
 {
     // Generate proof
@@ -152,13 +143,8 @@ where
         prove_shuffling::<E, G, GV, N, LEVELS>(config, current_deck, vrf_nonce, rng)?;
 
     // Verify proof
-    let is_valid = verify_shuffling::<E, G, N>(
-        config,
-        &bg_setup,
-        current_deck,
-        &shuffled_deck,
-        &proof,
-    )?;
+    let is_valid =
+        verify_shuffling::<E, G, N>(config, &bg_setup, current_deck, &shuffled_deck, &proof)?;
 
     if !is_valid {
         return Err("Shuffle proof verification failed".into());

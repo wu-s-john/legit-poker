@@ -3,9 +3,9 @@
 use super::*;
 use crate::vrf::gadgets::{beta_from_gamma_var, prove_vrf_gadget};
 use crate::vrf::native::{prove_vrf, verify_vrf};
-use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
-use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 use ark_bn254::Fr as BaseField; // BN254's scalar field = Grumpkin's base field
+use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
+use ark_crypto_primitives::sponge::poseidon::PoseidonSponge;
 use ark_ec::PrimeGroup;
 use ark_ff::UniformRand;
 use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
@@ -64,14 +64,18 @@ impl ConstraintSynthesizer<BaseField> for VrfProveCircuit {
             EmulatedFpVar::<ScalarField, BaseField>::new_witness(cs.clone(), || Ok(self.sk))?;
 
         // Run prove_vrf_gadget with Poseidon sponge
-        let (proof_var, _nonce_k, beta_var) =
-            prove_vrf_gadget::<TestCurve, TestCurveVar, PoseidonSponge<BaseField>, PoseidonSpongeVar<BaseField>>(
-                cs.clone(),
-                &self.params,
-                &self.params.sponge_params,
-                &msg_var,
-                sk_var,
-            )?;
+        let (proof_var, _nonce_k, beta_var) = prove_vrf_gadget::<
+            TestCurve,
+            TestCurveVar,
+            PoseidonSponge<BaseField>,
+            PoseidonSpongeVar<BaseField>,
+        >(
+            cs.clone(),
+            &self.params,
+            &self.params.sponge_params,
+            &msg_var,
+            sk_var,
+        )?;
 
         // For testing: allocate expected values as inputs and enforce equality
         let expected_gamma_var = TestCurveVar::new_input(cs.clone(), || Ok(self.expected_gamma))?;
@@ -303,8 +307,13 @@ fn test_beta_computation_consistency() {
     let gamma_var =
         TestCurveVar::new_witness(cs.clone(), || Ok(proof.gamma)).expect("Should allocate gamma");
     let sponge_config = crate::poseidon_config::<BaseField>();
-    let beta_var = beta_from_gamma_var::<TestCurve, TestCurveVar, PoseidonSponge<BaseField>, PoseidonSpongeVar<BaseField>>(cs.clone(), &sponge_config, &gamma_var)
-        .expect("Should compute beta in circuit");
+    let beta_var = beta_from_gamma_var::<
+        TestCurve,
+        TestCurveVar,
+        PoseidonSponge<BaseField>,
+        PoseidonSpongeVar<BaseField>,
+    >(cs.clone(), &sponge_config, &gamma_var)
+    .expect("Should compute beta in circuit");
 
     assert_eq!(
         beta_var.value().unwrap(),
@@ -438,7 +447,12 @@ fn test_generate_nonce_consistency() {
 
         // Now directly test generate_nonce_var
         let sponge_config = crate::poseidon_config::<BaseField>();
-        let (nonce_circuit_var, _nonce_bits) = generate_nonce_var::<TestCurve, TestCurveVar, PoseidonSponge<BaseField>, PoseidonSpongeVar<BaseField>>(
+        let (nonce_circuit_var, _nonce_bits) = generate_nonce_var::<
+            TestCurve,
+            TestCurveVar,
+            PoseidonSponge<BaseField>,
+            PoseidonSpongeVar<BaseField>,
+        >(
             cs.clone(),
             &sponge_config,
             &sk_var,
@@ -503,7 +517,12 @@ fn test_challenge_generation_consistency() {
 
     // Generate challenge in circuit
     let sponge_config = crate::poseidon_config::<BaseField>();
-    let (c_circuit_var, _c_bits) = generate_challenge_var::<TestCurve, TestCurveVar, PoseidonSponge<BaseField>, PoseidonSpongeVar<BaseField>>(
+    let (c_circuit_var, _c_bits) = generate_challenge_var::<
+        TestCurve,
+        TestCurveVar,
+        PoseidonSponge<BaseField>,
+        PoseidonSpongeVar<BaseField>,
+    >(
         cs.clone(),
         &sponge_config,
         &pk_var,
@@ -535,28 +554,30 @@ fn test_challenge_generation_consistency() {
 fn test_vrf_proof_var_allocation() {
     let _guard = setup_test_tracing();
     let mut rng = test_rng();
-    
+
     // Setup parameters
     let params = VrfParams::<TestCurve>::setup(&mut rng);
-    
+
     // Generate keypair and proof
     let sk = ScalarField::rand(&mut rng);
     let pk = TestCurve::generator() * sk;
     let msg = b"test-message";
-    
+
     // Generate native proof
     let (proof_native, _beta) = prove_vrf(&params, &pk, sk, msg);
-    
+
     // Test allocation in circuit
     let cs = ConstraintSystem::<BaseField>::new_ref();
-    
+
     // Allocate VrfProofVar from native proof
     use crate::vrf::gadgets::VrfProofVar;
-    let proof_var = VrfProofVar::<TestCurve, TestCurveVar>::new_witness(
-        cs.clone(),
-        || Ok(proof_native.clone()),
-    ).unwrap();
-    
+    let proof_var =
+        VrfProofVar::<TestCurve, TestCurveVar>::new_witness(
+            cs.clone(),
+            || Ok(proof_native.clone()),
+        )
+        .unwrap();
+
     // Verify values match
     assert_eq!(
         proof_var.gamma.value().unwrap(),
@@ -573,7 +594,7 @@ fn test_vrf_proof_var_allocation() {
         proof_native.s,
         "Response s should match"
     );
-    
+
     assert!(cs.is_satisfied().unwrap());
     tracing::info!(target: TEST_TARGET, "✅ VrfProofVar allocation works correctly");
 }

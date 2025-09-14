@@ -100,9 +100,7 @@ where
 ///
 /// # Returns
 /// * Vector of base field elements representing the scalar
-pub fn scalar_to_base_field_elements<F: PrimeField, S: PrimeField>(
-    scalar: &S,
-) -> Vec<F> {
+pub fn scalar_to_base_field_elements<F: PrimeField, S: PrimeField>(scalar: &S) -> Vec<F> {
     let scalar_bytes = scalar.into_bigint().to_bytes_le();
     scalar_bytes
         .iter()
@@ -113,7 +111,7 @@ pub fn scalar_to_base_field_elements<F: PrimeField, S: PrimeField>(
 /// Convert a scalar field element to base field elements (gadget version)
 ///
 /// This function converts a scalar field element (in EmulatedFpVar form) to
-/// a vector of base field elements. It converts via bytes, with each byte 
+/// a vector of base field elements. It converts via bytes, with each byte
 /// becoming a separate field element.
 ///
 /// # Arguments
@@ -251,7 +249,8 @@ mod tests {
         // Gadget conversion
         let scalar_var =
             EmulatedFpVar::<Fr, Fq>::new_witness(cs.clone(), || Ok(scalar_value)).unwrap();
-        let gadget_elements = scalar_to_base_field_elements_gadget::<TestCurve>(&scalar_var).unwrap();
+        let gadget_elements =
+            scalar_to_base_field_elements_gadget::<TestCurve>(&scalar_var).unwrap();
 
         // Verify they produce the same results
         assert_eq!(native_elements.len(), gadget_elements.len());

@@ -19,4 +19,3 @@ pub enum StateError {
 pub trait InvariantCheck {
     fn validate_invariants(&self) -> Result<(), StateError>;
 }
-

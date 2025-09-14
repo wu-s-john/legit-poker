@@ -25,7 +25,10 @@ where
 {
     // Enforce public key consistency
     let expected_pk = C::generator() * *secret_key;
-    assert!(expected_pk == *public_key, "public key does not match secret key");
+    assert!(
+        expected_pk == *public_key,
+        "public key does not match secret key"
+    );
 
     // Absorb hidden message (base field)
     sponge.absorb(hidden_message);
@@ -71,7 +74,10 @@ mod tests {
         let nonce2 = BaseField::rand(&mut rng);
         let mut sponge3 = PoseidonSponge::<BaseField>::new(&config);
         let beta3 = prove_simple_vrf::<C, _>(&mut sponge3, &nonce2, &sk, &pk);
-        assert_ne!(beta, beta3, "Different nonce should produce different output");
+        assert_ne!(
+            beta, beta3,
+            "Different nonce should produce different output"
+        );
     }
 
     #[test]

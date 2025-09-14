@@ -5,12 +5,12 @@
 //! - Recovering card values using player secret and committee shares
 //! - Verifying Chaum-Pedersen proofs in-circuit
 
-use crate::chaum_pedersen::ChaumPedersenProofVar;
-use crate::curve_absorb::CurveAbsorbGadget;
-use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use super::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
+use crate::chaum_pedersen::ChaumPedersenProofVar;
+use crate::curve_absorb::CurveAbsorbGadget;
+use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
@@ -276,10 +276,11 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<
-        C::BaseField,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
-    >,
+    CV: CurveVar<C, C::BaseField>
+        + CurveAbsorbGadget<
+            C::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
+        >,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     // Compute h = aggregated_public_key + player_public_key
@@ -320,10 +321,11 @@ where
     C: CurveGroup,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField,
-    CV: CurveVar<C, C::BaseField> + CurveAbsorbGadget<
-        C::BaseField,
-        ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
-    >,
+    CV: CurveVar<C, C::BaseField>
+        + CurveAbsorbGadget<
+            C::BaseField,
+            ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar<C::BaseField>,
+        >,
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
 {
     tracing::debug!(target: LOG_TARGET, "Combining {} blinding contributions in-circuit", blinding_contributions.len());

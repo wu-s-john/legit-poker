@@ -246,10 +246,8 @@ impl<F: PrimeField, S: CryptographicSponge, ROVar: CryptographicSpongeVar<F, S>>
         let cs_clone = cs.clone();
         track_constraints!(cs_clone, "bg_setup_protocol", LOG_TARGET, {
             // Step 1 & 2: Use the new method to derive power challenge from commitment
-            let perm_power_challenge_scalar = self.derive_power_challenge_from_commitment::<C, CG>(
-                cs.clone(),
-                c_perm,
-            )?;
+            let perm_power_challenge_scalar =
+                self.derive_power_challenge_from_commitment::<C, CG>(cs.clone(), c_perm)?;
             tracing::debug!(target: LOG_TARGET,
                 perm_power_challenge = ?perm_power_challenge_scalar.value().ok(),
                 "Step 1-2: Derived power challenge from commitment");
@@ -323,8 +321,8 @@ mod tests {
         pedersen::Commitment as PedersenCommitment, CommitmentScheme,
     };
     use ark_r1cs_std::{
-        alloc::AllocVar, fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar,
-        alloc::AllocationMode,
+        alloc::AllocVar, alloc::AllocationMode, fields::fp::FpVar,
+        groups::curves::short_weierstrass::ProjectiveVar,
     };
     use ark_relations::gr1cs::{ConstraintSystem, SynthesisError};
     use ark_std::{rand::SeedableRng, test_rng, UniformRand};
@@ -352,13 +350,14 @@ mod tests {
 
         // ============= Native Prover =============
         let mut native_transcript = new_bayer_groth_transcript_with_poseidon::<Fq>(b"test-domain");
-        let (_power_vec_base, _power_vec_scalar, native_setup) = native_transcript.compute_power_challenge_setup::<G1Projective, 5>(
-            &perm_params,
-            &power_params,
-            &perm,
-            prover_blinding_r,
-            prover_blinding_s,
-        );
+        let (_power_vec_base, _power_vec_scalar, native_setup) = native_transcript
+            .compute_power_challenge_setup::<G1Projective, 5>(
+                &perm_params,
+                &power_params,
+                &perm,
+                prover_blinding_r,
+                prover_blinding_s,
+            );
 
         // Extract the native power challenge (in scalar field Fr)
         let native_power_challenge: Fr = native_setup.power_challenge_scalar;
@@ -375,17 +374,12 @@ mod tests {
         let cs = ConstraintSystem::<Fq>::new_ref();
 
         // Allocate the permutation commitment as a circuit variable
-        let c_perm_var = G1Var::new_variable(
-            cs.clone(),
-            || Ok(native_c_perm),
-            AllocationMode::Witness,
-        )?;
+        let c_perm_var =
+            G1Var::new_variable(cs.clone(), || Ok(native_c_perm), AllocationMode::Witness)?;
 
         // Create gadget transcript and derive power challenge from commitment
-        let mut gadget_transcript = new_bayer_groth_transcript_gadget_with_poseidon::<Fq>(
-            cs.clone(),
-            b"test-domain",
-        )?;
+        let mut gadget_transcript =
+            new_bayer_groth_transcript_gadget_with_poseidon::<Fq>(cs.clone(), b"test-domain")?;
 
         let gadget_power_challenge = gadget_transcript
             .derive_power_challenge_from_commitment::<G1Projective, G1Var>(

@@ -17,7 +17,11 @@ async fn main() -> Result<()> {
 
     // Delete all rows from the test table using SeaORM DSL (no raw SQL)
     let res = test::Entity::delete_many().exec(&conn).await?;
-    info!(target = "db", affected = res.rows_affected, "cleared public.test table");
+    info!(
+        target = "db",
+        affected = res.rows_affected,
+        "cleared public.test table"
+    );
 
     Ok(())
 }

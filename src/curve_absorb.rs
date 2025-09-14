@@ -313,4 +313,3 @@ mod tests {
         tracing::info!(target: "test", "✅ Identity point test passed!");
     }
 }
-

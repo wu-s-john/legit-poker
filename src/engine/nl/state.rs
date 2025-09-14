@@ -12,7 +12,7 @@ pub struct BettingState {
     pub to_act: SeatId,
 
     // Open/raise accounting:
-    pub current_bet_to_match: Chips,   // highest committed_this_round among active seats
+    pub current_bet_to_match: Chips, // highest committed_this_round among active seats
     pub last_full_raise_amount: Chips, // NL min-raise size for this round
     pub last_aggressor: Option<SeatId>,
     pub voluntary_bet_opened: bool, // whether a voluntary bet has occurred this street
@@ -57,14 +57,11 @@ impl BettingState {
     }
 
     pub fn recompute_lock_if_all_in(&mut self) -> Option<GameEvent> {
-        let any_active = self
-            .players
-            .iter()
-            .any(|p| {
-                let excluded_preflop_button =
-                    self.street == Street::Preflop && p.seat == self.cfg.button;
-                p.status == PlayerStatus::Active && p.stack > 0 && !excluded_preflop_button
-            });
+        let any_active = self.players.iter().any(|p| {
+            let excluded_preflop_button =
+                self.street == Street::Preflop && p.seat == self.cfg.button;
+            p.status == PlayerStatus::Active && p.stack > 0 && !excluded_preflop_button
+        });
         if !any_active {
             self.betting_locked_all_in = true;
             Some(GameEvent::AllPlayersAllIn)

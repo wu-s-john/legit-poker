@@ -135,10 +135,10 @@ fn preflop_short_big_blind_with_2_on_bb_3_can_only_check() {
         player_active(0, 100, 0), // BTN
         player_active(1, 99, 1),  // SB posted 1
         PlayerState {
-            seat: 2,                      // BB posted only 2 (short)
+            seat: 2, // BB posted only 2 (short)
             player_id: None,
-            stack: 0,                     // 0 behind
-            committed_this_round: 2,      // posted 2 total
+            stack: 0,                // 0 behind
+            committed_this_round: 2, // posted 2 total
             committed_total: 0,
             status: PlayerStatus::Active, // still acts preflop
             has_acted_this_round: false,
@@ -521,7 +521,11 @@ fn e2e_random_full_hand_to_river() {
             let end = *range.end();
             if start <= end {
                 // Pick a random amount in range
-                let to = if start == end { start } else { rng.gen_range(start..=end) };
+                let to = if start == end {
+                    start
+                } else {
+                    rng.gen_range(start..=end)
+                };
                 options.push(super::actions::PlayerAction::BetTo { to });
             }
         }

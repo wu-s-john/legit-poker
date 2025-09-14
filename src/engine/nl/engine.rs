@@ -5,13 +5,25 @@ use super::legals::legal_actions_for;
 use super::rules::NoLimitRules;
 use super::seating::Seating;
 use super::state::BettingState;
-use super::types::{ActionLogEntry, Chips, HandConfig, PlayerState, PlayerStatus, Pots, SeatId, Street};
+use super::types::{
+    ActionLogEntry, Chips, HandConfig, PlayerState, PlayerStatus, Pots, SeatId, Street,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Transition {
-    Continued { events: Vec<GameEvent>, next_to_act: SeatId },
-    StreetEnd { events: Vec<GameEvent>, street: Street },
-    HandEnd { events: Vec<GameEvent>, winner: SeatId, pots: Pots },
+    Continued {
+        events: Vec<GameEvent>,
+        next_to_act: SeatId,
+    },
+    StreetEnd {
+        events: Vec<GameEvent>,
+        street: Street,
+    },
+    HandEnd {
+        events: Vec<GameEvent>,
+        winner: SeatId,
+        pots: Pots,
+    },
 }
 
 pub trait BettingEngineNL {
@@ -61,7 +73,9 @@ impl EngineNL {
                 .iter()
                 .any(|p| p.status == PlayerStatus::Active && !p.has_acted_this_round);
             if !any_to_check {
-                events.push(GameEvent::StreetEnded { street: state.street });
+                events.push(GameEvent::StreetEnded {
+                    street: state.street,
+                });
                 return Transition::StreetEnd {
                     events,
                     street: state.street,
@@ -81,7 +95,9 @@ impl EngineNL {
                     .map(|p| p.has_acted_this_round)
                     .unwrap_or(false);
                 if bb_has_acted {
-                    events.push(GameEvent::StreetEnded { street: state.street });
+                    events.push(GameEvent::StreetEnded {
+                        street: state.street,
+                    });
                     return Transition::StreetEnd {
                         events,
                         street: state.street,
@@ -98,7 +114,9 @@ impl EngineNL {
 
         // opened: street ends when pending_to_match is empty
         if state.voluntary_bet_opened && state.pending_to_match.is_empty() {
-            events.push(GameEvent::StreetEnded { street: state.street });
+            events.push(GameEvent::StreetEnded {
+                street: state.street,
+            });
             return Transition::StreetEnd {
                 events,
                 street: state.street,
@@ -115,7 +133,10 @@ impl EngineNL {
         }
     }
 
-    fn hand_end_if_only_one_left(state: &BettingState, events: Vec<GameEvent>) -> Option<Transition> {
+    fn hand_end_if_only_one_left(
+        state: &BettingState,
+        events: Vec<GameEvent>,
+    ) -> Option<Transition> {
         let still_in: Vec<_> = state
             .players
             .iter()
@@ -249,7 +270,10 @@ impl BettingEngineNL for EngineNL {
                         .players
                         .iter()
                         .find(|p| p.seat == *sid)
-                        .map(|p| p.status == PlayerStatus::Active && p.committed_this_round < state.current_bet_to_match)
+                        .map(|p| {
+                            p.status == PlayerStatus::Active
+                                && p.committed_this_round < state.current_bet_to_match
+                        })
                         .unwrap_or(false)
                 })
                 .collect();
@@ -257,7 +281,10 @@ impl BettingEngineNL for EngineNL {
             state.pending_to_match = state
                 .players
                 .iter()
-                .filter(|p| p.status == PlayerStatus::Active && p.committed_this_round < state.current_bet_to_match)
+                .filter(|p| {
+                    p.status == PlayerStatus::Active
+                        && p.committed_this_round < state.current_bet_to_match
+                })
                 .map(|p| p.seat)
                 .collect();
         }
@@ -305,7 +332,10 @@ impl BettingEngineNL for EngineNL {
                 state.players[idx].has_acted_this_round = true;
                 state.pending_to_match.retain(|s| *s != seat);
                 let na = NormalizedAction::Fold;
-                events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                events.push(GameEvent::ActionApplied {
+                    seat,
+                    action: na.clone(),
+                });
                 Self::push_log(state, seat, na, price);
 
                 state.refresh_pots();
@@ -322,7 +352,10 @@ impl BettingEngineNL for EngineNL {
                 }
                 state.players[idx].has_acted_this_round = true;
                 let na = NormalizedAction::Check;
-                events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                events.push(GameEvent::ActionApplied {
+                    seat,
+                    action: na.clone(),
+                });
                 Self::push_log(state, seat, na, price);
                 Ok(Self::end_street_if_done(state, events))
             }
@@ -331,7 +364,10 @@ impl BettingEngineNL for EngineNL {
                     // treat as check for normalization clarity
                     state.players[idx].has_acted_this_round = true;
                     let na = NormalizedAction::Check;
-                    events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                    events.push(GameEvent::ActionApplied {
+                        seat,
+                        action: na.clone(),
+                    });
                     Self::push_log(state, seat, na, price);
                     return Ok(Self::end_street_if_done(state, events));
                 }
@@ -351,7 +387,10 @@ impl BettingEngineNL for EngineNL {
                     call_amount: to_add,
                     full_call: to_add == price,
                 };
-                events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                events.push(GameEvent::ActionApplied {
+                    seat,
+                    action: na.clone(),
+                });
                 Self::push_log(state, seat, na, price);
 
                 state.refresh_pots();
@@ -383,7 +422,10 @@ impl BettingEngineNL for EngineNL {
                 Self::update_pending_after_bet_or_raise(state, seat, to, true);
 
                 let na = NormalizedAction::Bet { to };
-                events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                events.push(GameEvent::ActionApplied {
+                    seat,
+                    action: na.clone(),
+                });
                 Self::push_log(state, seat, na, price);
 
                 state.refresh_pots();
@@ -433,7 +475,10 @@ impl BettingEngineNL for EngineNL {
                     raise_amount,
                     full_raise: is_full,
                 };
-                events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                events.push(GameEvent::ActionApplied {
+                    seat,
+                    action: na.clone(),
+                });
                 Self::push_log(state, seat, na, price);
 
                 state.refresh_pots();
@@ -458,7 +503,10 @@ impl BettingEngineNL for EngineNL {
                     state.last_aggressor = Some(seat);
                     Self::update_pending_after_bet_or_raise(state, seat, to, true);
                     let na = NormalizedAction::AllInAsBet { to };
-                    events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                    events.push(GameEvent::ActionApplied {
+                        seat,
+                        action: na.clone(),
+                    });
                     Self::push_log(state, seat, na, price);
                 } else {
                     let price = <BettingState as NoLimitRules>::price_to_call(state, seat);
@@ -475,12 +523,16 @@ impl BettingEngineNL for EngineNL {
                             full_call: to >= state.current_bet_to_match,
                         };
                         state.pending_to_match.retain(|s| *s != seat);
-                        events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                        events.push(GameEvent::ActionApplied {
+                            seat,
+                            action: na.clone(),
+                        });
                         Self::push_log(state, seat, na, price);
                     } else {
                         // it's a raise
                         let raise_amount = to - state.current_bet_to_match;
-                        let is_full = <BettingState as NoLimitRules>::is_full_raise(state, raise_amount);
+                        let is_full =
+                            <BettingState as NoLimitRules>::is_full_raise(state, raise_amount);
                         if is_full {
                             state.last_full_raise_amount = raise_amount;
                             state.last_aggressor = Some(seat);
@@ -491,7 +543,10 @@ impl BettingEngineNL for EngineNL {
                             raise_amount,
                             full_raise: is_full,
                         };
-                        events.push(GameEvent::ActionApplied { seat, action: na.clone() });
+                        events.push(GameEvent::ActionApplied {
+                            seat,
+                            action: na.clone(),
+                        });
                         Self::push_log(state, seat, na, price);
                     }
                 }

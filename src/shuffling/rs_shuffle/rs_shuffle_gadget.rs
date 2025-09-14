@@ -160,57 +160,56 @@ where
     C::BaseField: PrimeField,
     CV: CurveVar<C, C::BaseField>,
 {
-        // 1. Create indexed ciphertexts by zipping witness indices with ciphertexts
-        // Initial: Use indices from first level unsorted array
-        let ciphertexts_initial: Vec<IndexedElGamalCiphertext<C, CV>> = witness.uns_levels[0]
-            .iter()
-            .zip(ct_init_pub.iter())
-            .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
-            .collect();
+    // 1. Create indexed ciphertexts by zipping witness indices with ciphertexts
+    // Initial: Use indices from first level unsorted array
+    let ciphertexts_initial: Vec<IndexedElGamalCiphertext<C, CV>> = witness.uns_levels[0]
+        .iter()
+        .zip(ct_init_pub.iter())
+        .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
+        .collect();
 
-        // Final: Use indices from last level sorted array
-        let ciphertexts_final: Vec<IndexedElGamalCiphertext<C, CV>> = witness.sorted_levels
-            [LEVELS - 1]
-            .iter()
-            .zip(ct_after_shuffle.iter())
-            .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
-            .collect();
+    // Final: Use indices from last level sorted array
+    let ciphertexts_final: Vec<IndexedElGamalCiphertext<C, CV>> = witness.sorted_levels[LEVELS - 1]
+        .iter()
+        .zip(ct_after_shuffle.iter())
+        .map(|(row, ct)| IndexedElGamalCiphertext::new(row.idx.clone(), ct.clone()))
+        .collect();
 
-        // 2. Compute other challenges as powers of beta
-        let beta_2 = beta * beta; // beta^2 (for c1.x)
-        let beta_3 = &beta_2 * beta; // beta^3 (for c1.y)
-        let beta_4 = &beta_3 * beta; // beta^4 (for c1.z)
-        let beta_5 = &beta_4 * beta; // beta^5 (for c2.x)
-        let beta_6 = &beta_5 * beta; // beta^6 (for c2.y)
+    // 2. Compute other challenges as powers of beta
+    let beta_2 = beta * beta; // beta^2 (for c1.x)
+    let beta_3 = &beta_2 * beta; // beta^3 (for c1.y)
+    let beta_4 = &beta_3 * beta; // beta^4 (for c1.z)
+    let beta_5 = &beta_4 * beta; // beta^5 (for c2.x)
+    let beta_6 = &beta_5 * beta; // beta^6 (for c2.y)
 
-        // 3. Level-by-level verification
-        for level in 0..LEVELS {
-            let unsorted = &witness.uns_levels[level];
-            let sorted_arr = &witness.sorted_levels[level];
+    // 3. Level-by-level verification
+    for level in 0..LEVELS {
+        let unsorted = &witness.uns_levels[level];
+        let sorted_arr = &witness.sorted_levels[level];
 
-            // Verify this shuffle level (row constraints + permutation check)
-            verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
-        }
+        // Verify this shuffle level (row constraints + permutation check)
+        verify_shuffle_level::<_, N>(cs.clone(), unsorted, sorted_arr, alpha, beta)?;
+    }
 
-        // 4. Final permutation check using ElGamal ciphertexts (7 challenges)
-        // This verifies that initial and final ciphertexts form the same multiset
-        // The 7 challenges are: 1 for index + 6 for ElGamal components (c1.x, c1.y, c1.z, c2.x, c2.y, c2.z)
-        check_grand_product::<C::BaseField, IndexedElGamalCiphertext<C, CV>, 7>(
-            cs.clone(),
-            &ciphertexts_initial,
-            &ciphertexts_final,
-            &[
-                alpha.clone(), // For index
-                beta.clone(),  // For c1.x
-                beta_2,        // For c1.y
-                beta_3,        // For c1.z
-                beta_4,        // For c2.x
-                beta_5,        // For c2.y
-                beta_6,        // For c2.z
-            ],
-        )?;
+    // 4. Final permutation check using ElGamal ciphertexts (7 challenges)
+    // This verifies that initial and final ciphertexts form the same multiset
+    // The 7 challenges are: 1 for index + 6 for ElGamal components (c1.x, c1.y, c1.z, c2.x, c2.y, c2.z)
+    check_grand_product::<C::BaseField, IndexedElGamalCiphertext<C, CV>, 7>(
+        cs.clone(),
+        &ciphertexts_initial,
+        &ciphertexts_final,
+        &[
+            alpha.clone(), // For index
+            beta.clone(),  // For c1.x
+            beta_2,        // For c1.y
+            beta_3,        // For c1.z
+            beta_4,        // For c2.x
+            beta_5,        // For c2.y
+            beta_6,        // For c2.z
+        ],
+    )?;
 
-        Ok(())
+    Ok(())
 }
 
 /// Verify RS shuffle with re-encryption in a SNARK circuit
@@ -255,37 +254,37 @@ where
     C::BaseField: PrimeField,
     CV: CurveVar<C, C::BaseField>,
 {
-        // Step 1: Verify the shuffle from initial to intermediate ciphertexts
-        tracing::debug!(target: LOG_TARGET, "Verifying RS shuffle");
-        rs_shuffle::<C, _, N, LEVELS>(
-            cs.clone(),
-            ct_init_pub,
-            ct_after_shuffle,
-            witness_table,
-            alpha,
-            beta,
-        )?;
+    // Step 1: Verify the shuffle from initial to intermediate ciphertexts
+    tracing::debug!(target: LOG_TARGET, "Verifying RS shuffle");
+    rs_shuffle::<C, _, N, LEVELS>(
+        cs.clone(),
+        ct_init_pub,
+        ct_after_shuffle,
+        witness_table,
+        alpha,
+        beta,
+    )?;
 
-        // Step 2: Apply re-encryption to the shuffled ciphertexts
-        tracing::debug!(target: LOG_TARGET, "Applying re-encryption to shuffled ciphertexts");
+    // Step 2: Apply re-encryption to the shuffled ciphertexts
+    tracing::debug!(target: LOG_TARGET, "Applying re-encryption to shuffled ciphertexts");
 
-        // Convert array to Vec for the re-encryption function
-        let ct_after_shuffle_vec = ct_after_shuffle.to_vec();
-        let encryption_randomizations_vec = encryption_randomizations.to_vec();
+    // Convert array to Vec for the re-encryption function
+    let ct_after_shuffle_vec = ct_after_shuffle.to_vec();
+    let encryption_randomizations_vec = encryption_randomizations.to_vec();
 
-        // Create ElGamalEncryption instance with precomputed powers
-        let elgamal_enc =
-            crate::shuffling::encryption::ElGamalEncryption::<C>::new(generator_powers.to_vec());
+    // Create ElGamalEncryption instance with precomputed powers
+    let elgamal_enc =
+        crate::shuffling::encryption::ElGamalEncryption::<C>::new(generator_powers.to_vec());
 
-        let reencrypted_deck = elgamal_enc.reencrypt_cards_with_new_randomization(
-            cs.clone(),
-            &ct_after_shuffle_vec,
-            &encryption_randomizations_vec,
-            shuffler_pk,
-        )?;
+    let reencrypted_deck = elgamal_enc.reencrypt_cards_with_new_randomization(
+        cs.clone(),
+        &ct_after_shuffle_vec,
+        &encryption_randomizations_vec,
+        shuffler_pk,
+    )?;
 
-        tracing::debug!(target: LOG_TARGET, "RS shuffle with re-encryption completed successfully");
-        Ok(reencrypted_deck)
+    tracing::debug!(target: LOG_TARGET, "RS shuffle with re-encryption completed successfully");
+    Ok(reencrypted_deck)
 }
 
 /// Verify row-local constraints for one level using circuit variables
@@ -595,66 +594,66 @@ where
     for<'a> &'a CV: GroupOpsBounds<'a, C, CV>,
     C::BaseField: PrimeField,
 {
-        // Step 1: Verify RS shuffle correctness
-        tracing::debug!(target: LOG_TARGET, "Step 1: Verifying RS shuffle correctness");
-        // Derive beta locally for level checks
-        let beta = alpha * alpha;
-        rs_shuffle_indices::<F, N, LEVELS>(
-            cs.clone(),
-            indices_init,
-            indices_after_shuffle,
-            witness_data,
-            alpha,
-            &beta,
-        )?;
+    // Step 1: Verify RS shuffle correctness
+    tracing::debug!(target: LOG_TARGET, "Step 1: Verifying RS shuffle correctness");
+    // Derive beta locally for level checks
+    let beta = alpha * alpha;
+    rs_shuffle_indices::<F, N, LEVELS>(
+        cs.clone(),
+        indices_init,
+        indices_after_shuffle,
+        witness_data,
+        alpha,
+        &beta,
+    )?;
 
-        // Step 2: Run Bayer-Groth protocol to generate challenges
-        tracing::debug!(target: LOG_TARGET, "Step 2: Running Bayer-Groth protocol");
-        let bg_params = transcript.run_protocol::<C, CV>(cs.clone(), c_perm, c_power)?;
+    // Step 2: Run Bayer-Groth protocol to generate challenges
+    tracing::debug!(target: LOG_TARGET, "Step 2: Running Bayer-Groth protocol");
+    let bg_params = transcript.run_protocol::<C, CV>(cs.clone(), c_perm, c_power)?;
 
-        // Step 3: Compute permutation power vector
-        tracing::debug!(target: LOG_TARGET, "Step 3: Computing permutation power vector");
-        // The power challenge is already in scalar field format from bg_params
-        let perm_power_vector =
-            compute_perm_power_vector(cs.clone(), permutation, &bg_params.perm_power_challenge)?;
+    // Step 3: Compute permutation power vector
+    tracing::debug!(target: LOG_TARGET, "Step 3: Computing permutation power vector");
+    // The power challenge is already in scalar field format from bg_params
+    let perm_power_vector =
+        compute_perm_power_vector(cs.clone(), permutation, &bg_params.perm_power_challenge)?;
 
-        // Verify that the computed power vector has the correct length
-        assert_eq!(
-            perm_power_vector.len(),
-            permutation.len(),
-            "Power vector length mismatch"
-        );
+    // Verify that the computed power vector has the correct length
+    assert_eq!(
+        perm_power_vector.len(),
+        permutation.len(),
+        "Power vector length mismatch"
+    );
 
-        // Step 4: Generate base permutation proof point
-        tracing::debug!(target: LOG_TARGET, "Step 4: Generating base permutation proof point");
-        // The challenges are already in scalar field format from bg_params
-        let base_proof_point = compute_permutation_proof_gadget(
-            cs.clone(),
-            permutation,
-            &bg_params.perm_mixing_challenge_y,
-            &bg_params.perm_offset_challenge_z,
-            &bg_params.perm_power_challenge,
-            generator,
-        )?;
+    // Step 4: Generate base permutation proof point
+    tracing::debug!(target: LOG_TARGET, "Step 4: Generating base permutation proof point");
+    // The challenges are already in scalar field format from bg_params
+    let base_proof_point = compute_permutation_proof_gadget(
+        cs.clone(),
+        permutation,
+        &bg_params.perm_mixing_challenge_y,
+        &bg_params.perm_offset_challenge_z,
+        &bg_params.perm_power_challenge,
+        generator,
+    )?;
 
-        // Step 5: Compute randomness factor
-        tracing::debug!(target: LOG_TARGET, "Step 5: Computing randomness factor");
+    // Step 5: Compute randomness factor
+    tracing::debug!(target: LOG_TARGET, "Step 5: Computing randomness factor");
 
-        // Use the y challenge from bg_params which is already in scalar field
-        let randomness_factor = compute_randomness_factor_gadget::<F, C, CV>(
-            cs.clone(),
-            generator,
-            &bg_params.perm_mixing_challenge_y,
-            &blinding_factors.0, // blinding_r
-            &blinding_factors.1, // blinding_s
-        )?;
+    // Use the y challenge from bg_params which is already in scalar field
+    let randomness_factor = compute_randomness_factor_gadget::<F, C, CV>(
+        cs.clone(),
+        generator,
+        &bg_params.perm_mixing_challenge_y,
+        &blinding_factors.0, // blinding_r
+        &blinding_factors.1, // blinding_s
+    )?;
 
-        // Step 6: Combine base proof point with randomness factor to get final proof point
-        tracing::debug!(target: LOG_TARGET, "Step 6: Combining base proof point with randomness factor");
-        let proof_point = base_proof_point + randomness_factor;
+    // Step 6: Combine base proof point with randomness factor to get final proof point
+    tracing::debug!(target: LOG_TARGET, "Step 6: Combining base proof point with randomness factor");
+    let proof_point = base_proof_point + randomness_factor;
 
-        tracing::debug!(target: LOG_TARGET, "Successfully generated RS shuffle + Bayer-Groth proof");
-        Ok((proof_point, bg_params))
+    tracing::debug!(target: LOG_TARGET, "Successfully generated RS shuffle + Bayer-Groth proof");
+    Ok((proof_point, bg_params))
 }
 
 #[cfg(test)]

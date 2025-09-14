@@ -594,8 +594,7 @@ mod tests {
         let indices: [usize; N] = core::array::from_fn(|i| i);
 
         // Apply RS shuffle to get the permutation
-        let rs_shuffle_trace =
-            run_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &indices);
+        let rs_shuffle_trace = run_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &indices);
 
         // Convert the permuted indices to a permutation array
         // pi[i] tells us where element i should go

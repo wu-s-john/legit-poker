@@ -5,13 +5,10 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_r1cs_std::alloc::AllocVar;
-use ark_r1cs_std::fields::{
-    emulated_fp::EmulatedFpVar,
-    fp::FpVar,
-};
+use ark_r1cs_std::fields::{emulated_fp::EmulatedFpVar, fp::FpVar};
 use ark_r1cs_std::groups::CurveVar;
-use ark_std::marker::PhantomData;
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_std::marker::PhantomData;
 
 use crate::config::poseidon_config;
 use crate::shuffling::pedersen_commitment::opening_proof_gadget::PedersenCommitmentOpeningProofVar;
@@ -42,12 +39,12 @@ where
     pub num_samples: usize,
 
     // Public data
-    pub nonce: Option<ConstraintF<C>>,                 // base field
-    pub pk_public: Option<C>,                          // curve point
-    pub indices_init: Option<[ConstraintF<C>; N]>,     // base field array
-    pub power_challenge_public: Option<ConstraintF<C>>,// base field
-    pub c_perm: Option<C>,                             // curve point
-    pub c_power: Option<C>,                            // curve point
+    pub nonce: Option<ConstraintF<C>>,             // base field
+    pub pk_public: Option<C>,                      // curve point
+    pub indices_init: Option<[ConstraintF<C>; N]>, // base field array
+    pub power_challenge_public: Option<ConstraintF<C>>, // base field
+    pub c_perm: Option<C>,                         // curve point
+    pub c_power: Option<C>,                        // curve point
     pub power_opening_proof: Option<
         crate::shuffling::pedersen_commitment::opening_proof::PedersenCommitmentOpeningProof<C>,
     >,
@@ -120,7 +117,10 @@ where
     >,
 {
     #[tracing::instrument(skip_all, target = "r1cs")]
-    fn generate_constraints(self, cs: ConstraintSystemRef<ConstraintF<C>>) -> Result<(), SynthesisError> {
+    fn generate_constraints(
+        self,
+        cs: ConstraintSystemRef<ConstraintF<C>>,
+    ) -> Result<(), SynthesisError> {
         // 1) Instantiate the sponge used by the VRF gadget
         let sponge_cfg = poseidon_config::<ConstraintF<C>>();
         let mut sponge_var = PoseidonSpongeVar::<ConstraintF<C>>::new(cs.clone(), &sponge_cfg);
@@ -138,8 +138,9 @@ where
                 .expect("indices_init input alloc")
         });
 
-        let power_challenge_val =
-            self.power_challenge_public.ok_or(SynthesisError::AssignmentMissing)?;
+        let power_challenge_val = self
+            .power_challenge_public
+            .ok_or(SynthesisError::AssignmentMissing)?;
         let power_challenge_public =
             FpVar::<ConstraintF<C>>::new_input(cs.clone(), || Ok(power_challenge_val))?;
 
@@ -152,29 +153,25 @@ where
         let opening_native = self
             .power_opening_proof
             .ok_or(SynthesisError::AssignmentMissing)?;
-        let power_opening_proof_var =
-            PedersenCommitmentOpeningProofVar::<C, GG>::new_variable(
-                cs.clone(),
-                &opening_native,
-                ark_r1cs_std::alloc::AllocationMode::Input,
-            )?;
+        let power_opening_proof_var = PedersenCommitmentOpeningProofVar::<C, GG>::new_variable(
+            cs.clone(),
+            &opening_native,
+            ark_r1cs_std::alloc::AllocationMode::Input,
+        )?;
 
         // 3) Allocate witnesses
         let sk_val = self.sk.ok_or(SynthesisError::AssignmentMissing)?;
-        let sk_var = EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(
-            cs.clone(),
-            || Ok(sk_val),
-        )?;
+        let sk_var =
+            EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(cs.clone(), || {
+                Ok(sk_val)
+            })?;
 
-        let rs_witness_native = self
-            .rs_witness
-            .ok_or(SynthesisError::AssignmentMissing)?;
-        let rs_witness_var =
-            PermutationWitnessTraceVar::<ConstraintF<C>, N, LEVELS>::new_variable(
-                cs.clone(),
-                || Ok(&rs_witness_native),
-                ark_r1cs_std::alloc::AllocationMode::Witness,
-            )?;
+        let rs_witness_native = self.rs_witness.ok_or(SynthesisError::AssignmentMissing)?;
+        let rs_witness_var = PermutationWitnessTraceVar::<ConstraintF<C>, N, LEVELS>::new_variable(
+            cs.clone(),
+            || Ok(&rs_witness_native),
+            ark_r1cs_std::alloc::AllocationMode::Witness,
+        )?;
 
         let power_perm_vec_vals = self
             .power_perm_vec_wit
@@ -187,16 +184,13 @@ where
         let power_perm_vec_scalar_vals = self
             .power_perm_vec_scalar_wit
             .ok_or(SynthesisError::AssignmentMissing)?;
-        let power_perm_vec_scalar_wit: [
-            EmulatedFpVar<C::ScalarField, ConstraintF<C>>;
-            N
-        ] = std::array::from_fn(|i| {
-            EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(
-                cs.clone(),
-                || Ok(power_perm_vec_scalar_vals[i]),
-            )
-            .expect("power_perm_vec_scalar_wit alloc")
-        });
+        let power_perm_vec_scalar_wit: [EmulatedFpVar<C::ScalarField, ConstraintF<C>>; N] =
+            std::array::from_fn(|i| {
+                EmulatedFpVar::<C::ScalarField, ConstraintF<C>>::new_witness(cs.clone(), || {
+                    Ok(power_perm_vec_scalar_vals[i])
+                })
+                .expect("power_perm_vec_scalar_wit alloc")
+            });
 
         // 4) Invoke the gadget to emit constraints
         prove_permutation_gadget::<

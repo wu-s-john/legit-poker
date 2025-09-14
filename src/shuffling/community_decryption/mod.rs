@@ -46,42 +46,35 @@ where
         rng: &mut R,
     ) -> Self {
         let generator = C::generator();
-        
+
         // Compute the partial decryption share: share_j = c1^x_j
-        let share = (ciphertext.c1 * committee_secret).into_affine().into_group();
-        
+        let share = (ciphertext.c1 * committee_secret)
+            .into_affine()
+            .into_group();
+
         // Generate Chaum-Pedersen proof that log_g(pk_j) = log_c1(share_j)
         // This proves that the same secret x_j was used for both pk_j and share_j
         let config = poseidon_config::<C::BaseField>();
         let mut sponge = PoseidonSponge::new(&config);
-        let proof = ChaumPedersenProof::prove(
-            &mut sponge,
-            committee_secret,
-            generator,
-            ciphertext.c1,
-            rng,
-        );
-        
+        let proof =
+            ChaumPedersenProof::prove(&mut sponge, committee_secret, generator, ciphertext.c1, rng);
+
         Self {
             share,
             proof,
             member_index,
         }
     }
-    
+
     /// Verify a committee member's decryption share Chaum-Pedersen proof
     ///
     /// # Arguments
     /// * `ciphertext` - The ElGamal ciphertext being decrypted
     /// * `member_public_key` - The committee member's public key (g^x_j)
     #[instrument(skip(self), level = "trace")]
-    pub fn verify(
-        &self,
-        ciphertext: &ElGamalCiphertext<C>,
-        member_public_key: C,
-    ) -> bool {
+    pub fn verify(&self, ciphertext: &ElGamalCiphertext<C>, member_public_key: C) -> bool {
         let generator = C::generator();
-        
+
         // Verify the Chaum-Pedersen proof
         let config = poseidon_config::<C::BaseField>();
         let mut sponge = PoseidonSponge::new(&config);
@@ -92,11 +85,11 @@ where
             member_public_key,
             self.share,
         );
-        
+
         if !result {
             warn!(target: LOG_TARGET, "Decryption share proof verification failed for member {}!", self.member_index);
         }
-        
+
         result
     }
 }
@@ -127,7 +120,7 @@ pub fn combine_community_shares<C: CurveGroup>(
             "Missing committee member shares - this is an n-of-n scheme requiring all members",
         );
     }
-    
+
     // Verify all member indices are unique and in range
     let mut seen_indices = vec![false; expected_members];
     for share in shares {
@@ -147,13 +140,13 @@ pub fn combine_community_shares<C: CurveGroup>(
         }
         seen_indices[share.member_index] = true;
     }
-    
+
     // Aggregate by adding all shares: pk^r = Σ(share_j)
     // This gives us c1^(Σx_j) = g^(r*Σx_j) = pk^r
     let aggregated = shares
         .iter()
         .fold(C::zero(), |acc, share| acc + share.share);
-    
+
     Ok(aggregated)
 }
 
@@ -172,20 +165,20 @@ impl<C: CurveGroup> CardValueMap<C> {
         let generator = C::generator();
         let mut element_to_value = HashMap::new();
         let mut value_to_element = Vec::with_capacity(52);
-        
+
         // Pre-compute g^i for all valid card values
         for i in 0u8..52 {
             let element = generator * C::ScalarField::from(i);
             element_to_value.insert(element, i);
             value_to_element.push(element);
         }
-        
+
         Self {
             element_to_value,
             value_to_element,
         }
     }
-    
+
     /// Lookup the card value for a given group element
     /// Returns None if the element doesn't correspond to a valid card
     fn lookup(&self, element: &C) -> Option<u8> {
@@ -202,7 +195,7 @@ static CARD_MAPS: Lazy<Mutex<HashMap<std::any::TypeId, Box<dyn std::any::Any + S
 fn get_card_value_map<C: CurveGroup + 'static>() -> CardValueMap<C> {
     let mut maps = CARD_MAPS.lock().unwrap();
     let type_id = std::any::TypeId::of::<C>();
-    
+
     maps.entry(type_id)
         .or_insert_with(|| Box::new(CardValueMap::<C>::new()))
         .downcast_ref::<CardValueMap<C>>()
@@ -252,7 +245,7 @@ where
         actual_shares = decryption_shares.len(),
         "=== Community card decryption ==="
     );
-    
+
     // Step 1: Combine committee decryption shares to get pk^r
     let combined_shares = combine_community_shares(&decryption_shares, expected_members)?;
     tracing::debug!(
@@ -260,7 +253,7 @@ where
         ?combined_shares,
         "Combined decryption shares"
     );
-    
+
     // Step 2: Recover the message group element
     // g^m = c2 / pk^r
     let recovered_element = ciphertext.c2 - combined_shares;
@@ -269,10 +262,10 @@ where
         ?recovered_element,
         "Recovered element (g^m)"
     );
-    
+
     // Step 3: Map the group element back to a card value using pre-computed table
     let card_map = get_card_value_map::<C>();
-    
+
     tracing::debug!(target: LOG_TARGET, "Looking up card value in pre-computed map...");
     match card_map.lookup(&recovered_element) {
         Some(card_value) => {
@@ -296,38 +289,33 @@ mod tests {
     use ark_std::test_rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
-    
+
     #[test]
     fn test_community_decryption_share_proof() {
         let mut rng = test_rng();
-        
+
         // Setup - Generate committee member key
         let committee_secret = <GrumpkinProjective as PrimeGroup>::ScalarField::rand(&mut rng);
         let committee_public_key = GrumpkinProjective::generator() * committee_secret;
-        
+
         // Create an encrypted card
         let message = <GrumpkinProjective as PrimeGroup>::ScalarField::from(42u64);
         let message_point = GrumpkinProjective::generator() * message;
         let randomness = <GrumpkinProjective as PrimeGroup>::ScalarField::rand(&mut rng);
-        
+
         // For community cards, we use the aggregated public key
         let aggregated_pk = committee_public_key; // In real scenario, this would be sum of all committee PKs
         let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
-        
+
         // Create a decryption share with proof
-        let share = CommunityDecryptionShare::generate(
-            &ciphertext,
-            committee_secret,
-            0,
-            &mut rng,
-        );
-        
+        let share = CommunityDecryptionShare::generate(&ciphertext, committee_secret, 0, &mut rng);
+
         // Verify the proof is valid
         assert!(
             share.verify(&ciphertext, committee_public_key),
             "Valid proof should verify successfully"
         );
-        
+
         // Test that tampering with the share makes verification fail
         let mut bad_share = share.clone();
         bad_share.share = GrumpkinProjective::generator()
@@ -337,160 +325,130 @@ mod tests {
             "Tampered share should fail verification"
         );
     }
-    
+
     #[test]
     fn test_simple_community_decryption() {
         let mut rng = test_rng();
         type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
-        
+
         // Three committee members with their own keys
         let member1_secret = ScalarField::rand(&mut rng);
         let member1_pk = GrumpkinProjective::generator() * member1_secret;
-        
+
         let member2_secret = ScalarField::rand(&mut rng);
         let member2_pk = GrumpkinProjective::generator() * member2_secret;
-        
+
         let member3_secret = ScalarField::rand(&mut rng);
         let member3_pk = GrumpkinProjective::generator() * member3_secret;
-        
+
         // Aggregated public key for the committee
         let aggregated_pk = member1_pk + member2_pk + member3_pk;
         let aggregated_secret = member1_secret + member2_secret + member3_secret;
-        
+
         // Encrypt a card value
         let card_value = 25u8;
         let message = ScalarField::from(card_value);
         let message_point = GrumpkinProjective::generator() * message;
         let randomness = ScalarField::rand(&mut rng);
-        
+
         let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
-        
+
         // Generate decryption shares from each committee member
-        let share1 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            member1_secret,
-            0,
-            &mut rng,
-        );
-        let share2 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            member2_secret,
-            1,
-            &mut rng,
-        );
-        let share3 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            member3_secret,
-            2,
-            &mut rng,
-        );
-        
+        let share1 = CommunityDecryptionShare::generate(&ciphertext, member1_secret, 0, &mut rng);
+        let share2 = CommunityDecryptionShare::generate(&ciphertext, member2_secret, 1, &mut rng);
+        let share3 = CommunityDecryptionShare::generate(&ciphertext, member3_secret, 2, &mut rng);
+
         // Verify all shares
         assert!(share1.verify(&ciphertext, member1_pk));
         assert!(share2.verify(&ciphertext, member2_pk));
         assert!(share3.verify(&ciphertext, member3_pk));
-        
+
         // Decrypt the community card
         let decryption_shares = vec![share1, share2, share3];
-        let recovered_value = decrypt_community_card(
-            &ciphertext,
-            decryption_shares,
-            3,
-        ).expect("Decryption should succeed");
-        
-        assert_eq!(recovered_value, card_value, "Should recover original card value");
-        
+        let recovered_value = decrypt_community_card(&ciphertext, decryption_shares, 3)
+            .expect("Decryption should succeed");
+
+        assert_eq!(
+            recovered_value, card_value,
+            "Should recover original card value"
+        );
+
         // Also verify manual computation
         let pk_r = ciphertext.c1 * aggregated_secret;
         let recovered_manual = ciphertext.c2 - pk_r;
-        assert_eq!(recovered_manual, message_point, "Manual decryption should also work");
+        assert_eq!(
+            recovered_manual, message_point,
+            "Manual decryption should also work"
+        );
     }
-    
+
     #[test]
     fn test_community_decryption_with_shuffling() {
         let mut rng = test_rng();
         type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
-        
+
         // ============ SETUP PHASE ============
         // Three shufflers with their own keys
         let shuffler1_secret = ScalarField::rand(&mut rng);
         let shuffler1_pk = GrumpkinProjective::generator() * shuffler1_secret;
-        
+
         let shuffler2_secret = ScalarField::rand(&mut rng);
         let shuffler2_pk = GrumpkinProjective::generator() * shuffler2_secret;
-        
+
         let shuffler3_secret = ScalarField::rand(&mut rng);
         let shuffler3_pk = GrumpkinProjective::generator() * shuffler3_secret;
-        
+
         // Aggregated public key for the committee
         let aggregated_pk = shuffler1_pk + shuffler2_pk + shuffler3_pk;
-        
+
         // ============ SEQUENTIAL ENCRYPTION ============
         // Initial message/card
         let card_value = 51u8; // Ace of Spades
         let message = ScalarField::from(card_value);
         let message_point = GrumpkinProjective::generator() * message;
-        
+
         // Start with initial ciphertext (0, M)
-        let initial_ciphertext = ElGamalCiphertext::new(
-            GrumpkinProjective::zero(),
-            message_point,
-        );
+        let initial_ciphertext = ElGamalCiphertext::new(GrumpkinProjective::zero(), message_point);
         let mut ciphertext = initial_ciphertext;
-        
+
         // Shuffler 1 encrypts with randomness r1
         let r1 = ScalarField::rand(&mut rng);
         ciphertext = ciphertext.add_encryption_layer(r1, aggregated_pk);
-        
+
         // Shuffler 2 re-encrypts with randomness r2
         let r2 = ScalarField::rand(&mut rng);
         ciphertext = ciphertext.add_encryption_layer(r2, aggregated_pk);
-        
+
         // Shuffler 3 re-encrypts with randomness r3
         let r3 = ScalarField::rand(&mut rng);
         ciphertext = ciphertext.add_encryption_layer(r3, aggregated_pk);
-        
+
         // ============ COMMUNITY DECRYPTION ============
         // Generate decryption shares from each committee member
-        let share1 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            shuffler1_secret,
-            0,
-            &mut rng,
-        );
-        let share2 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            shuffler2_secret,
-            1,
-            &mut rng,
-        );
-        let share3 = CommunityDecryptionShare::generate(
-            &ciphertext,
-            shuffler3_secret,
-            2,
-            &mut rng,
-        );
-        
+        let share1 = CommunityDecryptionShare::generate(&ciphertext, shuffler1_secret, 0, &mut rng);
+        let share2 = CommunityDecryptionShare::generate(&ciphertext, shuffler2_secret, 1, &mut rng);
+        let share3 = CommunityDecryptionShare::generate(&ciphertext, shuffler3_secret, 2, &mut rng);
+
         // Verify individual shares are computed correctly
         assert_eq!(share1.share, ciphertext.c1 * shuffler1_secret);
         assert_eq!(share2.share, ciphertext.c1 * shuffler2_secret);
         assert_eq!(share3.share, ciphertext.c1 * shuffler3_secret);
-        
+
         // Verify all proofs
         assert!(share1.verify(&ciphertext, shuffler1_pk));
         assert!(share2.verify(&ciphertext, shuffler2_pk));
         assert!(share3.verify(&ciphertext, shuffler3_pk));
-        
+
         // Decrypt the community card
         let decryption_shares = vec![share1.clone(), share2.clone(), share3.clone()];
-        let recovered_value = decrypt_community_card(
-            &ciphertext,
-            decryption_shares,
-            3,
-        ).expect("Decryption should succeed");
-        
-        assert_eq!(recovered_value, card_value, "Should recover original card value");
-        
+        let recovered_value = decrypt_community_card(&ciphertext, decryption_shares, 3)
+            .expect("Decryption should succeed");
+
+        assert_eq!(
+            recovered_value, card_value,
+            "Should recover original card value"
+        );
+
         // Test that missing a share prevents decryption (n-of-n requirement)
         let incomplete_shares = vec![share1.clone(), share2.clone()];
         let result = decrypt_community_card(&ciphertext, incomplete_shares, 3);
@@ -498,27 +456,27 @@ mod tests {
             result.is_err(),
             "Decryption should fail with missing shares"
         );
-        
+
         // Test with wrong public key in verification
         assert!(
             !share1.verify(&ciphertext, shuffler2_pk),
             "Verification should fail with wrong public key"
         );
     }
-    
+
     #[test]
     fn test_card_value_mapping() {
         // Test that the card value mapping works correctly
         let card_map = get_card_value_map::<GrumpkinProjective>();
         let generator = GrumpkinProjective::generator();
-        
+
         // Test all valid card values
         for i in 0u8..52 {
             let element = generator * <GrumpkinProjective as PrimeGroup>::ScalarField::from(i);
             let recovered = card_map.lookup(&element);
             assert_eq!(recovered, Some(i), "Card value {} should map correctly", i);
         }
-        
+
         // Test that invalid values return None
         let invalid_element =
             generator * <GrumpkinProjective as PrimeGroup>::ScalarField::from(100u64);
@@ -528,55 +486,44 @@ mod tests {
             "Invalid card values should return None"
         );
     }
-    
+
     #[test]
     fn test_community_decryption_with_different_values() {
         let mut rng = test_rng();
         type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
-        
+
         // Setup committee with two members
         let member1_secret = ScalarField::rand(&mut rng);
         let member1_pk = GrumpkinProjective::generator() * member1_secret;
-        
+
         let member2_secret = ScalarField::rand(&mut rng);
         let member2_pk = GrumpkinProjective::generator() * member2_secret;
-        
+
         let aggregated_pk = member1_pk + member2_pk;
-        
+
         // Test different card values
         for card_value in [0u8, 1, 13, 26, 39, 51] {
             // Encrypt the card
             let message = ScalarField::from(card_value);
             let message_point = GrumpkinProjective::generator() * message;
             let randomness = ScalarField::rand(&mut rng);
-            
+
             let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
-            
+
             // Generate decryption shares
-            let share1 = CommunityDecryptionShare::generate(
-                &ciphertext,
-                member1_secret,
-                0,
-                &mut rng,
-            );
-            let share2 = CommunityDecryptionShare::generate(
-                &ciphertext,
-                member2_secret,
-                1,
-                &mut rng,
-            );
-            
+            let share1 =
+                CommunityDecryptionShare::generate(&ciphertext, member1_secret, 0, &mut rng);
+            let share2 =
+                CommunityDecryptionShare::generate(&ciphertext, member2_secret, 1, &mut rng);
+
             // Verify shares
             assert!(share1.verify(&ciphertext, member1_pk));
             assert!(share2.verify(&ciphertext, member2_pk));
-            
+
             // Decrypt and verify
-            let recovered = decrypt_community_card(
-                &ciphertext,
-                vec![share1, share2],
-                2,
-            ).expect("Decryption should succeed");
-            
+            let recovered = decrypt_community_card(&ciphertext, vec![share1, share2], 2)
+                .expect("Decryption should succeed");
+
             assert_eq!(
                 recovered, card_value,
                 "Card value {} should recover correctly",

@@ -4,15 +4,25 @@ use super::types::{Chips, SeatId, Street};
 pub enum NormalizedAction {
     Fold,
     Check,
-    Call { call_amount: Chips, full_call: bool }, // full_call=false => short
-    Bet { to: Chips },                             // first open
+    Call {
+        call_amount: Chips,
+        full_call: bool,
+    }, // full_call=false => short
+    Bet {
+        to: Chips,
+    }, // first open
     Raise {
         to: Chips,
         raise_amount: Chips,
         full_raise: bool,
     },
-    AllInAsCall { call_amount: Chips, full_call: bool },
-    AllInAsBet { to: Chips },
+    AllInAsCall {
+        call_amount: Chips,
+        full_call: bool,
+    },
+    AllInAsBet {
+        to: Chips,
+    },
     AllInAsRaise {
         to: Chips,
         raise_amount: Chips,
@@ -22,10 +32,17 @@ pub enum NormalizedAction {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameEvent {
-    ActionApplied { seat: SeatId, action: NormalizedAction },
+    ActionApplied {
+        seat: SeatId,
+        action: NormalizedAction,
+    },
     PotUpdated,
-    StreetEnded { street: Street },
+    StreetEnded {
+        street: Street,
+    },
     AllPlayersAllIn,
-    HandEndedByFolds { winner: SeatId, pots: super::types::Pots },
+    HandEndedByFolds {
+        winner: SeatId,
+        pots: super::types::Pots,
+    },
 }
-

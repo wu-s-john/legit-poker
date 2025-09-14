@@ -43,12 +43,12 @@ use ark_crypto_primitives::{
 };
 use ark_ec::{pairing::Pairing, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, ToConstraintField};
-use ark_std::One;
 use ark_groth16::{
     prepare_verifying_key, Groth16, PreparedVerifyingKey, Proof as Groth16Proof, ProvingKey,
     VerifyingKey,
 };
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
+use ark_std::One;
 use ark_std::{
     marker::PhantomData,
     rand::{CryptoRng, Rng, RngCore},

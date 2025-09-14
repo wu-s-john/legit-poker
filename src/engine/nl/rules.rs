@@ -59,8 +59,9 @@ impl NoLimitRules for BettingState {
         seat: SeatId,
     ) -> Option<std::ops::RangeInclusive<Chips>> {
         // Special-case: preflop big blind may raise even if no voluntary bet yet.
-        let is_bb_preflop_unopened =
-            state.street == super::types::Street::Preflop && !state.voluntary_bet_opened && seat == state.cfg.big_blind_seat;
+        let is_bb_preflop_unopened = state.street == super::types::Street::Preflop
+            && !state.voluntary_bet_opened
+            && seat == state.cfg.big_blind_seat;
         if !state.voluntary_bet_opened && !is_bb_preflop_unopened {
             return None;
         }
@@ -94,13 +95,7 @@ impl BettingState {
         let contrib: Vec<(SeatId, Chips, PlayerStatus)> = self
             .players
             .iter()
-            .map(|p| {
-                (
-                    p.seat,
-                    p.committed_total + p.committed_this_round,
-                    p.status,
-                )
-            })
+            .map(|p| (p.seat, p.committed_total + p.committed_this_round, p.status))
             .collect();
 
         // Sum only contributions from non-folded players when computing amounts.
@@ -164,9 +159,6 @@ impl BettingState {
         }
 
         let main = pots.remove(0);
-        Ok(Pots {
-            main,
-            sides: pots,
-        })
+        Ok(Pots { main, sides: pots })
     }
 }

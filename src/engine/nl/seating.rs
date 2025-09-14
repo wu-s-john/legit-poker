@@ -46,4 +46,3 @@ impl SeatsExt for super::types::HandConfig {
         self.big_blind_seat
     }
 }
-

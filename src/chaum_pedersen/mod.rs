@@ -1,9 +1,9 @@
-pub mod native;
 pub mod gadget;
+pub mod native;
 
 // Re-export common types/functions for ergonomic imports
-pub use native::*;
 pub use gadget::*;
+pub use native::*;
 
 use crate::poseidon_config;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};

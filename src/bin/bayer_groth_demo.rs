@@ -121,13 +121,14 @@ fn main() {
         // Time the shuffle with proof
         let shuffle_start = Instant::now();
 
-        let (shuffled_deck, proof) = perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
-            &shuffling_config,
-            &current_deck,
-            shuffle_seed,
-            &mut rng,
-        )
-        .expect("Shuffling with proof should succeed");
+        let (shuffled_deck, proof) =
+            perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
+                &shuffling_config,
+                &current_deck,
+                shuffle_seed,
+                &mut rng,
+            )
+            .expect("Shuffling with proof should succeed");
 
         let shuffle_time = shuffle_start.elapsed();
 

@@ -7,7 +7,7 @@ pub struct LegalActions {
     pub may_fold: bool,
     pub may_check: bool,
     pub call_amount: Option<Chips>,
-    pub bet_to_range: Option<std::ops::RangeInclusive<Chips>>,  // when unopened
+    pub bet_to_range: Option<std::ops::RangeInclusive<Chips>>, // when unopened
     pub raise_to_range: Option<std::ops::RangeInclusive<Chips>>, // when opened
 }
 
@@ -48,12 +48,14 @@ pub fn legal_actions_for(state: &BettingState, seat: SeatId) -> LegalActions {
 
     if !state.voluntary_bet_opened {
         // Preflop BB special case: may check or raise (not bet) when unopened
-        let is_bb_preflop = state.street == super::types::Street::Preflop
-            && seat == state.cfg.big_blind_seat;
+        let is_bb_preflop =
+            state.street == super::types::Street::Preflop && seat == state.cfg.big_blind_seat;
         if is_bb_preflop {
-            legals.raise_to_range = <BettingState as NoLimitRules>::raise_to_bounds_opened(state, seat);
+            legals.raise_to_range =
+                <BettingState as NoLimitRules>::raise_to_bounds_opened(state, seat);
         } else {
-            legals.bet_to_range = <BettingState as NoLimitRules>::bet_to_bounds_unopened(state, seat);
+            legals.bet_to_range =
+                <BettingState as NoLimitRules>::bet_to_bounds_unopened(state, seat);
         }
     } else {
         legals.raise_to_range = <BettingState as NoLimitRules>::raise_to_bounds_opened(state, seat);
