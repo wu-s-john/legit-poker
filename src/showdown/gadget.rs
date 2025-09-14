@@ -85,11 +85,18 @@ fn decode_card_var<F: PrimeField>(idx: &UInt8<F>) -> Result<(UInt8<F>, UInt8<F>)
     // j = idx - 1
     let j = uint8_sub(idx, &UInt8::constant(1))?;
 
-    // Witness q, r (unique solution given j)
+    // Witness or constant q, r depending on whether idx has a constraint system
     let q_val = idx.value().map(|v| (v - 1) / 13).unwrap_or(0);
     let r_val = idx.value().map(|v| (v - 1) % 13).unwrap_or(0);
-    let q = UInt8::new_witness(idx.cs(), || Ok(q_val))?;
-    let r = UInt8::new_witness(idx.cs(), || Ok(r_val))?;
+    let cs: ConstraintSystemRef<F> = idx.cs();
+    let (q, r) = if cs.is_none() {
+        (UInt8::constant(q_val), UInt8::constant(r_val))
+    } else {
+        (
+            UInt8::new_witness(cs.clone(), || Ok(q_val))?,
+            UInt8::new_witness(cs, || Ok(r_val))?,
+        )
+    };
 
     // Bounds
     assert_true(&uint8_is_less_or_equal(&q, &UInt8::constant(3))?)?;
@@ -165,22 +172,18 @@ fn tiebreak_vector_var<F: PrimeField>(
 
 /// Gadget: given claimed category & 5 indices (1..52), verify category/canonical
 /// and output packed score (FpVar) + tie-break digits (UInt8^5).
-#[allow(clippy::too_many_arguments)]
 pub fn verify_and_score_from_indices<F: PrimeField>(
-    _cs: ConstraintSystemRef<F>,
     claimed_cat: HandCategoryVar<F>,
     idx5: [UInt8<F>; 5],
 ) -> Result<(FpVar<F>, [UInt8<F>; 5]), SynthesisError> {
-    // Decode all 5 indexes -> (rank,suit)
-    let mut ranks: Vec<UInt8<F>> = Vec::with_capacity(5);
-    let mut suits: Vec<UInt8<F>> = Vec::with_capacity(5);
+    // Decode all 5 indexes -> (rank,suit) into fixed arrays (avoid Vec push)
+    let mut ranks: [UInt8<F>; 5] = std::array::from_fn(|_| UInt8::constant(0));
+    let mut suits: [UInt8<F>; 5] = std::array::from_fn(|_| UInt8::constant(0));
     for i in 0..5 {
         let (r, s) = decode_card_var::<F>(&idx5[i])?;
-        ranks.push(r);
-        suits.push(s);
+        ranks[i] = r;
+        suits[i] = s;
     }
-    let ranks: [UInt8<F>; 5] = ranks.try_into().unwrap();
-    let suits: [UInt8<F>; 5] = suits.try_into().unwrap();
 
     // same-suit?
     let mut same_suit = Boolean::TRUE;
@@ -296,6 +299,24 @@ pub fn verify_and_score_from_indices<F: PrimeField>(
     let score = pack_score_field_var::<F>(&claimed_cat, &c)?;
 
     Ok((score, c))
+}
+
+/// Circuit representation of the selected best 5-card hand.
+#[derive(Clone)]
+pub struct Best5HandVar<F: PrimeField> {
+    pub category: HandCategoryVar<F>,
+    pub idx5: [UInt8<F>; 5], // 1..52 canonical indices
+}
+
+impl<F: PrimeField> Best5HandVar<F> {
+    pub fn new(category: HandCategoryVar<F>, idx5: [UInt8<F>; 5]) -> Self {
+        Self { category, idx5 }
+    }
+
+    /// Compute packed score and tie-break digits for this hand.
+    pub fn score_and_tiebreak(&self) -> Result<(FpVar<F>, [UInt8<F>; 5]), SynthesisError> {
+        verify_and_score_from_indices::<F>(self.category.clone(), self.idx5.clone())
+    }
 }
 
 /// Boolean assert helper
@@ -486,7 +507,7 @@ mod tests {
             UInt8::new_witness(cs.clone(), || Ok(idx_of(7, Suit::Hearts))).unwrap(),
             UInt8::new_witness(cs.clone(), || Ok(idx_of(2, Suit::Hearts))).unwrap(),
         ];
-        let (score, c) = verify_and_score_from_indices::<Fr>(cs.clone(), cat, idx5).unwrap();
+        let (score, c) = verify_and_score_from_indices::<Fr>(cat, idx5).unwrap();
         assert!(cs.is_satisfied().unwrap());
         // recompute natively and compare values
         use crate::showdown::native::verify_and_score_from_indices as native_vs;
@@ -513,7 +534,7 @@ mod tests {
             let cs = ConstraintSystem::<Fr>::new_ref();
             let catv = HandCategoryVar::new_witness(cs.clone(), || Ok(cat)).unwrap();
             let idxv = idx.map(|i| UInt8::new_witness(cs.clone(), || Ok(i)).unwrap());
-            let (s, _) = verify_and_score_from_indices::<Fr>(cs.clone(), catv, idxv).unwrap();
+            let (s, _) = verify_and_score_from_indices::<Fr>(catv, idxv).unwrap();
             assert!(cs.is_satisfied().unwrap());
             s.value().unwrap()
         };

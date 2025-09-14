@@ -17,16 +17,15 @@ fn e2e_three_players_random_showdown() {
     let p2: [Index; 2] = deck[7..9].try_into().unwrap();
     let p3: [Index; 2] = deck[9..11].try_into().unwrap();
 
-    // For each player, compute best 5 from their 7 (board + hole)
-    let mut bests = Vec::new();
-    for hole in [p1, p2, p3] {
-        let mut seven = [0u8; 7];
-        seven[..5].copy_from_slice(&board);
-        seven[5] = hole[0];
-        seven[6] = hole[1];
-        let (k5, cat, cvec, s_u32) = choose_best5_from7(seven);
-        bests.push((k5, cat, cvec, s_u32));
-    }
+    // For each player, compute best 5 from their 7 (board + hole) using iterator + from_fn
+    let bests: Vec<_> = [p1, p2, p3]
+        .into_iter()
+        .map(|hole| {
+            let seven = std::array::from_fn(|i| if i < 5 { board[i] } else { hole[i - 5] });
+            let best = choose_best5_from7(seven);
+            (best.hand.cards, best.hand.category, best.tiebreak, best.score_u32)
+        })
+        .collect();
 
     // Determine winner by score
     let max_score = bests.iter().map(|b| b.3).max().unwrap();
@@ -49,8 +48,7 @@ fn e2e_three_players_random_showdown() {
         let catv = UInt8::new_witness(cs.clone(), || Ok(*cat as u8)).unwrap();
         let catv = gadget::HandCategoryVar::from_uint8(catv);
         let idxv = idx5.map(|i| UInt8::new_witness(cs.clone(), || Ok(i)).unwrap());
-        let (score_var, _c_var) =
-            gadget::verify_and_score_from_indices::<Fr>(cs.clone(), catv, idxv).unwrap();
+        let (score_var, _c_var) = gadget::verify_and_score_from_indices::<Fr>(catv, idxv).unwrap();
         assert!(cs.is_satisfied().unwrap());
 
         // compare against native (field)

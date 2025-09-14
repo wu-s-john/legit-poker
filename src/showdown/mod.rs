@@ -109,7 +109,8 @@ mod e2e;
 
 pub use native::{
     choose_best5_from7, classify_five_and_canonicalize, pack_score_field, pack_score_u32,
-    tiebreak_vector, verify_and_score_five, verify_and_score_from_indices,
+    tiebreak_vector, verify_and_score_five, verify_and_score_from_indices, Best5Hand,
+    Best5HandWithScore,
 };
 
 pub use gadget::{

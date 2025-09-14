@@ -6,14 +6,13 @@
 //! - Scoring the selected poker hand
 
 use crate::logup::{uint_to_field, verify_lookup};
-use crate::showdown::gadget::{uint8_sub, verify_and_score_from_indices, HandCategoryVar};
+use crate::showdown::gadget::{uint8_sub, Best5HandVar};
 use crate::shuffling::player_decryption_gadget::{
     recover_card_point_gadget, PartialUnblindingShareVar, PlayerAccessibleCiphertextVar,
 };
 use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::PrimeField;
 use ark_r1cs_std::{
-    alloc::AllocVar,
     boolean::Boolean,
     cmp::CmpGadget,
     eq::EqGadget,
@@ -80,8 +79,7 @@ where
 /// * `player_secret` - Player's secret key as emulated field element
 /// * `unblinding_shares` - Committee unblinding shares for decryption
 /// * `expected_members` - Expected number of committee members
-/// * `selected_cards` - The 5 cards selected by the player
-/// * `claimed_cat` - The claimed hand category
+/// * `best5` - The selected best 5-card hand (category + 1-based indices)
 /// * `alpha` - LogUp challenge point
 ///
 /// # Returns
@@ -94,8 +92,7 @@ pub fn hand_reveal_showdown_gadget<C, CV>(
     player_secret: &EmulatedFpVar<C::ScalarField, C::BaseField>,
     unblinding_shares: &[PartialUnblindingShareVar<C, CV>],
     expected_members: usize,
-    selected_cards: &[FpVar<C::BaseField>; 5],
-    claimed_cat: HandCategoryVar<C::BaseField>,
+    best5: Best5HandVar<C::BaseField>,
     alpha: &FpVar<C::BaseField>,
 ) -> Result<(FpVar<C::BaseField>, [UInt8<C::BaseField>; 5]), SynthesisError>
 where
@@ -177,57 +174,21 @@ where
         .chain(hidden_cards.iter().map(|hidden| hidden.count.clone()))
         .collect();
 
+    // Convert chosen 1-based indices to 0-based field elements for LogUp
+    let selected_cards: [FpVar<C::BaseField>; 5] = std::array::from_fn(|i| {
+        let idx0 = uint8_sub(&best5.idx5[i], &UInt8::constant(1)).unwrap();
+        uint_to_field(&idx0).unwrap()
+    });
+
     // Verify lookup - ensures selected cards come from table and respects multiplicities
-    verify_lookup(
-        cs.clone(),
-        alpha,
-        &table_entries,
-        selected_cards.as_ref(),
-        &multiplicities,
-    )?;
+    verify_lookup(cs.clone(), alpha, &table_entries, &selected_cards, &multiplicities)?;
 
     tracing::info!(target: LOG_TARGET, "LogUp validation of the cards is successful");
 
     check_constraint_satisfaction::<_>(&cs, "LogUp verification");
 
     // Step 4: Hand Scoring
-    // Convert selected cards to UInt8 indices functionally
-    let card_indices: [UInt8<C::BaseField>; 5] = std::array::from_fn(|i| {
-        // Since selected_cards are FpVar representing values 0-51,
-        // we need to convert them back to UInt8 and add 1 for 1-based indexing
-        // This requires witnessing the value and verifying it matches
-        let witnessed_uint8 = UInt8::new_witness(cs.clone(), || {
-            let v = selected_cards[i].value()?;
-            // Convert field element to u64, then to u8
-            // Card values are 0-51, so they always fit in u8
-            let as_u64 = v.into_bigint().as_ref()[0];
-            // Add 1 to convert from 0-based to 1-based indexing
-            Ok((as_u64 + 1) as u8)
-        })
-        .unwrap();
-
-        // Verify the witnessed value matches the FpVar + 1
-        // We need to subtract 1 from the witnessed value to match the original selected_cards
-        let witnessed_minus_one = uint8_sub(&witnessed_uint8, &UInt8::constant(1)).unwrap();
-        let witnessed_fp = uint_to_field(&witnessed_minus_one).unwrap();
-        witnessed_fp.enforce_equal(&selected_cards[i]).unwrap();
-
-        // Debug: Check after each card index conversion
-        #[cfg(test)]
-        {
-            if !cs.is_satisfied().unwrap() {
-                tracing::error!(target: LOG_TARGET, "Constraint satisfaction failed after converting card index {}", i);
-                tracing::error!(target: LOG_TARGET, "Selected card value: {:?}", selected_cards[i].value());
-                tracing::error!(target: LOG_TARGET, "Witnessed uint8 value: {:?}", witnessed_uint8.value());
-                check_constraint_satisfaction(&cs, &format!("converting card index {}", i));
-            }
-        }
-
-        witnessed_uint8
-    });
-
-    // Score the hand
-    let (score, tiebreak) = verify_and_score_from_indices(cs.clone(), claimed_cat, card_indices)?;
+    let (score, tiebreak) = best5.score_and_tiebreak()?;
 
     tracing::info!(target: LOG_TARGET, "Score of the hand {:?} {:?}", score.value(), tiebreak.value());
 
@@ -616,14 +577,17 @@ mod tests {
         ];
 
         // Player 1's selected cards for Royal Flush: A♠, K♠, Q♠, J♠, 10♠
-        // Use 0-based indices for the selected cards, sorted in descending order by rank
-        let player1_selected = [
-            FpVar::constant(Fq::from(ace_spades_idx as u64)), // Ace (0-based)
-            FpVar::constant(Fq::from(king_spades_idx as u64)), // King (0-based)
-            FpVar::constant(Fq::from((idx_of(12, Suit::Spades) - 1) as u64)), // Queen (0-based)
-            FpVar::constant(Fq::from((idx_of(11, Suit::Spades) - 1) as u64)), // Jack (0-based)
-            FpVar::constant(Fq::from((idx_of(10, Suit::Spades) - 1) as u64)), // 10 (0-based)
-        ];
+        // Best 5 cards for Player 1 (1-based indices)
+        let best5_p1 = crate::showdown::gadget::Best5HandVar::new(
+            crate::showdown::gadget::HandCategoryVar::constant(HandCategory::StraightFlush),
+            [
+                UInt8::constant(idx_of(14, Suit::Spades)),
+                UInt8::constant(idx_of(13, Suit::Spades)),
+                UInt8::constant(idx_of(12, Suit::Spades)),
+                UInt8::constant(idx_of(11, Suit::Spades)),
+                UInt8::constant(idx_of(10, Suit::Spades)),
+            ],
+        );
 
         // Compute expected native score for Player 1's Royal Flush
         // Note: native function expects 1-based indices (1-52)
@@ -672,8 +636,7 @@ mod tests {
             &player1_secret_var,
             &unblinding_shares,
             0, // No committee members for this test
-            &player1_selected,
-            HandCategoryVar::constant(HandCategory::StraightFlush),
+            best5_p1,
             &alpha,
         )
         .unwrap();
@@ -801,15 +764,17 @@ mod tests {
             },
         ];
 
-        // Player 2's selected cards for Three of a Kind: 9♦, 9♠, 9♣, Q♠, J♠
-        // Three matching cards first, then kickers in descending order
-        let player2_selected = [
-            FpVar::constant(Fq::from((idx_of(9, Suit::Diamonds) - 1) as u64)), // 9♦
-            FpVar::constant(Fq::from(nine_spades_idx as u64)),                 // 9♠
-            FpVar::constant(Fq::from(nine_clubs_idx as u64)),                  // 9♣
-            FpVar::constant(Fq::from((idx_of(12, Suit::Spades) - 1) as u64)),  // Q♠ (kicker 1)
-            FpVar::constant(Fq::from((idx_of(11, Suit::Spades) - 1) as u64)),  // J♠ (kicker 2)
-        ];
+        // Best 5 for Player 2 (1-based indices): 9♦, 9♠, 9♣, Q♠, J♠
+        let best5_p2 = crate::showdown::gadget::Best5HandVar::new(
+            crate::showdown::gadget::HandCategoryVar::constant(HandCategory::ThreeOfAKind),
+            [
+                UInt8::constant(idx_of(9, Suit::Diamonds)),
+                UInt8::constant(idx_of(9, Suit::Spades)),
+                UInt8::constant(idx_of(9, Suit::Clubs)),
+                UInt8::constant(idx_of(12, Suit::Spades)),
+                UInt8::constant(idx_of(11, Suit::Spades)),
+            ],
+        );
 
         let player2_secret_var =
             EmulatedFpVar::<Fr, Fq>::new_witness(cs2.clone(), || Ok(player2_keys.private_key))
@@ -825,8 +790,7 @@ mod tests {
             &player2_secret_var,
             &unblinding_shares,
             0,
-            &player2_selected,
-            HandCategoryVar::constant(HandCategory::ThreeOfAKind),
+            best5_p2,
             &alpha2,
         )
         .unwrap();
@@ -955,20 +919,23 @@ mod tests {
             },
         ];
 
-        // Try to select an Ace that isn't available (invalid!)
-        let invalid_selected = [
-            FpVar::constant(Fq::from(idx_of(14, Suit::Spades) as u64)), // Ace not available!
-            FpVar::constant(Fq::from(idx_of(2, Suit::Clubs) as u64)),
-            FpVar::constant(Fq::from(idx_of(3, Suit::Diamonds) as u64)),
-            FpVar::constant(Fq::from(idx_of(4, Suit::Hearts) as u64)),
-            FpVar::constant(Fq::from(idx_of(5, Suit::Spades) as u64)),
-        ];
-
         let player_secret = Fr::rand(&mut rng);
         let player_secret_var =
             EmulatedFpVar::<Fr, Fq>::new_witness(cs.clone(), || Ok(player_secret)).unwrap();
         let unblinding_shares = vec![];
         let alpha = FpVar::new_witness(cs.clone(), || Ok(Fq::rand(&mut rng))).unwrap();
+
+        // Construct an invalid best hand that uses a card not present/allowed (e.g., Ace)
+        let invalid_best5 = crate::showdown::gadget::Best5HandVar::new(
+            crate::showdown::gadget::HandCategoryVar::constant(HandCategory::HighCard),
+            [
+                UInt8::constant(idx_of(14, Suit::Spades)),
+                UInt8::constant(idx_of(2, Suit::Clubs)),
+                UInt8::constant(idx_of(3, Suit::Diamonds)),
+                UInt8::constant(idx_of(4, Suit::Hearts)),
+                UInt8::constant(idx_of(5, Suit::Spades)),
+            ],
+        );
 
         let result = hand_reveal_showdown_gadget(
             cs.clone(),
@@ -977,8 +944,7 @@ mod tests {
             &player_secret_var,
             &unblinding_shares,
             0,
-            &invalid_selected,
-            HandCategoryVar::constant(HandCategory::HighCard),
+            invalid_best5,
             &alpha,
         );
 
@@ -1066,13 +1032,16 @@ mod tests {
         ];
 
         // Try to use A♠ twice (invalid!)
-        let invalid_selected = [
-            FpVar::constant(Fq::from(ace_spades_idx as u64)), // First use
-            FpVar::constant(Fq::from(ace_spades_idx as u64)), // Second use - invalid!
-            FpVar::constant(Fq::from(idx_of(2, Suit::Clubs) as u64)),
-            FpVar::constant(Fq::from(idx_of(3, Suit::Diamonds) as u64)),
-            FpVar::constant(Fq::from(idx_of(4, Suit::Hearts) as u64)),
-        ];
+        let invalid_best5 = crate::showdown::gadget::Best5HandVar::new(
+            crate::showdown::gadget::HandCategoryVar::constant(HandCategory::OnePair),
+            [
+                UInt8::constant(ace_spades_idx),
+                UInt8::constant(ace_spades_idx), // duplicate card
+                UInt8::constant(idx_of(2, Suit::Clubs)),
+                UInt8::constant(idx_of(3, Suit::Diamonds)),
+                UInt8::constant(idx_of(4, Suit::Hearts)),
+            ],
+        );
 
         let player_secret = Fr::rand(&mut rng);
         let player_secret_var =
@@ -1087,8 +1056,7 @@ mod tests {
             &player_secret_var,
             &unblinding_shares,
             0,
-            &invalid_selected,
-            HandCategoryVar::constant(HandCategory::OnePair),
+            invalid_best5,
             &alpha,
         );
 

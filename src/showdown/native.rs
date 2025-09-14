@@ -2,6 +2,28 @@ use crate::showdown::*;
 use ark_bn254::Fr;
 use ark_ff::PrimeField;
 
+/// Best 5-card hand (canonical 5 + category), without score data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Best5Hand {
+    pub cards: [Card; 5],
+    pub category: HandCategory,
+}
+
+/// Best 5-card hand with associated tie-break vector and packed score.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Best5HandWithScore {
+    pub hand: Best5Hand,
+    pub tiebreak: [u8; 5],
+    pub score_u32: u32,
+}
+
+impl Best5HandWithScore {
+    #[inline]
+    pub fn score_field<F: PrimeField>(&self) -> F {
+        pack_score_field::<F>(self.hand.category, self.tiebreak)
+    }
+}
+
 /// Pack (cat, c1..c5) into a u32 (base-16 digits; ≤ 16^6).
 #[inline]
 pub fn pack_score_u32(cat: HandCategory, c: [u8; 5]) -> u32 {
@@ -132,13 +154,9 @@ pub fn classify_five_and_canonicalize(h5: [Card; 5]) -> (HandCategory, [Card; 5]
     // helpers
     let same_suit = s.iter().all(|c| c.suit == s[0].suit);
 
-    // Distinct ranks in desc order
-    let mut uniq: Vec<Rank> = Vec::new();
-    for c in s.iter() {
-        if !uniq.contains(&c.rank) {
-            uniq.push(c.rank);
-        }
-    }
+    // Distinct ranks in desc order (input already sorted)
+    let mut uniq: Vec<Rank> = s.iter().map(|c| c.rank).collect();
+    uniq.dedup();
 
     // Straight detection (only if 5 distinct ranks)
     let (has_straight, straight_ranks): (bool, [Rank; 5]) = if uniq.len() == 5 {
@@ -285,7 +303,7 @@ pub fn classify_five_and_canonicalize(h5: [Card; 5]) -> (HandCategory, [Card; 5]
 
 /// Enumerate all 21 subsets from 7 indices and pick the maximum by packed score.
 /// Returns (canonical best 5, category, tie-break digits, u32 score).
-pub fn choose_best5_from7(idx7: [Index; 7]) -> ([Card; 5], HandCategory, [u8; 5], u32) {
+pub fn choose_best5_from7(idx7: [Index; 7]) -> Best5HandWithScore {
     let c7: [Card; 7] = idx7.map(decode_card);
     let mut best_score = 0u32;
     let mut have = false;
@@ -317,7 +335,14 @@ pub fn choose_best5_from7(idx7: [Index; 7]) -> ([Card; 5], HandCategory, [u8; 5]
             }
         }
     }
-    (best, best_cat, best_c, best_score)
+    Best5HandWithScore {
+        hand: Best5Hand {
+            cards: best,
+            category: best_cat,
+        },
+        tiebreak: best_c,
+        score_u32: best_score,
+    }
 }
 
 /// Native scorer for a canonical 5-card hand (already validated)
