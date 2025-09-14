@@ -18,6 +18,16 @@ export SCHEMA := env_var_or_default("SCHEMA", "public")
 export TABLE := env_var_or_default("TABLE", "test")
 export PUB := env_var_or_default("PUB", "supabase_realtime")
 
+# SeaORM entity generation defaults
+export SEAORM_OUT_DIR := env_var_or_default("SEAORM_OUT_DIR", "src/db/entity")
+export SEAORM_SCHEMA := env_var_or_default("SEAORM_SCHEMA", "public")
+# Default flags: derive serde on models, use `time` crate for DateTime, expanded format
+export SEAORM_FLAGS := env_var_or_default(
+    "SEAORM_FLAGS",
+    "--with-serde both --date-time-crate time --expanded-format",
+)
+export SEAORM_IGNORE_TABLES := env_var_or_default("SEAORM_IGNORE_TABLES", "")
+
 # Show available tasks
 default:
     @just --list
@@ -216,3 +226,61 @@ pg-logs:
 # Quick helper for the main game demo
 game:
     RUST_LOG={{ RUST_LOG }} cargo run --bin game_demo
+
+# --- SeaORM entities ---
+
+# Install SeaORM generator CLI
+seaorm-install VERSION='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -n "{{ VERSION }}" ]]; then
+        echo "Installing sea-orm-cli version {{ VERSION }} ..."
+        cargo install sea-orm-cli --version "{{ VERSION }}"
+    else
+        echo "Installing sea-orm-cli (latest) ..."
+        cargo install sea-orm-cli
+    fi
+
+# Show installed sea-orm-cli version
+seaorm-version:
+    sea-orm-cli --version
+
+# Generate entities from the database schema.
+# Uses Supabase DB URL if available; falls back to $DATABASE_URL or default local URL.
+gen-entities:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v sea-orm-cli >/dev/null 2>&1; then
+        echo "sea-orm-cli not found. Install it with: just seaorm-install" >&2
+        exit 1
+    fi
+    # Resolve DATABASE_URL from Supabase status when available
+    if command -v supabase >/dev/null 2>&1 && supabase status >/dev/null 2>&1; then
+        # Extract DB_URL line and export as DATABASE_URL (keeps surrounding quotes)
+        eval "$(supabase status -o env | awk -F= '/^DB_URL=/{print "export DATABASE_URL=" $2}')"
+    else
+        : "${DATABASE_URL:=${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}}"
+    fi
+    mkdir -p "{{ SEAORM_OUT_DIR }}"
+    echo "Generating SeaORM entities from $DATABASE_URL (schema={{ SEAORM_SCHEMA }}) -> {{ SEAORM_OUT_DIR }}"
+    EXTRA=""
+    if [[ -n "{{ SEAORM_IGNORE_TABLES }}" ]]; then
+        EXTRA="--ignore-tables {{ SEAORM_IGNORE_TABLES }}"
+    fi
+    sea-orm-cli generate entity \
+        -u "$DATABASE_URL" \
+        -s "{{ SEAORM_SCHEMA }}" \
+        -o "{{ SEAORM_OUT_DIR }}" \
+        {{ SEAORM_FLAGS }} \
+        $EXTRA
+    echo "✓ SeaORM entities regenerated at {{ SEAORM_OUT_DIR }}"
+
+# Clean and regenerate entities (removes existing generated files first)
+gen-entities-fresh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -d "{{ SEAORM_OUT_DIR }}" ]]; then
+        echo "Removing existing entities at {{ SEAORM_OUT_DIR }} ..."
+        rm -rf "{{ SEAORM_OUT_DIR }}"/*
+    fi
+    just gen-entities
