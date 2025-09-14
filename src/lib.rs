@@ -10,6 +10,7 @@ pub mod vrf;
 pub mod curve_absorb;
 pub mod chaum_pedersen;
 pub mod pedersen_commitment;
+pub mod shuffler;
 
 pub mod db;
 
