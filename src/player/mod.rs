@@ -252,6 +252,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::nl::{engine::BettingEngineNL, engine::EngineNL, types::*, BettingState};
     use crate::showdown::{idx_of, Suit};
     use crate::shuffling::data_structures::ElGamalCiphertext;
     use crate::shuffling::player_decryption::{
@@ -260,13 +261,10 @@ mod tests {
     };
     use ark_bn254::Fr;
     use ark_crypto_primitives::signature::{schnorr::Schnorr, SignatureScheme};
-    use ark_ec::{AffineRepr, PrimeGroup};
+    use ark_ec::PrimeGroup;
     use ark_std::UniformRand;
-    use sha2::Sha256;
-    use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt};
-
-    use crate::engine::nl::{engine::BettingEngineNL, engine::EngineNL, types::*, BettingState};
     use ark_std::Zero;
+    use sha2::Sha256;
 
     fn empty_pots() -> Pots {
         Pots {
