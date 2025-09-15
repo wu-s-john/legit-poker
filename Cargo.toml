@@ -66,6 +66,7 @@ ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitive
     "prf",
     "parallel",
     "snark",
+    "signature",
 ] }
 
 # Curve implementations

@@ -1,4 +1,4 @@
-use super::actions::PlayerAction;
+use super::actions::PlayerBetAction;
 use super::errors::{ActionError, StateError};
 use super::events::{GameEvent, NormalizedAction};
 use super::legals::legal_actions_for;
@@ -32,7 +32,7 @@ pub trait BettingEngineNL {
     fn apply_action(
         state: &mut BettingState,
         seat: SeatId,
-        action: PlayerAction,
+        action: PlayerBetAction,
     ) -> Result<Transition, ActionError>;
     fn advance_street(state: &mut BettingState) -> Result<(), StateError>;
 }
@@ -300,7 +300,7 @@ impl BettingEngineNL for EngineNL {
     fn apply_action(
         state: &mut BettingState,
         seat: SeatId,
-        action: PlayerAction,
+        action: PlayerBetAction,
     ) -> Result<Transition, ActionError> {
         if state.betting_locked_all_in {
             return Err(ActionError::ActorCannotAct);
@@ -327,7 +327,7 @@ impl BettingEngineNL for EngineNL {
         let mut events: Vec<GameEvent> = Vec::new();
 
         match action {
-            PlayerAction::Fold => {
+            PlayerBetAction::Fold => {
                 state.players[idx].status = PlayerStatus::Folded;
                 state.players[idx].has_acted_this_round = true;
                 state.pending_to_match.retain(|s| *s != seat);
@@ -346,7 +346,7 @@ impl BettingEngineNL for EngineNL {
                 }
                 Ok(Self::end_street_if_done(state, events))
             }
-            PlayerAction::Check => {
+            PlayerBetAction::Check => {
                 if price > 0 {
                     return Err(ActionError::CannotCheckFacingBet);
                 }
@@ -359,7 +359,7 @@ impl BettingEngineNL for EngineNL {
                 Self::push_log(state, seat, na, price);
                 Ok(Self::end_street_if_done(state, events))
             }
-            PlayerAction::Call => {
+            PlayerBetAction::Call => {
                 if price == 0 {
                     // treat as check for normalization clarity
                     state.players[idx].has_acted_this_round = true;
@@ -398,7 +398,7 @@ impl BettingEngineNL for EngineNL {
 
                 Ok(Self::end_street_if_done(state, events))
             }
-            PlayerAction::BetTo { to } => {
+            PlayerBetAction::BetTo { to } => {
                 if state.voluntary_bet_opened {
                     return Err(ActionError::CannotBetWhenOpened);
                 }
@@ -433,7 +433,7 @@ impl BettingEngineNL for EngineNL {
 
                 Ok(Self::end_street_if_done(state, events))
             }
-            PlayerAction::RaiseTo { to } => {
+            PlayerBetAction::RaiseTo { to } => {
                 // Allow BB preflop raise when no voluntary bet yet
                 if !state.voluntary_bet_opened {
                     let is_bb_preflop =
@@ -486,7 +486,7 @@ impl BettingEngineNL for EngineNL {
 
                 Ok(Self::end_street_if_done(state, events))
             }
-            PlayerAction::AllIn => {
+            PlayerBetAction::AllIn => {
                 let cur = state.players[idx].committed_this_round;
                 let to = cur + state.players[idx].stack;
                 if state.current_bet_to_match == 0 && !state.voluntary_bet_opened {

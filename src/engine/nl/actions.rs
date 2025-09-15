@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::types::Chips;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PlayerAction {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlayerBetAction {
     Fold,
     Check,               // only when price_to_call == 0
     Call,                // match current price (or go short all-in)

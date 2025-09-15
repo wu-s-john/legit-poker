@@ -2,6 +2,7 @@
 
 use crate::engine::nl::{BettingState, InvariantCheck};
 
+use super::actions::PlayerBetAction;
 use super::engine::{BettingEngineNL, EngineNL, Transition};
 use super::events::GameEvent;
 use super::types::*;
@@ -69,17 +70,17 @@ fn preflop_action_starts_left_of_bb_bb_has_option_to_check_if_unraised() {
     assert_eq!(st.to_act, 3);
 
     // Seat 3 calls (pays 3)
-    let t = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
+    let t = EngineNL::apply_action(&mut st, 3, PlayerBetAction::Call).unwrap();
     match t {
         Transition::Continued { next_to_act, .. } => assert_eq!(next_to_act, 4),
         _ => panic!("expected continued"),
     }
     // Seat 4 folds
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
     // Seat 5 calls
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
     // Seat 1 (SB) completes
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Call).unwrap();
 
     // BB options include Check (no voluntary bet yet). Also may RaiseTo, not BetTo.
     let legals = EngineNL::legal_actions(&st, 2);
@@ -87,7 +88,7 @@ fn preflop_action_starts_left_of_bb_bb_has_option_to_check_if_unraised() {
     assert!(legals.bet_to_range.is_none());
     assert!(legals.raise_to_range.is_some());
 
-    let t = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+    let t = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Check).unwrap();
     match t {
         Transition::StreetEnd { street, .. } => assert_eq!(street, Street::Preflop),
         _ => panic!("expected street end"),
@@ -98,11 +99,11 @@ fn preflop_action_starts_left_of_bb_bb_has_option_to_check_if_unraised() {
 fn postflop_action_starts_left_of_button() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // Close preflop cheaply: everyone checks/calls to BB like above
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Check).unwrap();
     // Outer game deals flop, then advance_street
     super::engine::EngineNL::advance_street(&mut st).unwrap();
     assert_eq!(st.street, Street::Flop);
@@ -114,11 +115,11 @@ fn postflop_action_starts_left_of_button() {
 fn unopened_min_bet_equals_big_blind() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // Fast-forward to flop with no betting
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Check).unwrap();
     super::engine::EngineNL::advance_street(&mut st).unwrap();
     // Flop unopened; first to act is seat 1
     let legals = EngineNL::legal_actions(&st, 1);
@@ -155,10 +156,10 @@ fn preflop_short_big_blind_with_2_on_bb_3_can_only_check() {
     assert_eq!(st.to_act, 3);
 
     // Bring action back to BB: UTG calls 2, HJ folds, CO calls, SB completes to 2
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-    let tr = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
+    let tr = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Call).unwrap();
     match tr {
         Transition::Continued { next_to_act, .. } => assert_eq!(next_to_act, 2),
         _ => panic!("expected action to pass to BB"),
@@ -173,7 +174,7 @@ fn preflop_short_big_blind_with_2_on_bb_3_can_only_check() {
     assert!(legals_bb.raise_to_range.is_none());
 
     // Demonstrate the only action: BB checks and the street should end
-    let tr2 = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+    let tr2 = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Check).unwrap();
     match tr2 {
         Transition::StreetEnd { street, .. } => assert_eq!(street, Street::Preflop),
         _ => panic!("expected preflop street to end after BB check"),
@@ -184,8 +185,7 @@ fn preflop_short_big_blind_with_2_on_bb_3_can_only_check() {
 fn min_raise_equals_last_full_raise_amount_and_updates_on_full_raises() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens (first voluntary bet) to 7 using BetTo
-    let t =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
+    let t = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
     // Next actor seat 4
     match t {
         Transition::Continued { next_to_act, .. } => assert_eq!(next_to_act, 4),
@@ -199,8 +199,7 @@ fn min_raise_equals_last_full_raise_amount_and_updates_on_full_raises() {
     assert_eq!(*raise_range.start(), 14);
 
     // Seat 4 raises to 25 (full raise by 18)
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::RaiseTo { to: 25 })
-        .unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::RaiseTo { to: 25 }).unwrap();
     assert_eq!(st.last_full_raise_amount, 18);
     // Next min raise-to should be 43 (25 + 18)
     // Query for seat 5
@@ -215,13 +214,12 @@ fn short_all_in_raise_does_not_update_lfr_or_reopen_action() {
     // Seat 4 has small stack to create short all-in
     st.players[4] = player_active(4, 5, 0); // 5 behind only
                                             // UTG (3) opens to 7
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
     let lfr_after_open = st.last_full_raise_amount;
     assert_eq!(lfr_after_open, 7);
     // Seat 4 shoves all-in to 5 total (actually cannot exceed 5); since committed is 0, AllIn is a bet -> we need it to be a raise: make them call first then shove? Adjust: give them 10 behind and do all-in to 12
     st.players[4].stack = 10; // now can all-in to 10
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::AllIn).unwrap();
     // Now current_bet_to_match should be 10; raise amount = 3 short (<7) so LFR unchanged
     assert_eq!(st.last_full_raise_amount, 7);
     // Original raiser (3) should not be reopened solely due to short raise; Since seat 3 already acted, they should not be in pending_to_match unless a full raise occurred
@@ -232,11 +230,9 @@ fn short_all_in_raise_does_not_update_lfr_or_reopen_action() {
 fn full_raise_reopens_action_to_prior_players() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens to 7
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
     // MP (4) raises to 14 (full raise 7)
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::RaiseTo { to: 14 })
-        .unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::RaiseTo { to: 14 }).unwrap();
     // Original opener 3 should be pending again
     assert!(st.pending_to_match.contains(&3));
 }
@@ -245,10 +241,9 @@ fn full_raise_reopens_action_to_prior_players() {
 fn cannot_check_when_facing_bet() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens to 7
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
     // Seat 4 attempting to Check should error
-    let err = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Check).unwrap_err();
+    let err = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Check).unwrap_err();
     assert_eq!(
         format!("{:?}", err),
         format!("{:?}", super::errors::ActionError::CannotCheckFacingBet)
@@ -259,11 +254,9 @@ fn cannot_check_when_facing_bet() {
 fn cannot_bet_when_betting_is_already_opened() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens to 7 (BetTo is ok because no voluntary bet yet)
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
     // Now seat 4 cannot BetTo again
-    let err = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::BetTo { to: 20 })
-        .unwrap_err();
+    let err = EngineNL::apply_action(&mut st, 4, PlayerBetAction::BetTo { to: 20 }).unwrap_err();
     assert_eq!(
         format!("{:?}", err),
         format!("{:?}", super::errors::ActionError::CannotBetWhenOpened)
@@ -274,11 +267,10 @@ fn cannot_bet_when_betting_is_already_opened() {
 fn short_call_sets_player_all_in_and_keeps_action_live_for_others() {
     let mut st = setup_preflop_6max(100, 1, 3);
     // UTG opens to 100
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 100 })
-        .unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 100 }).unwrap();
     // Seat 4 has only 60 to call -> short call leads to all-in and others must still act
     st.players[4].stack = 60;
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Call).unwrap();
     assert_eq!(st.players[4].status, PlayerStatus::AllIn);
     // Others (5,1,2) should still be pending if below 100
     for sid in [5u8, 1u8, 2u8] {
@@ -294,11 +286,11 @@ fn short_call_sets_player_all_in_and_keeps_action_live_for_others() {
 fn all_players_all_in_locks_betting_and_emits_event() {
     let mut st = setup_preflop_6max(50, 1, 3);
     // Force everyone to go all-in by successive shoves
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::AllIn).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::AllIn).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::AllIn).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::AllIn).unwrap();
-    let tr = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::AllIn).unwrap();
+    let tr = EngineNL::apply_action(&mut st, 2, PlayerBetAction::AllIn).unwrap();
     match tr {
         Transition::Continued { events, .. }
         | Transition::StreetEnd { events, .. }
@@ -328,13 +320,12 @@ fn single_side_pot_two_all_ins_different_sizes() {
     st.voluntary_bet_opened = false;
 
     // B (seat 4) bets to 100
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::BetTo { to: 100 })
-        .unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::BetTo { to: 100 }).unwrap();
     // A (seat 3) short-calls all-in to 30
     st.players.iter_mut().find(|p| p.seat == 3).unwrap().stack = 30;
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::AllIn).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::AllIn).unwrap();
     // C (seat 5) calls full 100
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
 
     // Compute pots
     let pots = &st.pots;
@@ -373,10 +364,10 @@ fn multiple_side_pots_three_all_ins() {
     st.pending_to_match = vec![3, 4, 5, 1];
 
     // Everyone goes all-in
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::AllIn).unwrap(); // to 20
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::AllIn).unwrap(); // to 50
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::AllIn).unwrap(); // to 120
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::AllIn).unwrap(); // to 120
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::AllIn).unwrap(); // to 20
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::AllIn).unwrap(); // to 50
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::AllIn).unwrap(); // to 120
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::AllIn).unwrap(); // to 120
 
     // Expect pots: main 4*20=80; side1 (B,C,D) 30*3=90; side2 (C,D) 70*2=140
     assert_eq!(st.pots.main.amount, 80);
@@ -388,8 +379,8 @@ fn multiple_side_pots_three_all_ins() {
 fn folded_players_not_eligible_for_any_pot() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // Someone folds after contributing
-    let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
     // Folded seat 4 must not be present in eligibility sets
     assert!(!st.pots.main.eligible.contains(&4));
     assert!(st.pots.sides.iter().all(|p| !p.eligible.contains(&4)));
@@ -399,13 +390,12 @@ fn folded_players_not_eligible_for_any_pot() {
 fn street_ends_when_all_active_non_all_in_players_have_matched_or_folded() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // UTG opens to 9; others fold/call such that pending empties
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 9 }).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 9 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Fold).unwrap();
     // BB faces 6 more (9-3) and calls
-    let tr = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Call).unwrap();
+    let tr = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Call).unwrap();
     match tr {
         Transition::StreetEnd { street, .. } => assert_eq!(street, Street::Preflop),
         _ => panic!("expected street end"),
@@ -416,12 +406,11 @@ fn street_ends_when_all_active_non_all_in_players_have_matched_or_folded() {
 fn hand_ends_immediately_when_only_one_player_remains_active() {
     let mut st = setup_preflop_6max(300, 1, 3);
     // Everyone folds to UTG
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 7 }).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Fold).unwrap();
-    let tr = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 7 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Fold).unwrap();
+    let tr = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Fold).unwrap();
     match tr {
         Transition::HandEnd { winner, .. } => assert_eq!(winner, 3),
         _ => panic!("expected hand end by folds"),
@@ -433,11 +422,11 @@ fn hand_ends_immediately_when_only_one_player_remains_active() {
 //     let mut st = setup_preflop_6max(50, 1, 3);
 //     // Postflop scenario for unopened
 //     // Close preflop
-//     let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::Call).unwrap();
-//     let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::Call).unwrap();
-//     let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-//     let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Call).unwrap();
-//     let _ = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Check).unwrap();
+//     let _ = EngineNL::apply_action(&mut st, 3, super::actions::PlayerBetAction::Call).unwrap();
+//     let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerBetAction::Call).unwrap();
+//     let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerBetAction::Call).unwrap();
+//     let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerBetAction::Call).unwrap();
+//     let _ = EngineNL::apply_action(&mut st, 2, super::actions::PlayerBetAction::Check).unwrap();
 //     super::engine::EngineNL::advance_street(&mut st).unwrap();
 
 //     // Unopened: bet_to_range present
@@ -449,7 +438,7 @@ fn hand_ends_immediately_when_only_one_player_remains_active() {
 //     let _ = EngineNL::apply_action(
 //         &mut st,
 //         st.first_to_act,
-//         super::actions::PlayerAction::BetTo { to: 10 },
+//         super::actions::PlayerBetAction::BetTo { to: 10 },
 //     )
 //     .unwrap();
 //     let next = st.to_act;
@@ -462,13 +451,12 @@ fn hand_ends_immediately_when_only_one_player_remains_active() {
 fn invariants_hold_after_complex_sequences_with_side_pots() {
     let mut st = setup_preflop_6max(200, 1, 3);
     // Complex preflop sequence: open, short all-in, call, fold
-    let _ =
-        EngineNL::apply_action(&mut st, 3, super::actions::PlayerAction::BetTo { to: 20 }).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 3, PlayerBetAction::BetTo { to: 20 }).unwrap();
     st.players.iter_mut().find(|p| p.seat == 4).unwrap().stack = 5;
-    let _ = EngineNL::apply_action(&mut st, 4, super::actions::PlayerAction::AllIn).unwrap(); // short raise 5
-    let _ = EngineNL::apply_action(&mut st, 5, super::actions::PlayerAction::Call).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 1, super::actions::PlayerAction::Fold).unwrap();
-    let _ = EngineNL::apply_action(&mut st, 2, super::actions::PlayerAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 4, PlayerBetAction::AllIn).unwrap(); // short raise 5
+    let _ = EngineNL::apply_action(&mut st, 5, PlayerBetAction::Call).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 1, PlayerBetAction::Fold).unwrap();
+    let _ = EngineNL::apply_action(&mut st, 2, PlayerBetAction::Call).unwrap();
     // Validate invariants
     super::state::BettingState::validate_invariants(&st).unwrap();
 }
@@ -500,18 +488,18 @@ fn e2e_random_full_hand_to_river() {
         let legals = EngineNL::legal_actions(&st, actor);
 
         // Build a random legal action set (exclude Fold to keep hand alive)
-        let mut options: Vec<super::actions::PlayerAction> = Vec::new();
+        let mut options: Vec<PlayerBetAction> = Vec::new();
 
         if let Some(price) = legals.call_amount {
             if price == 0 {
                 // Prefer checks postflop when unopened
                 for _ in 0..3 {
-                    options.push(super::actions::PlayerAction::Check);
+                    options.push(PlayerBetAction::Check);
                 }
             } else {
                 // Prefer calling to keep action moving
                 for _ in 0..3 {
-                    options.push(super::actions::PlayerAction::Call);
+                    options.push(PlayerBetAction::Call);
                 }
             }
         }
@@ -526,7 +514,7 @@ fn e2e_random_full_hand_to_river() {
                 } else {
                     rng.gen_range(start..=end)
                 };
-                options.push(super::actions::PlayerAction::BetTo { to });
+                options.push(PlayerBetAction::BetTo { to });
             }
         }
 
@@ -542,26 +530,26 @@ fn e2e_random_full_hand_to_river() {
                 } else {
                     rng.gen_range(start..=end)
                 };
-                options.push(super::actions::PlayerAction::RaiseTo { to });
+                options.push(PlayerBetAction::RaiseTo { to });
             }
         }
 
         // Occasionally allow an all-in shove (legal; engine will normalize) if chips remain
         let actor_idx = st.players.iter().position(|p| p.seat == actor).unwrap();
         if st.players[actor_idx].stack > 0 && rng.gen_ratio(1, 8) {
-            options.push(super::actions::PlayerAction::AllIn);
+            options.push(PlayerBetAction::AllIn);
         }
 
         // Fallback if somehow no options were populated
         if options.is_empty() {
             if let Some(price) = legals.call_amount {
                 if price == 0 {
-                    options.push(super::actions::PlayerAction::Check);
+                    options.push(PlayerBetAction::Check);
                 } else {
-                    options.push(super::actions::PlayerAction::Call);
+                    options.push(PlayerBetAction::Call);
                 }
             } else if st.players[actor_idx].stack > 0 {
-                options.push(super::actions::PlayerAction::AllIn);
+                options.push(PlayerBetAction::AllIn);
             } else {
                 // If still empty, advance to the next active actor and retry this loop iteration.
                 let n = st.players.len() as u8;

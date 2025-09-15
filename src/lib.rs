@@ -7,6 +7,7 @@ pub mod field_conversion_gadget;
 pub mod logup;
 pub mod macros;
 pub mod pedersen_commitment;
+pub mod player;
 pub mod showdown;
 pub mod shuffler;
 pub mod shuffling;
