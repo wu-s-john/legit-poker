@@ -8,7 +8,7 @@ use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField};
 use ark_std::{fmt::Debug, vec::Vec};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
+const LOG_TARGET: &str = "legit_poker::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
 /// Minimal output structure for power challenge setup (without product permutation)
 #[derive(Debug, Clone)]

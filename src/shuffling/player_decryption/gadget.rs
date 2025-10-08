@@ -24,7 +24,7 @@ use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use ark_std::{borrow::Borrow, vec::Vec};
 use tracing::{instrument, trace};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::player_decryption_gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption_gadget";
 
 // ============================================================================
 // Circuit Variable Structures
@@ -601,7 +601,7 @@ mod tests {
     type Fr = ark_grumpkin::Fr;
     type GrumpkinVar = ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<Fq>>;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new()

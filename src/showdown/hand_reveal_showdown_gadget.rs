@@ -23,7 +23,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-const LOG_TARGET: &str = "nexus_nova::showdown::hand_reveal_showdown_gadget";
+const LOG_TARGET: &str = "legit_poker::showdown::hand_reveal_showdown_gadget";
 
 /// Helper function to check constraint satisfaction and log errors if any
 #[inline]
@@ -181,7 +181,13 @@ where
     });
 
     // Verify lookup - ensures selected cards come from table and respects multiplicities
-    verify_lookup(cs.clone(), alpha, &table_entries, &selected_cards, &multiplicities)?;
+    verify_lookup(
+        cs.clone(),
+        alpha,
+        &table_entries,
+        &selected_cards,
+        &multiplicities,
+    )?;
 
     tracing::info!(target: LOG_TARGET, "LogUp validation of the cards is successful");
 
@@ -223,7 +229,7 @@ mod tests {
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);

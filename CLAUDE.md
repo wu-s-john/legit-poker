@@ -139,10 +139,10 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
   for i in 0..N {
       result[i] = compute(i);
   }
-  
+
   // ✅ PREFERRED - Functional array construction
   let result: [F; N] = std::array::from_fn(|i| compute(i));
-  
+
   // ✅ ALSO GOOD - Iterator chain for arrays (when more complex)
   let result: [F; N] = (0..N)
       .map(|i| compute(i))
@@ -178,11 +178,11 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
       fn get(&self, key: &str) -> Result<Vec<u8>>;
       fn put(&mut self, key: &str, value: Vec<u8>) -> Result<()>;
   }
-  
+
   struct TestStorage {
       data: HashMap<String, Vec<u8>>,
   }
-  
+
   impl StorageBackend for TestStorage {
       fn get(&self, key: &str) -> Result<Vec<u8>> {
           self.data.get(key).cloned().ok_or(Error::NotFound)
@@ -192,7 +192,7 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
           Ok(())
       }
   }
-  
+
   // ❌ AVOID - Mock objects
   let mock_storage = MockStorage::new();
   mock_storage.expect_get().returning(|_| Ok(vec![1, 2, 3]));
@@ -390,21 +390,21 @@ where
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
         let _span =
-            tracing::debug_span!(target: "shuffle::alloc", "alloc_elgamal_ciphertext").entered();
+            tracing::debug_span!(target: "legit_poker::shuffling::alloc", "alloc_elgamal_ciphertext").entered();
 
         let cs = cs.into().cs();
         let value = f()?;
         let ciphertext = value.borrow();
 
         // Allocate as ProjectiveVar directly
-        tracing::trace!(target: "shuffle::alloc", "Allocating c1 ProjectiveVar");
+        tracing::trace!(target: "legit_poker::shuffling::alloc", "Allocating c1 ProjectiveVar");
         let c1 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
             cs.clone(),
             || Ok(ciphertext.c1),
             mode,
         )?;
 
-        tracing::trace!(target: "shuffle::alloc", "Allocating c2 ProjectiveVar");
+        tracing::trace!(target: "legit_poker::shuffling::alloc", "Allocating c2 ProjectiveVar");
         let c2 = ProjectiveVar::<G, FpVar<G::BaseField>>::new_variable(
             cs.clone(),
             || Ok(ciphertext.c2),
@@ -429,7 +429,7 @@ use ark_r1cs_std::boolean::Boolean;
 
 // ✅ CORRECT - Use bitwise operators
 let and_result = &bool_a & &bool_b;  // AND operation
-let or_result = &bool_a | &bool_b;   // OR operation  
+let or_result = &bool_a | &bool_b;   // OR operation
 let xor_result = &bool_a ^ &bool_b;  // XOR operation
 let not_result = !&bool_a;           // NOT operation
 

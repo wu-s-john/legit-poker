@@ -18,7 +18,7 @@ use ark_r1cs_std::{fields::fp::FpVar, groups::CurveVar, prelude::*};
 use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use std::marker::PhantomData;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::circuit";
+const LOG_TARGET: &str = "legit_poker::shuffling::rs_shuffle::circuit";
 
 // Note: RS shuffle gadget functions (rs_shuffle_indices, rs_shuffle, rs_shuffle_with_reencryption)
 // have been moved to the rs_shuffle_gadget module for better organization.
@@ -553,7 +553,7 @@ mod tests {
         filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
     };
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);

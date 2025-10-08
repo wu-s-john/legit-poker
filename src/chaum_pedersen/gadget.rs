@@ -22,7 +22,7 @@ use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use ark_std::borrow::Borrow;
 use tracing::instrument;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::chaum_pedersen_gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::chaum_pedersen_gadget";
 
 /// Circuit representation of Chaum-Pedersen proof
 pub struct ChaumPedersenProofVar<C, CV>
@@ -226,7 +226,7 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<Fq>>;
 

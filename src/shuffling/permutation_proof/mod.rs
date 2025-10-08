@@ -204,7 +204,7 @@ where
 
 /// Main permutation gadget: emits constraints tying VRF→RS→BG and Pedersen opening together.
 #[allow(clippy::too_many_arguments)]
-#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::permutation_proof")]
+#[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::permutation_proof")]
 pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
     sponge: &mut ROVar,
@@ -360,7 +360,7 @@ mod tests {
     };
     type G1Var = ProjectiveVar<ark_bn254::g1::Config, FpVar<BaseField>>;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);

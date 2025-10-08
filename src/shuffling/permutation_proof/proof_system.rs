@@ -369,7 +369,7 @@ mod tests {
     const N: usize = 8;
     const LEVELS: usize = 3;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         use tracing_subscriber::{

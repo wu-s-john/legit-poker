@@ -8,7 +8,7 @@ use ark_std::rand::RngCore;
 
 // Re-exports handled in parent module
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::pedersen_commitment";
+const LOG_TARGET: &str = "legit_poker::shuffling::pedersen_commitment";
 
 pub struct WithCommitment<G: CurveGroup, const N: usize> {
     pub comm: G,

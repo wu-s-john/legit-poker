@@ -27,7 +27,7 @@ use ark_std::{
     UniformRand,
 };
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::shuffling_proof";
+const LOG_TARGET: &str = "legit_poker::shuffling::shuffling_proof";
 
 /// Type alias for Pedersen commitment with ReencryptionWindow configuration
 type PedersenReenc<G> = PedersenCommitment<G, ReencryptionWindow>;
@@ -426,7 +426,7 @@ mod tests {
 
     type GVar = SWVar<GrumpkinConfig, FpVar<BaseField>>;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         // Enable our module target plus a reasonable default for others.

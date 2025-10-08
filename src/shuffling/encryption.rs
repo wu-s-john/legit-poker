@@ -8,7 +8,7 @@ use ark_relations::{
 };
 use ark_std::rand::Rng;
 
-const LOG_TARGET: &str = "shuffle::encryption";
+const LOG_TARGET: &str = "legit_poker::shuffling::encryption";
 
 /// Generate an array of N random scalar field elements for rerandomization
 ///
@@ -104,7 +104,7 @@ where
     /// Re-randomization circuit for shuffling
     /// Implements: c1' = c1 + r' * g, c2' = c2 + r' * pk_shuffler
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    #[zk_poker_macros::track_constraints_impl(target = "shuffle::encryption")]
+    #[zk_poker_macros::track_constraints_impl(target = "legit_poker::shuffling::encryption")]
     pub fn rerandomize_ciphertext<CV>(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,
@@ -137,7 +137,7 @@ where
     /// Re-encrypt a deck of cards with new randomization values
     /// This function applies re-randomization to each card in the input deck
     #[tracing::instrument(target = LOG_TARGET, skip_all)]
-    #[zk_poker_macros::track_constraints_impl(target = "shuffle::encryption")]
+    #[zk_poker_macros::track_constraints_impl(target = "legit_poker::shuffling::encryption")]
     pub fn reencrypt_cards_with_new_randomization<CV>(
         &self,
         cs: ConstraintSystemRef<C::BaseField>,

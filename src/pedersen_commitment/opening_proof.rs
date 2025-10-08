@@ -17,7 +17,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::{fmt, rand::RngCore, vec::Vec, UniformRand};
 
 /// Logging target for this module
-const LOG_TARGET: &str = "nexus_nova::shuffling::pedersen_commitment_opening";
+const LOG_TARGET: &str = "legit_poker::shuffling::pedersen_commitment_opening";
 
 /// Wrapper around arkworks Pedersen parameters for consistent usage
 #[derive(Clone)]

@@ -589,11 +589,11 @@ mod tests {
         let _guard = {
             let filter = filter::Targets::new()
                 .with_target(
-                    "nexus_nova::shuffling::player_decryption",
+                    "legit_poker::shuffling::player_decryption",
                     tracing::Level::TRACE,
                 )
                 .with_target(
-                    "nexus_nova::shuffling::community_decryption",
+                    "legit_poker::shuffling::community_decryption",
                     tracing::Level::TRACE,
                 )
                 .with_target("player_test", tracing::Level::TRACE);

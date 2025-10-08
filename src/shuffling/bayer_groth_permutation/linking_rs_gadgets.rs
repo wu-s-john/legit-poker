@@ -11,7 +11,7 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 use std::ops::Mul;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::linking_rs_gadgets";
+const LOG_TARGET: &str = "legit_poker::shuffling::bayer_groth_permutation::linking_rs_gadgets";
 
 /// Complete permutation equality proof gadget
 ///

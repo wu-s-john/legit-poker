@@ -14,7 +14,7 @@ use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*};
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::bit_generation";
+const LOG_TARGET: &str = "legit_poker::shuffling::rs_shuffle::bit_generation";
 
 /// Derive split bits from random seed using Poseidon hash
 ///

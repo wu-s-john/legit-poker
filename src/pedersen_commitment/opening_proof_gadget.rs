@@ -27,7 +27,7 @@ use ark_r1cs_std::{
 use ark_relations::gr1cs::{ConstraintSystemRef, Namespace, SynthesisError};
 use ark_std::vec::Vec;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::pedersen_commitment_opening_gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::pedersen_commitment_opening_gadget";
 
 /// SNARK representation of a Pedersen commitment opening proof
 ///
@@ -134,7 +134,7 @@ where
 /// # Returns
 /// Ok(()) if the constraint is satisfied, error otherwise
 #[zk_poker_macros::track_constraints(
-    target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget"
+    target = "legit_poker::shuffling::pedersen_commitment_opening_gadget"
 )]
 pub fn verify_scalar_folding_link_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
@@ -233,7 +233,7 @@ where
 /// # Returns
 /// The final folded scalar as a circuit variable
 #[zk_poker_macros::track_constraints(
-    target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget"
+    target = "legit_poker::shuffling::pedersen_commitment_opening_gadget"
 )]
 fn fold_scalars_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,
@@ -379,7 +379,7 @@ where
 /// # Returns
 /// Ok(()) if the constraint is satisfied, error otherwise
 #[zk_poker_macros::track_constraints(
-    target = "nexus_nova::shuffling::pedersen_commitment_opening_gadget"
+    target = "legit_poker::shuffling::pedersen_commitment_opening_gadget"
 )]
 fn verify_scalar_folding_link_padded_gadget<C, GG>(
     cs: ConstraintSystemRef<C::BaseField>,

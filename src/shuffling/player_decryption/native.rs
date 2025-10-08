@@ -11,7 +11,7 @@ use ark_std::{collections::HashMap, sync::Mutex};
 use once_cell::sync::Lazy;
 use tracing::{instrument, warn};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::player_decryption";
+const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption";
 
 /// Player-targeted blinding contribution from a single shuffler
 /// Each shuffler contributes their secret δ_j to add blinding specifically allowing the target player access

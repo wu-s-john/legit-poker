@@ -11,7 +11,7 @@ use ark_r1cs_std::{
 };
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::permutation";
+const LOG_TARGET: &str = "legit_poker::shuffling::rs_shuffle::permutation";
 
 /// Trait for types that can be compressed into a field element for permutation products
 /// The generic parameter N represents the number of challenges needed

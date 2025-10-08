@@ -7,7 +7,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::Zero;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::chaum_pedersen";
+const LOG_TARGET: &str = "legit_poker::shuffling::chaum_pedersen";
 
 /// Chaum-Pedersen proof for proving equality of discrete logarithms
 /// Proves that the same secret was used to compute α = g^secret and β = H^secret

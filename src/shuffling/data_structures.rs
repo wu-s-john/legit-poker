@@ -223,17 +223,17 @@ where
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
         let _span =
-            tracing::debug_span!(target: "shuffle::alloc", "alloc_elgamal_ciphertext").entered();
+            tracing::debug_span!(target: "legit_poker::shuffling::alloc", "alloc_elgamal_ciphertext").entered();
 
         let cs = cs.into().cs();
         let value = f()?;
         let ciphertext = value.borrow();
 
         // Allocate as CurveVar directly
-        tracing::trace!(target: "shuffle::alloc", "Allocating c1 CurveVar");
+        tracing::trace!(target: "legit_poker::shuffling::alloc", "Allocating c1 CurveVar");
         let c1 = CV::new_variable(cs.clone(), || Ok(ciphertext.c1), mode)?;
 
-        tracing::trace!(target: "shuffle::alloc", "Allocating c2 CurveVar");
+        tracing::trace!(target: "legit_poker::shuffling::alloc", "Allocating c2 CurveVar");
         let c2 = CV::new_variable(cs.clone(), || Ok(ciphertext.c2), mode)?;
 
         Ok(Self {
@@ -274,12 +274,12 @@ where
         let value = f()?;
         let proof = value.borrow();
 
-        tracing::debug!(target: "shuffle::alloc", "Starting optimized allocation");
+        tracing::debug!(target: "legit_poker::shuffling::alloc", "Starting optimized allocation");
 
         // Batch allocate input deck
         let input_deck = batch_allocate_ciphertexts::<C, CV>(cs.clone(), &proof.input_deck, mode)?;
 
-        tracing::debug!(target: "shuffle::alloc", "sorted deck allocation");
+        tracing::debug!(target: "legit_poker::shuffling::alloc", "sorted deck allocation");
         // Allocate sorted deck with minimal overhead
         // DO NOT convert to affine - extremely expensive!
         let mut sorted_deck = Vec::with_capacity(proof.sorted_deck.len());
@@ -294,7 +294,7 @@ where
             sorted_deck.push((ElGamalCiphertextVar::new(c1, c2), random_var));
         }
 
-        tracing::debug!(target: "shuffle::alloc", "randomization values allocation");
+        tracing::debug!(target: "legit_poker::shuffling::alloc", "randomization values allocation");
         // Batch allocate rerandomization values
         // Note: Converting from ScalarField to BaseField representation
         let rerandomization_values: Result<Vec<_>, _> = proof
@@ -306,7 +306,7 @@ where
             })
             .collect();
 
-        tracing::debug!(target: "shuffle::alloc", "done allocation");
+        tracing::debug!(target: "legit_poker::shuffling::alloc", "done allocation");
         Ok(Self {
             input_deck,
             sorted_deck,

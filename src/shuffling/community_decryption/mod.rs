@@ -11,7 +11,7 @@ use ark_std::{collections::HashMap, sync::Mutex};
 use once_cell::sync::Lazy;
 use tracing::{instrument, warn};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::community_decryption";
+const LOG_TARGET: &str = "legit_poker::shuffling::community_decryption";
 
 /// Community card decryption share from a single committee member
 /// Each committee member provides c1^x_j where x_j is their secret share

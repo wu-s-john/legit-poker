@@ -69,7 +69,7 @@ use ark_std::UniformRand;
 use ark_std::{rand::Rng, vec::Vec};
 
 /// Logging target for this module
-const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::reencryption_protocol";
+const LOG_TARGET: &str = "legit_poker::shuffling::bayer_groth_permutation::reencryption_protocol";
 
 /// Helper function to convert a base field element to a scalar field element
 /// by interpreting its little-endian bytes as an integer and reducing mod r.
@@ -500,7 +500,7 @@ mod tests {
     };
 
     // Test tracing target
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     /// Setup test tracing for debugging
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {

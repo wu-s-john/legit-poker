@@ -359,7 +359,7 @@ where
 
         // Debug lengths to help diagnose mismatches
         tracing::debug!(
-            target: "nexus_nova::shuffling::proof_system",
+            target: "legit_poker::shuffling::proof_system",
             "public_inputs len = {}, vk.gamma_abc_g1 len = {}",
             public_inputs.len(),
             self.verifying_key.gamma_abc_g1.len()
@@ -367,7 +367,7 @@ where
         // Debug first few elements for sanity (alpha and first coords)
         if public_inputs.len() >= 7 {
             tracing::debug!(
-                target: "nexus_nova::shuffling::proof_system",
+                target: "legit_poker::shuffling::proof_system",
                 "alpha={}, c_perm_x={}, c_perm_y={}, c_perm_inf={}, c_power_x={}, c_power_y={}, c_power_inf={}",
                 public_inputs[0],
                 public_inputs[1],

@@ -24,7 +24,7 @@ use ark_r1cs_std::{
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use std::ops::Not;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::rs_shuffle::gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::rs_shuffle::gadget";
 
 /// Simple indexed value for permutation checks with just an index
 #[derive(Clone)]
@@ -67,7 +67,7 @@ impl<F: PrimeField> PermutationProduct<F, 1> for IndexedValue<F> {
 /// # Returns
 /// - `Ok(())` if all shuffle constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
-#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
+#[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_indices<F, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<F>,
     indices_init: &[FpVar<F>],
@@ -146,7 +146,7 @@ where
 /// # Returns
 /// - `Ok(())` if all shuffle constraints are satisfied
 /// - `Err(SynthesisError)` if any constraint fails
-#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
+#[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>],
@@ -237,7 +237,7 @@ where
 /// # Returns
 /// - `Ok(Vec<ElGamalCiphertextVar<G>>)` containing the re-encrypted ciphertexts if successful
 /// - `Err(SynthesisError)` if any constraint fails
-#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
+#[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_with_reencryption<C, CV, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<C::BaseField>,
     ct_init_pub: &[ElGamalCiphertextVar<C, CV>; N],
@@ -558,7 +558,7 @@ where
 /// # Returns
 /// - `Ok((CV, BayerGrothSetupParametersGadget<F, CV>))`: A tuple containing the complete proof point (including randomness factor) and the Bayer-Groth parameters
 /// - `Err(SynthesisError)`: If any constraint fails
-#[zk_poker_macros::track_constraints(target = "nexus_nova::shuffling::rs_shuffle::gadget")]
+#[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::rs_shuffle::gadget")]
 pub fn rs_shuffle_with_bayer_groth_linking_proof<
     F,
     C,
@@ -678,7 +678,7 @@ mod tests {
     use crate::test_utils::check_cs_satisfied;
     use ark_bls12_381::Fr as TestField;
     use ark_relations::gr1cs::ConstraintSystemRef;
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         let filter = filter::Targets::new().with_target(TEST_TARGET, tracing::Level::DEBUG);

@@ -10,7 +10,7 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_relations::ns;
 use std::ops::Not;
 
-const LOG_TARGET: &str = "shuffle::og_shuffling::gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::og_shuffling::gadget";
 
 #[zk_poker_macros::track_constraints(target = LOG_TARGET)]
 pub fn generate_random_values_for_deck<C: CurveGroup>(

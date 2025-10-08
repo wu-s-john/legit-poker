@@ -16,7 +16,7 @@ use ark_r1cs_std::{
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth::bg_setup_gadget";
+const LOG_TARGET: &str = "legit_poker::shuffling::bayer_groth::bg_setup_gadget";
 
 /// Output parameters from the Bayer-Groth setup protocol (gadget version)
 ///

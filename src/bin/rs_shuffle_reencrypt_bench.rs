@@ -816,8 +816,7 @@ fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         .with_default(tracing::Level::WARN)
         .with_target("game_demo", tracing::Level::DEBUG)
         .with_target("zk_poker", tracing::Level::DEBUG)
-        .with_target("shuffling", tracing::Level::DEBUG)
-        .with_target("nexus_nova", tracing::Level::DEBUG);
+        .with_target("legit_poker", tracing::Level::DEBUG);
 
     tracing_subscriber::registry()
         .with(

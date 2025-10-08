@@ -27,7 +27,7 @@ use tracing::instrument;
 use super::reencryption_protocol::ReencryptionProof;
 use ark_crypto_primitives::sponge::{constraints::CryptographicSpongeVar, CryptographicSponge};
 
-const LOG_TARGET: &str = "nexus_nova::shuffling::bayer_groth_permutation::reencryption_gadgets";
+const LOG_TARGET: &str = "legit_poker::shuffling::bayer_groth_permutation::reencryption_gadgets";
 
 /// Circuit proof representation with const generic N
 ///
@@ -540,14 +540,14 @@ mod tests {
     type Pedersen<G> =
         PedersenCommitment<G, crate::pedersen_commitment::bytes_opening::ReencryptionWindow>;
 
-    const TEST_TARGET: &str = "nexus_nova";
+    const TEST_TARGET: &str = "legit_poker";
 
     fn setup_test_tracing() {
         let filter = filter::Targets::new()
             .with_target(TEST_TARGET, tracing::Level::TRACE)
             .with_target(LOG_TARGET, tracing::Level::TRACE)
             .with_target(
-                "nexus_nova::shuffling::bayer_groth_permutation::reencryption_protocol",
+                "legit_poker::shuffling::bayer_groth_permutation::reencryption_protocol",
                 tracing::Level::TRACE,
             );
 
