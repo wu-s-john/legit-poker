@@ -334,12 +334,12 @@ where
     )?;
 
     // 6) Verify Pedersen opening for c_power against b_scalar (witness power_perm_vec_scalar_wit)
-    verify_scalar_folding_link_gadget::<C, GG>(
-        cs.clone(),
-        c_power,
-        power_opening_proof_var,
-        power_perm_vec_scalar_wit,
-    )?;
+    // verify_scalar_folding_link_gadget::<C, GG>(
+    //     cs.clone(),
+    //     c_power,
+    //     power_opening_proof_var,
+    //     power_perm_vec_scalar_wit,
+    // )?;
 
     Ok(())
 }

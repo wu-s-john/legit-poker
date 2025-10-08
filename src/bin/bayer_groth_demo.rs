@@ -12,7 +12,7 @@ use ark_ff::UniformRand;
 use ark_grumpkin::{GrumpkinConfig, Projective as GrumpkinProjective};
 use ark_r1cs_std::{fields::fp::FpVar, groups::curves::short_weierstrass::ProjectiveVar};
 use ark_std::rand::{rngs::StdRng, SeedableRng};
-use std::time::Instant;
+use std::{process, time::Instant};
 
 use common::{
     create_encrypted_deck, decrypt_cards_for_player, decrypt_community_cards, format_cards,
@@ -85,13 +85,29 @@ fn main() {
     println!("3. Creating game configuration...");
     let config_start = Instant::now();
 
-    let shuffling_config = setup_game_config::<ark_bn254::Bn254, G>(&shuffler_public_keys);
+    let mut shuffling_config = setup_game_config::<ark_bn254::Bn254, G>(&shuffler_public_keys);
+
+    let (num_samples, generated_keys) =
+        match common::ensure_permutation_snark_keys::<ark_bn254::Bn254, G, GV, N, LEVELS>(
+            &mut shuffling_config,
+        ) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!("   ⚠ Failed to initialize permutation SNARK keys: {err}");
+                process::exit(1);
+            }
+        };
 
     println!(
         "   ✓ Aggregated public key created from {} shufflers",
         NUM_SHUFFLERS
     );
-    println!("   ✓ Proof systems initialized (Dummy + Sigma)");
+    if generated_keys {
+        println!("   ✓ Permutation SNARK keys generated for {num_samples} Poseidon samples");
+    } else {
+        println!("   ✓ Permutation SNARK keys reused for {num_samples} Poseidon samples");
+    }
+    println!("   ✓ Proof systems initialized (Groth16 + Sigma)");
     println!("   Configuration time: {:?}\n", config_start.elapsed());
 
     // Step 4: Create initial encrypted deck
@@ -122,13 +138,21 @@ fn main() {
         let shuffle_start = Instant::now();
 
         let (shuffled_deck, proof) =
-            perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
+            match perform_shuffle_with_proof::<ark_bn254::Bn254, G, GV, _, N, LEVELS>(
                 &shuffling_config,
                 &current_deck,
                 shuffle_seed,
                 &mut rng,
-            )
-            .expect("Shuffling with proof should succeed");
+            ) {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!(
+                        "     ⚠ Shuffler {} failed to produce a proof: {err}",
+                        shuffler_idx + 1
+                    );
+                    process::exit(1);
+                }
+            };
 
         let shuffle_time = shuffle_start.elapsed();
 

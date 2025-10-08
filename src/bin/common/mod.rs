@@ -3,16 +3,18 @@
 //! This module contains all the shared functionality used by both
 //! bayer_groth_demo.rs and game_demo.rs to avoid code duplication.
 
+use anyhow::Result;
 use ark_crypto_primitives::sponge::{poseidon::constraints::PoseidonSpongeVar, Absorb};
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
-use ark_std::rand::{CryptoRng, Rng, RngCore};
+use ark_std::rand::{rngs::StdRng, CryptoRng, Rng, RngCore, SeedableRng};
 
 use zk_poker::shuffling::{
     community_decryption::{decrypt_community_card, CommunityDecryptionShare},
     curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
     data_structures::ElGamalCiphertext,
+    permutation_proof::PermutationGroth16,
     player_decryption::{
         combine_blinding_contributions_for_player, generate_committee_decryption_share,
         recover_card_value, PlayerTargetedBlindingContribution,
@@ -96,6 +98,48 @@ where
         public_key: aggregated_public_key,
         perm_snark_keys: Default::default(),
     }
+}
+
+fn required_poseidon_samples<F: PrimeField>(total_bits: usize) -> usize {
+    let field_bits = F::MODULUS_BIT_SIZE as usize;
+    let usable_bits_per_element = field_bits.saturating_sub(2);
+    (total_bits + usable_bits_per_element - 1) / usable_bits_per_element
+}
+
+/// Ensure the permutation SNARK keys needed for the demo are available.
+pub fn ensure_permutation_snark_keys<E, G, GV, const N: usize, const LEVELS: usize>(
+    config: &mut ShufflingConfig<E, G>,
+) -> Result<(usize, bool)>
+where
+    E: ark_ec::pairing::Pairing<ScalarField = G::BaseField>,
+    G: CurveGroup + CurveAbsorb<G::BaseField> + ark_ff::ToConstraintField<G::BaseField>,
+    G::Config: CurveConfig,
+    G::BaseField: PrimeField + Absorb,
+    G::ScalarField: PrimeField + Absorb,
+    GV: CurveVar<G, G::BaseField>
+        + CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
+    for<'a> &'a GV: GroupOpsBounds<'a, G, GV>
+        + CurveAbsorbGadget<G::BaseField, PoseidonSpongeVar<G::BaseField>>,
+{
+    let total_bits = N * LEVELS;
+    let num_samples = required_poseidon_samples::<G::BaseField>(total_bits);
+
+    if config.perm_snark_keys.contains_key(&num_samples) {
+        return Ok((num_samples, false));
+    }
+
+    let mut rng = StdRng::seed_from_u64(123_456_789);
+    let perm_sys = PermutationGroth16::<E, G, GV, N, LEVELS>::setup(&mut rng, num_samples)?;
+
+    config.perm_snark_keys.insert(
+        num_samples,
+        (
+            perm_sys.proving_key().clone(),
+            perm_sys.prepared_vk().clone(),
+        ),
+    );
+
+    Ok((num_samples, true))
 }
 
 /// Create initial encrypted deck of N cards using the aggregated public key

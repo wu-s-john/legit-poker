@@ -1,3 +1,4 @@
+use ark_crypto_primitives::signature::SignatureScheme;
 use serde::{Deserialize, Serialize};
 
 /// A signed envelope carrying a serde-serializable value, its signature, and the
@@ -24,14 +25,12 @@ where
     pub fn new<S, R>(
         value: T,
         domain_tag: &[u8],
-        params: &<S as ark_crypto_primitives::signature::SignatureScheme>::Parameters,
-        sk: &<S as ark_crypto_primitives::signature::SignatureScheme>::SecretKey,
+        params: &<S as SignatureScheme>::Parameters,
+        sk: &<S as SignatureScheme>::SecretKey,
         rng: &mut R,
-    ) -> anyhow::Result<
-        WithSignature<<S as ark_crypto_primitives::signature::SignatureScheme>::Signature, T>,
-    >
+    ) -> anyhow::Result<WithSignature<<S as SignatureScheme>::Signature, T>>
     where
-        S: ark_crypto_primitives::signature::SignatureScheme,
+        S: SignatureScheme,
         R: rand::Rng,
     {
         // Serialize payload deterministically
@@ -41,13 +40,8 @@ where
         transcript.extend_from_slice(&payload);
 
         // Sign transcript using the provided scheme
-        let sig = <S as ark_crypto_primitives::signature::SignatureScheme>::sign(
-            params,
-            sk,
-            &transcript,
-            rng,
-        )
-        .map_err(|e| anyhow::anyhow!("signature error: {e}"))?;
+        let sig = <S as SignatureScheme>::sign(params, sk, &transcript, rng)
+            .map_err(|e| anyhow::anyhow!("signature error: {e}"))?;
 
         Ok(WithSignature {
             value,

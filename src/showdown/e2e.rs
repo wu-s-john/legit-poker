@@ -23,7 +23,12 @@ fn e2e_three_players_random_showdown() {
         .map(|hole| {
             let seven = std::array::from_fn(|i| if i < 5 { board[i] } else { hole[i - 5] });
             let best = choose_best5_from7(seven);
-            (best.hand.cards, best.hand.category, best.tiebreak, best.score_u32)
+            (
+                best.hand.cards,
+                best.hand.category,
+                best.tiebreak,
+                best.score_u32,
+            )
         })
         .collect();
 
