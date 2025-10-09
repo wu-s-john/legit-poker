@@ -2,4 +2,14 @@
 
 pub mod prelude;
 
+pub mod events;
+pub mod game_players;
+pub mod game_shufflers;
+pub mod games;
+pub mod hand_seating;
+pub mod hand_shufflers;
+pub mod hands;
+pub mod players;
+pub mod sea_orm_active_enums;
+pub mod shufflers;
 pub mod test;

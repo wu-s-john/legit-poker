@@ -4,6 +4,7 @@ pub mod curve_absorb;
 pub mod engine;
 pub mod field_conversion;
 pub mod field_conversion_gadget;
+pub mod ledger;
 pub mod logup;
 pub mod macros;
 pub mod pedersen_commitment;
