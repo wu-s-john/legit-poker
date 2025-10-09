@@ -205,6 +205,7 @@ where
 /// Main permutation gadget: emits constraints tying VRF→RS→BG and Pedersen opening together.
 #[allow(clippy::too_many_arguments)]
 #[zk_poker_macros::track_constraints(target = "legit_poker::shuffling::permutation_proof")]
+#[allow(unused_variables)]
 pub fn prove_permutation_gadget<C, GG, RO, ROVar, const N: usize, const LEVELS: usize>(
     cs: ConstraintSystemRef<ConstraintF<C>>,
     sponge: &mut ROVar,

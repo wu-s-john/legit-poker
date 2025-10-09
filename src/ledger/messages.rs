@@ -1,12 +1,23 @@
 use ark_ec::CurveGroup;
+use ark_serialize::CanonicalSerialize;
 use serde::Serialize;
 use std::marker::PhantomData;
 
+use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::engine::nl::actions::PlayerBetAction;
+use crate::ledger::actor::AnyActor;
+use crate::ledger::{GameActor, GameId, HandId, PlayerActor, ShufflerActor};
 use crate::player::signing::append_player_bet_action;
+use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
+use crate::shuffling::player_decryption::{
+    PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
+};
 use crate::signing::{Signable, TranscriptBuilder, WithSignature};
 
-use super::types::{ActorKind, HandStatus, NonceKey, PublicKeyBytes, SignatureBytes};
+use super::snapshot::phases::{
+    HandPhase, PhaseBetting, PhaseDealing, PhaseShowdown, PhaseShuffling,
+};
+use super::types::{HandStatus, SignatureBytes};
 
 pub trait Street: Clone + Default + Serialize {
     fn status() -> HandStatus;
@@ -87,15 +98,22 @@ where
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
+fn append_serialized<T: CanonicalSerialize>(builder: &mut TranscriptBuilder, value: &T) {
+    let mut buf = Vec::new();
+    value
+        .serialize_compressed(&mut buf)
+        .expect("serialization should succeed");
+    builder.append_bytes(&buf);
+}
+
+#[derive(Debug, Clone)]
 pub struct GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
-    pub deck_in: Vec<u8>,
-    pub deck_out: Vec<u8>,
-    #[serde(skip)]
+    pub deck_in: [ElGamalCiphertext<C>; DECK_SIZE],
+    pub deck_out: [ElGamalCiphertext<C>; DECK_SIZE],
+    pub proof: ShuffleProof<C>,
     pub _curve: PhantomData<C>,
 }
 
@@ -108,20 +126,24 @@ where
     }
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_bytes(&self.deck_in);
-        builder.append_bytes(&self.deck_out);
+        for cipher in &self.deck_in {
+            append_serialized(builder, cipher);
+        }
+        for cipher in &self.deck_out {
+            append_serialized(builder, cipher);
+        }
+        // TODO: fix signable
+        // append_serialized(builder, &self.proof);
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
+#[derive(Debug, Clone)]
 pub struct GameBlindingDecryptionMessage<C>
 where
     C: CurveGroup,
 {
     pub card_in_deck_position: u8,
-    pub share_bytes: Vec<u8>,
-    #[serde(skip)]
+    pub share: PlayerTargetedBlindingContribution<C>,
     pub _curve: PhantomData<C>,
 }
 
@@ -135,19 +157,17 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
-        builder.append_bytes(&self.share_bytes);
+        append_serialized(builder, &self.share);
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
+#[derive(Debug, Clone)]
 pub struct GamePartialUnblindingShareMessage<C>
 where
     C: CurveGroup,
 {
     pub card_in_deck_position: u8,
-    pub share_bytes: Vec<u8>,
-    #[serde(skip)]
+    pub share: PartialUnblindingShare<C>,
     pub _curve: PhantomData<C>,
 }
 
@@ -161,20 +181,18 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
-        builder.append_bytes(&self.share_bytes);
+        append_serialized(builder, &self.share);
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
+#[derive(Debug, Clone)]
 pub struct GameShowdownMessage<C>
 where
     C: CurveGroup,
 {
-    pub chaum_pedersen_proofs: [Vec<u8>; 2],
+    pub chaum_pedersen_proofs: [ChaumPedersenProof<C>; 2],
     pub card_in_deck_position: [u8; 2],
-    pub hole_ciphertexts: [Vec<u8>; 2],
-    #[serde(skip)]
+    pub hole_ciphertexts: [PlayerAccessibleCiphertext<C>; 2],
     pub _curve: PhantomData<C>,
 }
 
@@ -188,20 +206,19 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         for proof in &self.chaum_pedersen_proofs {
-            builder.append_bytes(proof);
+            append_serialized(builder, proof);
         }
         for &pos in &self.card_in_deck_position {
             builder.append_u8(pos);
         }
         for ct in &self.hole_ciphertexts {
-            builder.append_bytes(ct);
+            append_serialized(builder, ct);
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", content = "data", bound(serialize = ""))]
-pub enum LedgerMessage<C>
+#[derive(Debug, Clone)]
+pub enum AnyGameMessage<C>
 where
     C: CurveGroup,
 {
@@ -215,7 +232,7 @@ where
     Showdown(GameShowdownMessage<C>),
 }
 
-impl<C> Signable for LedgerMessage<C>
+impl<C> Signable for AnyGameMessage<C>
 where
     C: CurveGroup,
 {
@@ -225,35 +242,35 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         match self {
-            LedgerMessage::Shuffle(msg) => {
+            AnyGameMessage::Shuffle(msg) => {
                 builder.append_u8(0);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::Blinding(msg) => {
+            AnyGameMessage::Blinding(msg) => {
                 builder.append_u8(1);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::PartialUnblinding(msg) => {
+            AnyGameMessage::PartialUnblinding(msg) => {
                 builder.append_u8(2);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::PlayerPreflop(msg) => {
+            AnyGameMessage::PlayerPreflop(msg) => {
                 builder.append_u8(3);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::PlayerFlop(msg) => {
+            AnyGameMessage::PlayerFlop(msg) => {
                 builder.append_u8(4);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::PlayerTurn(msg) => {
+            AnyGameMessage::PlayerTurn(msg) => {
                 builder.append_u8(5);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::PlayerRiver(msg) => {
+            AnyGameMessage::PlayerRiver(msg) => {
                 builder.append_u8(6);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
-            LedgerMessage::Showdown(msg) => {
+            AnyGameMessage::Showdown(msg) => {
                 builder.append_u8(7);
                 builder.append_bytes(&msg.to_signing_bytes());
             }
@@ -261,46 +278,97 @@ where
     }
 }
 
-impl<C> LedgerMessage<C>
+impl<C> AnyGameMessage<C>
 where
     C: CurveGroup,
 {
     pub fn phase(&self) -> HandStatus {
         match self {
-            LedgerMessage::Shuffle(_) => HandStatus::Shuffling,
-            LedgerMessage::Blinding(_) => HandStatus::Dealing,
-            LedgerMessage::PartialUnblinding(_) => HandStatus::Showdown,
-            LedgerMessage::PlayerPreflop(_) => HandStatus::Betting,
-            LedgerMessage::PlayerFlop(_) => HandStatus::Betting,
-            LedgerMessage::PlayerTurn(_) => HandStatus::Betting,
-            LedgerMessage::PlayerRiver(_) => HandStatus::Betting,
-            LedgerMessage::Showdown(_) => HandStatus::Showdown,
+            AnyGameMessage::Shuffle(_) => HandStatus::Shuffling,
+            AnyGameMessage::Blinding(_) => HandStatus::Dealing,
+            AnyGameMessage::PartialUnblinding(_) => HandStatus::Showdown,
+            AnyGameMessage::PlayerPreflop(_) => HandStatus::Betting,
+            AnyGameMessage::PlayerFlop(_) => HandStatus::Betting,
+            AnyGameMessage::PlayerTurn(_) => HandStatus::Betting,
+            AnyGameMessage::PlayerRiver(_) => HandStatus::Betting,
+            AnyGameMessage::Showdown(_) => HandStatus::Showdown,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
-pub struct ActionEnvelope<C>
+#[derive(Debug, Clone)]
+pub struct EnvelopedMessage<C, M = AnyGameMessage<C>>
 where
     C: CurveGroup,
+    M: GameMessage<C> + Signable,
 {
-    pub public_key: PublicKeyBytes,
-    pub actor: ActorKind,
+    pub hand_id: HandId,
+    pub game_id: GameId,
+    pub actor: M::Actor,
     pub nonce: u64,
-    pub signed_message: WithSignature<SignatureBytes, LedgerMessage<C>>,
+    pub public_key: C,
+    pub message: WithSignature<SignatureBytes, M>,
 }
 
 #[derive(Debug, Clone)]
-pub struct VerifiedEnvelope<C>
+pub struct AnyMessageEnvelope<C>
 where
     C: CurveGroup,
 {
-    pub key: NonceKey,
+    pub hand_id: HandId,
+    pub game_id: GameId,
+    pub actor: AnyActor,
     pub nonce: u64,
-    pub phase: HandStatus,
-    pub message: LedgerMessage<C>,
-    pub raw: ActionEnvelope<C>,
+    pub public_key: C,
+    pub message: WithSignature<SignatureBytes, AnyGameMessage<C>>,
+}
+
+pub trait GameMessage<C>
+where
+    C: CurveGroup,
+{
+    type Phase: HandPhase<C>;
+    type Actor: GameActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GameShuffleMessage<C> {
+    type Phase = PhaseShuffling;
+    type Actor = ShufflerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GameBlindingDecryptionMessage<C> {
+    type Phase = PhaseDealing;
+    type Actor = ShufflerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GamePartialUnblindingShareMessage<C> {
+    type Phase = PhaseDealing;
+    type Actor = ShufflerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<PreflopStreet, C> {
+    type Phase = PhaseBetting<PreflopStreet>;
+    type Actor = PlayerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<FlopStreet, C> {
+    type Phase = PhaseBetting<FlopStreet>;
+    type Actor = PlayerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<TurnStreet, C> {
+    type Phase = PhaseBetting<TurnStreet>;
+    type Actor = PlayerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<RiverStreet, C> {
+    type Phase = PhaseBetting<RiverStreet>;
+    type Actor = PlayerActor;
+}
+
+impl<C: CurveGroup> GameMessage<C> for GameShowdownMessage<C> {
+    type Phase = PhaseShowdown;
+    type Actor = PlayerActor;
 }
 
 #[cfg(test)]
@@ -310,6 +378,8 @@ mod tests {
     use crate::signing::{Signable, WithSignature};
     use anyhow::Result;
     use ark_crypto_primitives::signature::{schnorr::Schnorr, SignatureScheme};
+    use ark_ec::CurveGroup;
+    use ark_ff::Zero;
     use ark_grumpkin::Projective as GrumpkinProjective;
     use rand::{rngs::StdRng, SeedableRng};
     use sha2::Sha256;
@@ -327,47 +397,51 @@ mod tests {
         (params, pk, sk)
     }
 
-    fn sample_ledger_messages() -> Vec<LedgerMessage<GrumpkinProjective>> {
+    fn sample_ledger_messages() -> Vec<AnyGameMessage<GrumpkinProjective>> {
         vec![
-            LedgerMessage::Shuffle(GameShuffleMessage {
-                deck_in: vec![0, 1, 2],
-                deck_out: vec![3, 4, 5],
+            AnyGameMessage::Shuffle(GameShuffleMessage {
+                deck_in: sample_deck(),
+                deck_out: sample_deck(),
+                proof: sample_shuffle_proof(),
                 _curve: PhantomData,
             }),
-            LedgerMessage::Blinding(GameBlindingDecryptionMessage {
+            AnyGameMessage::Blinding(GameBlindingDecryptionMessage {
                 card_in_deck_position: 7,
-                share_bytes: vec![11, 12],
+                share: sample_blinding_contribution(),
                 _curve: PhantomData,
             }),
-            LedgerMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
+            AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
                 card_in_deck_position: 13,
-                share_bytes: vec![21, 22, 23],
+                share: sample_partial_unblinding_share(),
                 _curve: PhantomData,
             }),
-            LedgerMessage::PlayerPreflop(GamePlayerMessage {
+            AnyGameMessage::PlayerPreflop(GamePlayerMessage {
                 street: PreflopStreet,
                 action: PlayerBetAction::Call,
                 _curve: PhantomData,
             }),
-            LedgerMessage::PlayerFlop(GamePlayerMessage {
+            AnyGameMessage::PlayerFlop(GamePlayerMessage {
                 street: FlopStreet,
                 action: PlayerBetAction::Check,
                 _curve: PhantomData,
             }),
-            LedgerMessage::PlayerTurn(GamePlayerMessage {
+            AnyGameMessage::PlayerTurn(GamePlayerMessage {
                 street: TurnStreet,
                 action: PlayerBetAction::BetTo { to: 42 },
                 _curve: PhantomData,
             }),
-            LedgerMessage::PlayerRiver(GamePlayerMessage {
+            AnyGameMessage::PlayerRiver(GamePlayerMessage {
                 street: RiverStreet,
                 action: PlayerBetAction::RaiseTo { to: 64 },
                 _curve: PhantomData,
             }),
-            LedgerMessage::Showdown(GameShowdownMessage {
-                chaum_pedersen_proofs: [vec![1u8, 2], vec![3u8, 4]],
+            AnyGameMessage::Showdown(GameShowdownMessage {
+                chaum_pedersen_proofs: [sample_cp_proof(), sample_cp_proof()],
                 card_in_deck_position: [5u8, 6],
-                hole_ciphertexts: [vec![7u8, 8], vec![9u8, 10]],
+                hole_ciphertexts: [
+                    sample_accessible_ciphertext(),
+                    sample_accessible_ciphertext(),
+                ],
                 _curve: PhantomData,
             }),
         ]
@@ -400,24 +474,28 @@ mod tests {
     #[test]
     fn base_messages_have_canonical_transcripts() -> Result<()> {
         sign_and_verify(GameShuffleMessage::<GrumpkinProjective> {
-            deck_in: vec![1, 2, 3],
-            deck_out: vec![4, 5, 6],
+            deck_in: sample_deck(),
+            deck_out: sample_deck(),
+            proof: sample_shuffle_proof(),
             _curve: PhantomData,
         })?;
         sign_and_verify(GameBlindingDecryptionMessage::<GrumpkinProjective> {
             card_in_deck_position: 1,
-            share_bytes: vec![7, 8, 9],
+            share: sample_blinding_contribution(),
             _curve: PhantomData,
         })?;
         sign_and_verify(GamePartialUnblindingShareMessage::<GrumpkinProjective> {
             card_in_deck_position: 2,
-            share_bytes: vec![10, 11],
+            share: sample_partial_unblinding_share(),
             _curve: PhantomData,
         })?;
         sign_and_verify(GameShowdownMessage::<GrumpkinProjective> {
-            chaum_pedersen_proofs: [vec![12], vec![13]],
+            chaum_pedersen_proofs: [sample_cp_proof(), sample_cp_proof()],
             card_in_deck_position: [14, 15],
-            hole_ciphertexts: [vec![16], vec![17]],
+            hole_ciphertexts: [
+                sample_accessible_ciphertext(),
+                sample_accessible_ciphertext(),
+            ],
             _curve: PhantomData,
         })?;
         sign_and_verify(GamePlayerMessage::<PreflopStreet, GrumpkinProjective> {
@@ -431,5 +509,54 @@ mod tests {
             nonce: 0,
         })?;
         Ok(())
+    }
+
+    fn sample_cipher<C: CurveGroup>() -> ElGamalCiphertext<C> {
+        ElGamalCiphertext::new(C::zero(), C::zero())
+    }
+
+    fn sample_deck<C: CurveGroup>() -> [ElGamalCiphertext<C>; DECK_SIZE] {
+        std::array::from_fn(|_| sample_cipher())
+    }
+
+    fn sample_shuffle_proof<C: CurveGroup>() -> ShuffleProof<C> {
+        ShuffleProof::new(
+            sample_deck().to_vec(),
+            vec![(sample_cipher(), C::BaseField::zero()); DECK_SIZE],
+            vec![C::ScalarField::zero(); DECK_SIZE],
+        )
+        .unwrap()
+    }
+
+    fn sample_cp_proof<C: CurveGroup>() -> ChaumPedersenProof<C> {
+        ChaumPedersenProof {
+            t_g: C::zero(),
+            t_h: C::zero(),
+            z: C::ScalarField::zero(),
+        }
+    }
+
+    fn sample_blinding_contribution<C: CurveGroup>() -> PlayerTargetedBlindingContribution<C> {
+        PlayerTargetedBlindingContribution {
+            blinding_base_contribution: C::zero(),
+            blinding_combined_contribution: C::zero(),
+            proof: sample_cp_proof(),
+        }
+    }
+
+    fn sample_partial_unblinding_share<C: CurveGroup>() -> PartialUnblindingShare<C> {
+        PartialUnblindingShare {
+            share: C::zero(),
+            member_index: 0,
+        }
+    }
+
+    fn sample_accessible_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
+        PlayerAccessibleCiphertext {
+            blinded_base: C::zero(),
+            blinded_message_with_player_key: C::zero(),
+            player_unblinding_helper: C::zero(),
+            shuffler_proofs: Vec::new(),
+        }
     }
 }

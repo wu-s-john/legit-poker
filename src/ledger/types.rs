@@ -1,5 +1,4 @@
-use crate::engine::nl::types::{PlayerId, SeatId};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 pub type GameId = i64;
 pub type HandId = i64;
@@ -22,17 +21,6 @@ pub enum HandStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum ActorKind {
-    Player {
-        seat_id: SeatId,
-        player_id: PlayerId,
-    },
-    Shuffler {
-        shuffler_id: ShufflerId,
-    },
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct NonceKey {
     pub hand_id: HandId,
@@ -42,3 +30,48 @@ pub struct NonceKey {
 
 pub type SignatureBytes = Vec<u8>;
 pub type PublicKeyBytes = Vec<u8>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StateHash([u8; 32]);
+
+impl StateHash {
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub const fn zero() -> Self {
+        Self([0u8; 32])
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    pub fn into_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl Default for StateHash {
+    fn default() -> Self {
+        Self::zero()
+    }
+}
+
+impl AsRef<[u8; 32]> for StateHash {
+    fn as_ref(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for StateHash {
+    fn from(bytes: [u8; 32]) -> Self {
+        StateHash::new(bytes)
+    }
+}
+
+impl From<StateHash> for [u8; 32] {
+    fn from(hash: StateHash) -> Self {
+        hash.0
+    }
+}

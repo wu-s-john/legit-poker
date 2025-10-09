@@ -1,14 +1,17 @@
+use crate::ledger::messages::AnyMessageEnvelope;
 use ark_ec::CurveGroup;
-use tokio::sync::oneshot::Receiver;
+use std::collections::VecDeque;
+use std::fmt;
+use std::sync::Mutex;
+use tokio::sync::oneshot::{Receiver, Sender};
 
-use super::messages::VerifiedEnvelope;
-
+// We should accept a message Envelop of any type
 pub trait LedgerQueue<C>
 where
     C: CurveGroup,
 {
-    fn push(&self, item: VerifiedEnvelope<C>) -> Result<(), QueueError>;
-    fn pop(&self) -> Receiver<VerifiedEnvelope<C>>;
+    fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError>;
+    fn pop(&self) -> Receiver<AnyMessageEnvelope<C>>;
     fn len(&self) -> usize;
 }
 
@@ -18,20 +21,31 @@ pub enum QueueError {
     Closed,
 }
 
-#[derive(Debug)]
 pub struct FifoLedgerQueue<C>
 where
     C: CurveGroup,
 {
-    _marker: std::marker::PhantomData<C>,
+    state: Mutex<QueueState<C>>,
+}
+
+struct QueueState<C: CurveGroup> {
+    items: VecDeque<AnyMessageEnvelope<C>>,
+    waiters: VecDeque<Sender<AnyMessageEnvelope<C>>>,
+    closed: bool,
 }
 
 impl<C> FifoLedgerQueue<C>
 where
     C: CurveGroup,
 {
-    pub fn new(_capacity: usize) -> Self {
-        todo!("queue not implemented")
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            state: Mutex::new(QueueState {
+                items: VecDeque::with_capacity(capacity),
+                waiters: VecDeque::new(),
+                closed: false,
+            }),
+        }
     }
 }
 
@@ -39,16 +53,97 @@ impl<C> LedgerQueue<C> for FifoLedgerQueue<C>
 where
     C: CurveGroup + 'static,
 {
-    fn push(&self, _item: VerifiedEnvelope<C>) -> Result<(), QueueError> {
-        todo!("queue push not implemented")
+    fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
+        let mut pending = Some(item);
+
+        loop {
+            let waiter = {
+                let mut state = self.state.lock().expect("ledger queue poisoned");
+                if state.closed {
+                    return Err(QueueError::Closed);
+                }
+                state.waiters.pop_front()
+            };
+
+            if let Some(waiter) = waiter {
+                let value = pending.take().expect("item must remain available");
+                match waiter.send(value) {
+                    Ok(()) => return Ok(()),
+                    Err(value) => {
+                        pending = Some(value);
+                        continue;
+                    }
+                }
+            } else {
+                let mut state = self.state.lock().expect("ledger queue poisoned");
+                if state.closed {
+                    return Err(QueueError::Closed);
+                }
+                state
+                    .items
+                    .push_back(pending.take().expect("item must remain available"));
+                return Ok(());
+            }
+        }
     }
 
-    fn pop(&self) -> Receiver<VerifiedEnvelope<C>> {
-        todo!("queue pop not implemented")
+    fn pop(&self) -> Receiver<AnyMessageEnvelope<C>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        let mut state = self.state.lock().expect("ledger queue poisoned");
+        if state.closed {
+            drop(tx);
+            return rx;
+        }
+
+        if let Some(item) = state.items.pop_front() {
+            drop(state);
+            if let Err(item) = tx.send(item) {
+                let mut state = self.state.lock().expect("ledger queue poisoned");
+                state.items.push_front(item);
+            }
+        } else {
+            state.waiters.push_back(tx);
+        }
+
+        rx
     }
 
     fn len(&self) -> usize {
-        todo!("queue len not implemented")
+        let state = self.state.lock().expect("ledger queue poisoned");
+        state.items.len()
+    }
+}
+
+impl<C> Drop for FifoLedgerQueue<C>
+where
+    C: CurveGroup,
+{
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            state.waiters.clear();
+            state.items.clear();
+        }
+    }
+}
+
+impl<C> fmt::Debug for FifoLedgerQueue<C>
+where
+    C: CurveGroup,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.state.lock() {
+            Ok(state) => f
+                .debug_struct("FifoLedgerQueue")
+                .field("pending_items", &state.items.len())
+                .field("waiting_receivers", &state.waiters.len())
+                .finish(),
+            Err(_) => f
+                .debug_struct("FifoLedgerQueue")
+                .field("poisoned", &true)
+                .finish(),
+        }
     }
 }
 
@@ -56,84 +151,38 @@ where
 mod tests {
     use super::*;
     use ark_bn254::G1Projective as Curve;
-    use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
+    use tokio::runtime::Runtime;
 
-    fn sample_verified_envelope(nonce: u64) -> VerifiedEnvelope<Curve> {
+    fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
         use crate::engine::nl::actions::PlayerBetAction;
-        use crate::ledger::messages::{
-            ActionEnvelope, GamePlayerMessage, LedgerMessage, PreflopStreet,
-        };
-        use crate::ledger::types::{ActorKind, EntityKind, HandStatus, NonceKey};
-        use crate::player::signing::WithSignature;
+        use crate::ledger::actor::AnyActor;
+        use crate::ledger::messages::{AnyGameMessage, GamePlayerMessage, PreflopStreet};
+        use crate::signing::WithSignature;
+        use ark_ff::Zero;
 
-        let message = LedgerMessage::PlayerPreflop(GamePlayerMessage {
+        let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage {
             street: PreflopStreet,
             action: PlayerBetAction::Fold,
             _curve: std::marker::PhantomData,
         });
 
-        let envelope = ActionEnvelope {
-            public_key: Vec::new(),
-            actor: ActorKind::Player {
-                seat_id: 0,
-                player_id: 0,
-            },
+        AnyMessageEnvelope {
+            hand_id: 0,
+            game_id: 0,
+            actor: AnyActor::default(),
             nonce,
-            signed_message: WithSignature {
-                value: message.clone(),
+            public_key: Curve::zero(),
+            message: WithSignature {
+                value: message,
                 signature: Vec::new(),
                 transcript: Vec::new(),
             },
-        };
-
-        VerifiedEnvelope {
-            key: NonceKey {
-                hand_id: 0,
-                entity_kind: EntityKind::Player,
-                entity_id: 0,
-            },
-            nonce,
-            phase: HandStatus::Betting,
-            message,
-            raw: envelope,
-        }
-    }
-
-    struct InMemoryQueue<C: CurveGroup> {
-        inner: Arc<Mutex<VecDeque<VerifiedEnvelope<C>>>>,
-    }
-
-    impl<C: CurveGroup> InMemoryQueue<C> {
-        fn new() -> Self {
-            Self {
-                inner: Arc::new(Mutex::new(VecDeque::new())),
-            }
-        }
-    }
-
-    impl<C: CurveGroup> LedgerQueue<C> for InMemoryQueue<C> {
-        fn push(&self, item: VerifiedEnvelope<C>) -> Result<(), QueueError> {
-            self.inner.lock().unwrap().push_back(item);
-            Ok(())
-        }
-
-        fn pop(&self) -> Receiver<VerifiedEnvelope<C>> {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            if let Some(item) = self.inner.lock().unwrap().pop_front() {
-                let _ = tx.send(item);
-            }
-            rx
-        }
-
-        fn len(&self) -> usize {
-            self.inner.lock().unwrap().len()
         }
     }
 
     #[test]
     fn fifo_ordering_is_preserved() {
-        let queue = InMemoryQueue::<Curve>::new();
+        let queue = FifoLedgerQueue::<Curve>::new(8);
         queue.push(sample_verified_envelope(1)).unwrap();
         queue.push(sample_verified_envelope(2)).unwrap();
         queue.push(sample_verified_envelope(3)).unwrap();
@@ -148,14 +197,45 @@ mod tests {
         assert_eq!(c.nonce, 3);
     }
 
+    #[test]
+    fn pop_receiver_resolves_after_push() {
+        let queue = FifoLedgerQueue::<Curve>::new(4);
+        let rx = queue.pop();
+        queue.push(sample_verified_envelope(42)).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let value = rt.block_on(rx).unwrap();
+        assert_eq!(value.nonce, 42);
+    }
+
+    #[test]
+    fn pop_before_push_completes_when_item_arrives() {
+        let queue = FifoLedgerQueue::<Curve>::new(2);
+        let rx = queue.pop();
+        queue.push(sample_verified_envelope(7)).unwrap();
+        let rt = Runtime::new().unwrap();
+        let value = rt.block_on(rx).unwrap();
+        assert_eq!(value.nonce, 7);
+    }
+
+    #[test]
+    fn len_reflects_enqueued_items() {
+        let queue = FifoLedgerQueue::<Curve>::new(2);
+        assert_eq!(queue.len(), 0);
+        queue.push(sample_verified_envelope(5)).unwrap();
+        assert_eq!(queue.len(), 1);
+        let rt = Runtime::new().unwrap();
+        let _ = rt.block_on(queue.pop()).unwrap();
+        assert_eq!(queue.len(), 0);
+    }
+
     struct ClosedQueue<C: CurveGroup>(std::marker::PhantomData<C>);
 
     impl<C: CurveGroup> LedgerQueue<C> for ClosedQueue<C> {
-        fn push(&self, _item: VerifiedEnvelope<C>) -> Result<(), QueueError> {
+        fn push(&self, _item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
             Err(QueueError::Closed)
         }
 
-        fn pop(&self) -> Receiver<VerifiedEnvelope<C>> {
+        fn pop(&self) -> Receiver<AnyMessageEnvelope<C>> {
             let (_tx, rx) = tokio::sync::oneshot::channel();
             rx
         }
@@ -170,15 +250,5 @@ mod tests {
         let queue = ClosedQueue::<Curve>(std::marker::PhantomData);
         let result = queue.push(sample_verified_envelope(0));
         assert!(matches!(result, Err(QueueError::Closed)));
-    }
-
-    #[test]
-    fn pop_receiver_resolves_after_push() {
-        let queue = InMemoryQueue::<Curve>::new();
-        queue.push(sample_verified_envelope(42)).unwrap();
-        let rx = queue.pop();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let value = rt.block_on(rx).unwrap();
-        assert_eq!(value.nonce, 42);
     }
 }

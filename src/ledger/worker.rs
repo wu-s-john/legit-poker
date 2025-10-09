@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ark_ec::CurveGroup;
 use thiserror::Error;
 
-use super::messages::VerifiedEnvelope;
+use super::messages::AnyMessageEnvelope;
 use super::queue::LedgerQueue;
 use super::state::LedgerState;
 use super::store::EventStore;
@@ -40,7 +40,7 @@ where
         todo!("worker loop not implemented")
     }
 
-    pub async fn handle_event(&self, event: VerifiedEnvelope<C>) -> Result<(), WorkerError> {
+    pub async fn handle_event(&self, event: AnyMessageEnvelope<C>) -> Result<(), WorkerError> {
         let _ = (&self.event_store, &self.state, event);
         todo!("handle_event not implemented")
     }
@@ -59,53 +59,40 @@ pub enum WorkerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ledger::queue::QueueError;
     use ark_bn254::G1Projective as Curve;
+    use ark_ff::Zero;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
-    fn sample_verified_envelope(nonce: u64) -> VerifiedEnvelope<Curve> {
+    fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
         use crate::engine::nl::actions::PlayerBetAction;
-        use crate::ledger::messages::{
-            ActionEnvelope, GamePlayerMessage, LedgerMessage, PreflopStreet,
-        };
-        use crate::ledger::types::{ActorKind, EntityKind, HandStatus, NonceKey};
-        use crate::player::signing::WithSignature;
+        use crate::ledger::actor::AnyActor;
+        use crate::ledger::messages::{AnyGameMessage, GamePlayerMessage, PreflopStreet};
+        use crate::signing::WithSignature;
 
-        let message = LedgerMessage::PlayerPreflop(GamePlayerMessage {
+        let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage {
             street: PreflopStreet,
             action: PlayerBetAction::Call,
             _curve: std::marker::PhantomData,
         });
 
-        let envelope = ActionEnvelope {
-            public_key: Vec::new(),
-            actor: ActorKind::Player {
-                seat_id: 0,
-                player_id: 0,
-            },
+        AnyMessageEnvelope {
+            hand_id: 0,
+            game_id: 0,
+            actor: AnyActor::default(),
             nonce,
-            signed_message: WithSignature {
-                value: message.clone(),
+            public_key: Curve::zero(),
+            message: WithSignature {
+                value: message,
                 signature: Vec::new(),
                 transcript: Vec::new(),
             },
-        };
-
-        VerifiedEnvelope {
-            key: NonceKey {
-                hand_id: 0,
-                entity_kind: EntityKind::Player,
-                entity_id: 0,
-            },
-            nonce,
-            phase: HandStatus::Betting,
-            message,
-            raw: envelope,
         }
     }
 
     struct MemoryQueue<C: CurveGroup> {
-        inner: Arc<Mutex<VecDeque<VerifiedEnvelope<C>>>>,
+        inner: Arc<Mutex<VecDeque<AnyMessageEnvelope<C>>>>,
     }
 
     impl<C: CurveGroup> MemoryQueue<C> {
@@ -117,12 +104,12 @@ mod tests {
     }
 
     impl<C: CurveGroup> LedgerQueue<C> for MemoryQueue<C> {
-        fn push(&self, item: VerifiedEnvelope<C>) -> Result<(), QueueError> {
+        fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
             self.inner.lock().unwrap().push_back(item);
             Ok(())
         }
 
-        fn pop(&self) -> tokio::sync::oneshot::Receiver<VerifiedEnvelope<C>> {
+        fn pop(&self) -> tokio::sync::oneshot::Receiver<AnyMessageEnvelope<C>> {
             let (tx, rx) = tokio::sync::oneshot::channel();
             if let Some(item) = self.inner.lock().unwrap().pop_front() {
                 let _ = tx.send(item);
@@ -136,7 +123,7 @@ mod tests {
     }
 
     struct MemoryStore<C: CurveGroup> {
-        events: Arc<Mutex<Vec<VerifiedEnvelope<C>>>>,
+        events: Arc<Mutex<Vec<AnyMessageEnvelope<C>>>>,
     }
 
     impl<C: CurveGroup> MemoryStore<C> {
@@ -152,20 +139,25 @@ mod tests {
     }
 
     impl<C: CurveGroup> EventStore<C> for MemoryStore<C> {
-        fn persist_event(&self, event: &VerifiedEnvelope<C>) -> anyhow::Result<()> {
+        fn persist_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<()> {
             self.events.lock().unwrap().push(event.clone());
             Ok(())
         }
 
-        fn load_all_events(&self) -> anyhow::Result<Vec<VerifiedEnvelope<C>>> {
+        fn load_all_events(&self) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
             Ok(self.events.lock().unwrap().clone())
         }
 
         fn load_hand_events(
             &self,
-            _hand_id: crate::ledger::types::HandId,
-        ) -> anyhow::Result<Vec<VerifiedEnvelope<C>>> {
-            Ok(self.events.lock().unwrap().clone())
+            hand_id: crate::ledger::types::HandId,
+        ) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
+            let events = self.events.lock().unwrap();
+            Ok(events
+                .iter()
+                .cloned()
+                .filter(|event| event.hand_id == hand_id)
+                .collect())
         }
     }
 

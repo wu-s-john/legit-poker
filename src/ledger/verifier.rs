@@ -1,8 +1,8 @@
 use ark_ec::CurveGroup;
 use thiserror::Error;
 
-use super::messages::{ActionEnvelope, VerifiedEnvelope};
 use super::types::HandId;
+use crate::ledger::messages::AnyMessageEnvelope;
 
 pub trait Verifier<C>
 where
@@ -11,8 +11,8 @@ where
     fn verify(
         &self,
         hand_id: HandId,
-        envelope: ActionEnvelope<C>,
-    ) -> Result<VerifiedEnvelope<C>, VerifyError>;
+        envelope: AnyMessageEnvelope<C>,
+    ) -> Result<AnyMessageEnvelope<C>, VerifyError>;
 }
 
 #[derive(Debug, Error)]
@@ -32,7 +32,6 @@ pub enum VerifyError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ledger::messages::LedgerMessage;
 
     // NOTE: The verifier logic is not yet implemented. These tests capture the
     // desired behaviour and will be enabled once the underlying functionality
@@ -79,8 +78,8 @@ where
     fn verify(
         &self,
         _hand_id: HandId,
-        _envelope: ActionEnvelope<C>,
-    ) -> Result<VerifiedEnvelope<C>, VerifyError> {
-        todo!("verifier not implemented")
+        _envelope: AnyMessageEnvelope<C>,
+    ) -> Result<AnyMessageEnvelope<C>, VerifyError> {
+        Err(VerifyError::InvalidMessage)
     }
 }
