@@ -1,62 +1,43 @@
-use ark_crypto_primitives::signature::SignatureScheme;
-use serde::{Deserialize, Serialize};
-
-/// A signed envelope carrying a serde-serializable value, its signature, and the
-/// exact transcript bytes that were signed (domain-separated and canonicalized).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WithSignature<Sig, T>
-where
-    T: Serialize,
-{
-    pub value: T,
-    pub signature: Sig,
-    /// Canonical bytes used for signing/verification (domain tag || serialized value)
-    pub transcript: Vec<u8>,
-}
-
-impl<Sig, T> WithSignature<Sig, T>
-where
-    T: Serialize,
-{
-    /// Build a signed envelope using a provided SignatureScheme.
-    ///
-    /// The transcript is constructed as: domain_tag || serde_json(value).
-    /// This function signs the transcript and returns the envelope.
-    pub fn new<S, R>(
-        value: T,
-        domain_tag: &[u8],
-        params: &<S as SignatureScheme>::Parameters,
-        sk: &<S as SignatureScheme>::SecretKey,
-        rng: &mut R,
-    ) -> anyhow::Result<WithSignature<<S as SignatureScheme>::Signature, T>>
-    where
-        S: SignatureScheme,
-        R: rand::Rng,
-    {
-        // Serialize payload deterministically
-        let mut transcript = Vec::with_capacity(domain_tag.len() + 128);
-        transcript.extend_from_slice(domain_tag);
-        let payload = serde_json::to_vec(&value)?;
-        transcript.extend_from_slice(&payload);
-
-        // Sign transcript using the provided scheme
-        let sig = <S as SignatureScheme>::sign(params, sk, &transcript, rng)
-            .map_err(|e| anyhow::anyhow!("signature error: {e}"))?;
-
-        Ok(WithSignature {
-            value,
-            signature: sig,
-            transcript,
-        })
-    }
-}
-
 /// Minimal payload for betting action attestation.
 /// Extend as needed with table/hand identifiers, nonces, etc.
+use serde::{Deserialize, Serialize};
+
+use crate::engine::nl::actions::PlayerBetAction;
+use crate::signing::{Signable, TranscriptBuilder};
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlayerActionBet {
     pub seat: crate::engine::nl::types::SeatId,
-    pub action: crate::engine::nl::actions::PlayerBetAction,
+    pub action: PlayerBetAction,
     /// Optional anti-replay field (caller managed). 0 if unused.
     pub nonce: u64,
+}
+
+impl Signable for PlayerActionBet {
+    fn domain_kind(&self) -> &'static str {
+        "player_action_bet_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u8(self.seat);
+        append_player_bet_action(builder, &self.action);
+        builder.append_u64(self.nonce);
+    }
+}
+
+pub(crate) fn append_player_bet_action(builder: &mut TranscriptBuilder, action: &PlayerBetAction) {
+    match action {
+        PlayerBetAction::Fold => builder.append_u8(0),
+        PlayerBetAction::Check => builder.append_u8(1),
+        PlayerBetAction::Call => builder.append_u8(2),
+        PlayerBetAction::BetTo { to } => {
+            builder.append_u8(3);
+            builder.append_u64(*to);
+        }
+        PlayerBetAction::RaiseTo { to } => {
+            builder.append_u8(4);
+            builder.append_u64(*to);
+        }
+        PlayerBetAction::AllIn => builder.append_u8(5),
+    }
 }

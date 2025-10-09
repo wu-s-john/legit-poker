@@ -10,8 +10,9 @@ use sha2::Digest;
 
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::types::SeatId;
-use crate::player::signing::{PlayerActionBet, WithSignature};
+use crate::player::signing::PlayerActionBet;
 use crate::showdown::{choose_best5_from7, pack_score_field, Card, HandCategory, Index};
+use crate::signing::WithSignature;
 use crate::PlayerAccessibleCiphertext;
 
 pub mod signing;
@@ -86,7 +87,6 @@ where
     pub pk: S::PublicKey,
     pub sk: S::SecretKey,
     rng: RefCell<StdRng>,
-    domain_tag: &'static [u8],
     hole_ciphertexts: Option<[PlayerAccessibleCiphertext<G>; 2]>,
 
     /// Aggregated committee/shuffler public key Σ_j pk_j
@@ -105,7 +105,6 @@ where
         pk: S::PublicKey,
         sk: S::SecretKey,
         seed: [u8; 32],
-        domain_tag: &'static [u8],
     ) -> Self {
         let rng = StdRng::from_seed(seed);
         Self {
@@ -114,7 +113,6 @@ where
             pk,
             sk: sk.clone(),
             rng: RefCell::new(rng),
-            domain_tag,
             hole_ciphertexts: None,
             aggregated_shuffler_public_key: None,
             unblinding: None,
@@ -161,7 +159,7 @@ where
         let env = WithSignature::<<S as SignatureScheme>::Signature, PlayerActionBet>::new::<
             S,
             StdRng,
-        >(payload, self.domain_tag, &self.params, &self.sk, &mut *rng)?;
+        >(payload, &self.params, &self.sk, &mut *rng)?;
         Ok(env)
     }
 }
@@ -189,7 +187,7 @@ where
             WithSignature::<<Self::SigScheme as SignatureScheme>::Signature, PlayerActionBet>::new::<
                 Self::SigScheme,
                 StdRng,
-            >(payload, self.domain_tag, &self.params, &self.sk, &mut *rng)?;
+            >(payload, &self.params, &self.sk, &mut *rng)?;
         Ok(env)
     }
 
@@ -287,7 +285,7 @@ mod tests {
         let mut rng = ark_std::test_rng();
         let params = Scheme::setup(&mut rng).expect("setup");
         let (pk, sk) = Scheme::keygen(&params, &mut rng).expect("keygen");
-        PlayerSigner::new(seat, params, pk, sk, [7u8; 32], b"zkpoker/bet_v1")
+        PlayerSigner::new(seat, params, pk, sk, [7u8; 32])
     }
 
     fn setup_preflop_state() -> BettingState {
@@ -331,13 +329,12 @@ mod tests {
         let seat = 3u8;
         let action = PlayerBetAction::Call;
         let signed = signers.get(&seat).unwrap().sign_action(action).unwrap();
-        assert!(Scheme::verify(
-            &signers.get(&seat).unwrap().params,
-            &signers.get(&seat).unwrap().pk,
-            &signed.transcript,
-            &signed.signature
-        )
-        .unwrap());
+        assert!(signed
+            .verify::<Scheme>(
+                &signers.get(&seat).unwrap().params,
+                &signers.get(&seat).unwrap().pk
+            )
+            .unwrap());
         let tr = EngineNL::apply_action(&mut state, seat, signed.value.action).unwrap();
         match tr {
             crate::engine::nl::engine::Transition::Continued { .. } => {}
@@ -348,26 +345,24 @@ mod tests {
         let seat = 4u8;
         let action = PlayerBetAction::Fold;
         let signed = signers.get(&seat).unwrap().sign_action(action).unwrap();
-        assert!(Scheme::verify(
-            &signers.get(&seat).unwrap().params,
-            &signers.get(&seat).unwrap().pk,
-            &signed.transcript,
-            &signed.signature
-        )
-        .unwrap());
+        assert!(signed
+            .verify::<Scheme>(
+                &signers.get(&seat).unwrap().params,
+                &signers.get(&seat).unwrap().pk
+            )
+            .unwrap());
         let _ = EngineNL::apply_action(&mut state, seat, signed.value.action).unwrap();
 
         // CO (5) call
         let seat = 5u8;
         let action = PlayerBetAction::Call;
         let signed = signers.get(&seat).unwrap().sign_action(action).unwrap();
-        assert!(Scheme::verify(
-            &signers.get(&seat).unwrap().params,
-            &signers.get(&seat).unwrap().pk,
-            &signed.transcript,
-            &signed.signature
-        )
-        .unwrap());
+        assert!(signed
+            .verify::<Scheme>(
+                &signers.get(&seat).unwrap().params,
+                &signers.get(&seat).unwrap().pk
+            )
+            .unwrap());
         let _ = EngineNL::apply_action(&mut state, seat, signed.value.action).unwrap();
 
         // SB (1) complete to 2

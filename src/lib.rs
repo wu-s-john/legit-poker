@@ -12,6 +12,7 @@ pub mod player;
 pub mod showdown;
 pub mod shuffler;
 pub mod shuffling;
+pub mod signing;
 pub mod vrf;
 
 pub mod db;
