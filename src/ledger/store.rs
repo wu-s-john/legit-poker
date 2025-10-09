@@ -17,3 +17,22 @@ where
 }
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "EventStore trait lacks concrete in-memory implementation"]
+    fn load_all_events_returns_ordered_history() {
+        todo!(
+            "Persist events out of order and assert load_all_events returns them chronologically"
+        );
+    }
+
+    #[test]
+    #[ignore = "EventStore trait lacks concrete in-memory implementation"]
+    fn load_hand_events_filters_correctly() {
+        todo!("Persist events for multiple hands and ensure load_hand_events returns only the requested hand");
+    }
+}

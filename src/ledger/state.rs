@@ -242,3 +242,152 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::G1Projective as Curve;
+    use ark_ff::Zero;
+
+    fn sample_cipher<C: CurveGroup>() -> ElGamalCiphertext<C> {
+        ElGamalCiphertext::new(C::zero(), C::zero())
+    }
+
+    fn sample_shuffle_proof<C: CurveGroup>() -> ShuffleProof<C> {
+        ShuffleProof::new(
+            vec![sample_cipher(); DECK_SIZE],
+            vec![(sample_cipher(), C::BaseField::zero()); DECK_SIZE],
+            vec![C::ScalarField::zero(); DECK_SIZE],
+        )
+        .unwrap()
+    }
+
+    fn sample_table_snapshot<C: CurveGroup>() -> TableAtShuffling<C> {
+        use crate::engine::nl::state::{BettingState, Pot, Pots};
+        use crate::engine::nl::types::{
+            ActionLog, HandConfig, PlayerState, PlayerStatus, Street as EngineStreet, TableStakes,
+        };
+
+        let shuffling = ShufflingSnapshot {
+            initial_deck: std::array::from_fn(|_| sample_cipher()),
+            steps: vec![ShufflingStep {
+                shuffler_public_key: C::zero(),
+                proof: sample_shuffle_proof(),
+            }],
+            final_deck: std::array::from_fn(|_| sample_cipher()),
+        };
+
+        let dealing = DealingSnapshot {
+            assignments: BTreeMap::new(),
+            player_ciphertexts: BTreeMap::new(),
+            player_blinding_contribs: BTreeMap::new(),
+            community_decryption_shares: BTreeMap::new(),
+        };
+
+        let betting = BettingSnapshot {
+            state: BettingState {
+                street: EngineStreet::Preflop,
+                button: 0,
+                first_to_act: 0,
+                to_act: 0,
+                current_bet_to_match: 0,
+                last_full_raise_amount: 0,
+                last_aggressor: None,
+                voluntary_bet_opened: false,
+                players: vec![PlayerState {
+                    seat: 0,
+                    player_id: Some(0),
+                    stack: 0,
+                    committed_this_round: 0,
+                    committed_total: 0,
+                    status: PlayerStatus::Active,
+                    has_acted_this_round: false,
+                }],
+                pots: Pots {
+                    main: Pot {
+                        amount: 0,
+                        eligible: vec![],
+                    },
+                    sides: vec![],
+                },
+                cfg: HandConfig {
+                    stakes: TableStakes {
+                        small_blind: 0,
+                        big_blind: 0,
+                        ante: 0,
+                    },
+                    button: 0,
+                    small_blind_seat: 0,
+                    big_blind_seat: 0,
+                    check_raise_allowed: true,
+                },
+                pending_to_match: vec![],
+                betting_locked_all_in: false,
+                action_log: ActionLog::default(),
+            },
+            last_events: Vec::new(),
+        };
+
+        let reveals = RevealsSnapshot {
+            board: Vec::new(),
+            revealed_holes: BTreeMap::new(),
+        };
+
+        TableSnapshot {
+            game_id: 0,
+            hand_id: Some(0),
+            cfg: Some(Arc::new(HandConfig {
+                stakes: TableStakes {
+                    small_blind: 0,
+                    big_blind: 0,
+                    ante: 0,
+                },
+                button: 0,
+                small_blind_seat: 0,
+                big_blind_seat: 0,
+                check_raise_allowed: true,
+            })),
+            shufflers: Arc::new(vec![Shuffler {
+                index: 0,
+                secret_key: C::ScalarField::zero(),
+                public_key: C::zero(),
+                aggregated_public_key: C::zero(),
+            }]),
+            players: Arc::new(BTreeMap::new()),
+            seating: Arc::new(BTreeMap::new()),
+            shuffling,
+            dealing,
+            betting,
+            reveals,
+        }
+    }
+
+    #[test]
+    fn replay_with_no_events_keeps_state_empty() {
+        let state = LedgerState::<Curve>::new();
+        assert!(state.replay(Vec::new()).is_ok());
+        assert!(state.snapshot(0).is_none());
+    }
+
+    #[test]
+    fn snapshots_are_copied_on_read() {
+        let state = LedgerState::<Curve>::new();
+        let mut guard = state.inner.write().unwrap();
+        guard.insert(0, AnyTableSnapshot::Shuffling(sample_table_snapshot()));
+        drop(guard);
+
+        let snapshot = state.snapshot(0).unwrap();
+        match snapshot {
+            AnyTableSnapshot::Shuffling(table) => {
+                assert_eq!(table.game_id, 0);
+            }
+            _ => panic!("unexpected snapshot variant"),
+        }
+    }
+
+    #[test]
+    fn any_table_snapshot_variants_exist() {
+        let shuffling = AnyTableSnapshot::Shuffling(sample_table_snapshot::<Curve>());
+        matches!(shuffling, AnyTableSnapshot::Shuffling(_));
+    }
+}
