@@ -175,7 +175,7 @@ where
 
         snapshot.advance_state_with_message(envelope, hasher);
 
-        if snapshot.shuffling.steps.len() == snapshot.shufflers.len() {
+        if snapshot.shuffling.steps.len() == snapshot.shuffling.expected_order.len() {
             promote_to_dealing(snapshot)
         } else {
             Ok(AnyTableSnapshot::Shuffling(snapshot))

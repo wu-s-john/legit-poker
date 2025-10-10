@@ -10,6 +10,7 @@ use crate::ledger::LedgerOperator;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalDeserialize;
 use async_trait::async_trait;
 use sea_orm::DbErr;
 
@@ -32,7 +33,7 @@ impl GameSetupError {
 #[async_trait]
 pub trait LedgerLobby<C>
 where
-    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + CanonicalDeserialize + Send + Sync + 'static,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,

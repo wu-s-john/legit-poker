@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use super::sea_orm::SeaOrmLobby;
 use super::types::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord,
@@ -5,9 +7,9 @@ use super::types::{
     ShufflerRegistrationConfig,
 };
 use super::GameSetupError;
-use super::LedgerLobby;
 use crate::db::entity::{game_players, games, hand_seating, hands};
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
+use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::state::LedgerState;
 use crate::ledger::store::{EventStore, SeaOrmEventStore};
 use crate::ledger::types::{GameId, ShufflerId};
@@ -16,16 +18,20 @@ use crate::ledger::verifier::LedgerVerifier;
 use crate::ledger::worker::LedgerWorker;
 use crate::ledger::LedgerOperator;
 use anyhow::Result;
-use ark_bn254::G1Projective as TestCurve;
+use ark_bn254::{Fr as TestScalar, G1Projective as TestCurve};
+use ark_ec::PrimeGroup;
+use ark_ff::UniformRand;
+use ark_serialize::CanonicalSerialize;
+use ark_std::rand::{rngs::StdRng, SeedableRng};
 use sea_orm::{
     ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend,
     EntityTrait, PaginatorTrait, QueryFilter, Statement,
 };
 use std::env;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{convert::TryFrom, time::Duration as StdDuration};
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn host_game_creates_new_game_and_host() -> Result<()> {
@@ -184,7 +190,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
             registered.shuffler.clone(),
             registered.assigned_sequence,
             keys.shuffler.clone(),
-            vec![9],
+            keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
         buy_in: config.buy_in,
@@ -206,6 +212,21 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
             .await?,
         3
     );
+    let (tip_hash, snapshot) = operator
+        .state()
+        .tip_snapshot(outcome.hand.state.id)
+        .expect("hand snapshot seeded");
+    assert_eq!(tip_hash, snapshot.state_hash());
+    match snapshot {
+        AnyTableSnapshot::Shuffling(table) => {
+            assert_eq!(table.hand_id, Some(outcome.hand.state.id));
+            assert_eq!(
+                table.shuffling.expected_order,
+                vec![registered.shuffler.state.id]
+            );
+        }
+        other => panic!("expected shuffling snapshot, got {other:?}"),
+    }
     Ok(())
 }
 
@@ -281,7 +302,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
             shuffler,
             0,
             keys.shuffler.clone(),
-            vec![9],
+            keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
         buy_in: config.buy_in,
@@ -349,7 +370,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
             shuffler,
             0,
             keys.shuffler.clone(),
-            vec![9],
+            keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
         buy_in: config.buy_in,
@@ -437,7 +458,98 @@ async fn commence_game_requires_buy_in() -> Result<()> {
             shuffler,
             0,
             keys.shuffler.clone(),
-            vec![9],
+            keys.shuffler_aggregated.clone(),
+        )],
+        deck_commitment: None,
+        buy_in: config.buy_in,
+        min_players: config.min_players_to_start,
+    };
+    let Some(operator) = setup_operator(&conn).await else {
+        return Ok(());
+    };
+    let err = commence_game_curve(&lobby, &operator, params)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GameSetupError::Validation(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
+    let Some((lobby, conn)) = setup_lobby().await? else {
+        return Ok(());
+    };
+    let keys = TestKeys::new();
+    let (metadata, config) = create_game(&lobby, &keys).await?;
+    let host_player = join_host(&lobby, &metadata).await?;
+    let joiner = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Bob".into(),
+            public_key: keys.player.clone(),
+            seat_preference: Some(1),
+            state: MaybeSaved { id: None },
+        },
+        Some(1),
+    )
+    .await?
+    .player;
+    let extra_keys = TestKeys::new();
+
+    let registered = register_shuffler_curve(
+        &lobby,
+        &metadata.record,
+        ShufflerRecord {
+            display_name: "Shuffler".into(),
+            public_key: keys.shuffler.clone(),
+            state: MaybeSaved { id: None },
+        },
+        ShufflerRegistrationConfig { sequence: Some(0) },
+    )
+    .await?;
+
+    let third_player = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Carol".into(),
+            public_key: extra_keys.player.clone(),
+            seat_preference: Some(2),
+            state: MaybeSaved { id: None },
+        },
+        Some(2),
+    )
+    .await?
+    .player;
+
+    let invalid_player_key = vec![0u8; 10];
+
+    let params = CommenceGameParams {
+        game: metadata.record.clone(),
+        hand_no: 1,
+        hand_config: HandConfig {
+            stakes: config.stakes.clone(),
+            button: 0,
+            small_blind_seat: 0,
+            big_blind_seat: 1,
+            check_raise_allowed: true,
+        },
+        players: vec![
+            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                third_player.clone(),
+                2,
+                config.buy_in,
+                invalid_player_key.clone(),
+            ),
+        ],
+        shufflers: vec![ShufflerAssignment::new(
+            registered.shuffler.clone(),
+            registered.assigned_sequence,
+            keys.shuffler.clone(),
+            keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
         buy_in: config.buy_in,
@@ -458,17 +570,50 @@ struct TestKeys {
     host: Vec<u8>,
     player: Vec<u8>,
     shuffler: Vec<u8>,
+    shuffler_aggregated: Vec<u8>,
 }
 
 impl TestKeys {
     fn new() -> Self {
+        Self::from_seed(NEXT_KEY_SEED.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+
+    fn from_seed(seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let host = sample_key(&mut rng);
+        let player = sample_key(&mut rng);
+        let shuffler = sample_key(&mut rng);
+        let aggregated = serialize_point(&shuffler.point);
         Self {
-            host: format!("host_pk_{}", Uuid::new_v4()).into_bytes(),
-            player: format!("player_pk_{}", Uuid::new_v4()).into_bytes(),
-            shuffler: format!("shuffler_pk_{}", Uuid::new_v4()).into_bytes(),
+            host: host.bytes,
+            player: player.bytes,
+            shuffler: shuffler.bytes,
+            shuffler_aggregated: aggregated,
         }
     }
 }
+
+struct GeneratedKey {
+    point: TestCurve,
+    bytes: Vec<u8>,
+}
+
+fn sample_key(rng: &mut StdRng) -> GeneratedKey {
+    let scalar = TestScalar::rand(rng);
+    let point = TestCurve::generator() * scalar;
+    let bytes = serialize_point(&point);
+    GeneratedKey { point, bytes }
+}
+
+fn serialize_point(point: &TestCurve) -> Vec<u8> {
+    let mut buf = Vec::new();
+    point
+        .serialize_compressed(&mut buf)
+        .expect("compress curve point for tests");
+    buf
+}
+
+static NEXT_KEY_SEED: AtomicU64 = AtomicU64::new(0);
 
 async fn setup_lobby() -> Result<Option<(SeaOrmLobby, DatabaseConnection)>> {
     let url = env::var("TEST_DATABASE_URL")

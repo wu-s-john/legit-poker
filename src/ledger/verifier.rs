@@ -422,17 +422,16 @@ impl<'a> NonceReservation<'a> {
 
 fn validate_shuffle<C: CurveGroup>(
     table: &TableAtShuffling<C>,
-    shufflers: &ShufflerRoster<C>,
+    _shufflers: &ShufflerRoster<C>,
     actor: &ShufflerActor,
     message: &GameShuffleMessage<C>,
 ) -> Result<(), VerifyError> {
-    let mut ids: Vec<_> = shufflers.keys().copied().collect();
-    ids.sort();
+    let expected_order = &table.shuffling.expected_order;
     let next_index = table.shuffling.steps.len();
-    if next_index >= ids.len() {
+    if next_index >= expected_order.len() {
         return Err(VerifyError::InvalidMessage);
     }
-    if ids[next_index] != actor.shuffler_id {
+    if expected_order[next_index] != actor.shuffler_id {
         return Err(VerifyError::InvalidMessage);
     }
     if next_index > 0 && table.shuffling.final_deck != message.deck_in {
@@ -833,6 +832,24 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn rejects_shuffle_not_matching_sequence() {
+        let mut harness = TestHarness::base(TestPhase::Shuffling);
+        harness.shufflers.insert(
+            SECOND_SHUFFLER_ID,
+            ShufflerIdentity {
+                public_key: Curve::zero(),
+                aggregated_public_key: Curve::zero(),
+            },
+        );
+        harness.override_shuffler_order(vec![SECOND_SHUFFLER_ID, SHUFFLER_ID]);
+        harness.push_snapshot();
+        let verifier = harness.verifier();
+        let envelope = harness.shuffle_envelope(SHUFFLER_ID);
+        let result = verifier.verify(HAND_ID, envelope);
+        assert!(matches!(result, Err(VerifyError::InvalidMessage)));
+    }
+
     // --- Test harness ----------------------------------------------------------------------
 
     struct TestHarness {
@@ -844,6 +861,7 @@ mod tests {
         stacks: PlayerStacks,
         phase: TestPhase,
         override_to_act: Option<SeatId>,
+        shuffler_order_override: Option<Vec<ShufflerId>>,
     }
 
     enum TestPhase {
@@ -921,6 +939,7 @@ mod tests {
                 stacks,
                 phase,
                 override_to_act: None,
+                shuffler_order_override: None,
             }
         }
 
@@ -994,6 +1013,17 @@ mod tests {
             }
         }
 
+        fn expected_shuffler_order(&self) -> Vec<ShufflerId> {
+            if let Some(order) = &self.shuffler_order_override {
+                return order.clone();
+            }
+            self.shufflers.keys().copied().collect()
+        }
+
+        fn override_shuffler_order(&mut self, order: Vec<ShufflerId>) {
+            self.shuffler_order_override = Some(order);
+        }
+
         fn push_shuffling(&mut self) {
             let mut snapshot = TableSnapshot {
                 game_id: GAME_ID,
@@ -1009,6 +1039,7 @@ mod tests {
                     initial_deck: sample_deck(),
                     steps: Vec::new(),
                     final_deck: sample_deck(),
+                    expected_order: self.expected_shuffler_order(),
                 },
                 dealing: (),
                 betting: (),
@@ -1074,6 +1105,7 @@ mod tests {
                         proof: sample_shuffle_proof(),
                     }],
                     final_deck: sample_deck(),
+                    expected_order: self.expected_shuffler_order(),
                 },
                 dealing,
                 betting: (),
@@ -1110,6 +1142,7 @@ mod tests {
                         proof: sample_shuffle_proof(),
                     }],
                     final_deck: sample_deck(),
+                    expected_order: self.expected_shuffler_order(),
                 },
                 dealing: DealingSnapshot {
                     assignments: BTreeMap::new(),
@@ -1130,6 +1163,28 @@ mod tests {
             snapshot.initialize_hash(self.hasher.as_ref());
             self.state
                 .upsert_snapshot(HAND_ID, AnyTableSnapshot::Preflop(snapshot), true);
+        }
+
+        fn shuffle_envelope(&self, shuffler_id: ShufflerId) -> AnyMessageEnvelope<Curve> {
+            let deck_in = sample_deck();
+            let deck_out = deck_in.clone();
+            let message = AnyGameMessage::Shuffle(GameShuffleMessage {
+                deck_in,
+                deck_out,
+                proof: sample_shuffle_proof(),
+                _curve: std::marker::PhantomData,
+            });
+            let identity = self
+                .shufflers
+                .get(&shuffler_id)
+                .expect("shuffler identity to exist");
+            build_envelope(
+                HAND_ID,
+                message,
+                AnyActor::Shuffler { shuffler_id },
+                identity.public_key.clone(),
+                0,
+            )
         }
     }
 

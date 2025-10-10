@@ -203,6 +203,7 @@ mod tests {
                 proof: sample_shuffle_proof(),
             }],
             final_deck: std::array::from_fn(|_| sample_cipher()),
+            expected_order: vec![0],
         };
 
         let mut stacks = PlayerStacks::new();

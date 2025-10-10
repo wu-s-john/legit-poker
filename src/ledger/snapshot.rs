@@ -96,6 +96,7 @@ pub struct ShufflingSnapshot<C: CurveGroup> {
     pub initial_deck: [ElGamalCiphertext<C>; DECK_SIZE],
     pub steps: Vec<ShufflingStep<C>>,
     pub final_deck: [ElGamalCiphertext<C>; DECK_SIZE],
+    pub expected_order: Vec<ShufflerId>,
 }
 
 // ---- Dealing -------------------------------------------------------------------------------

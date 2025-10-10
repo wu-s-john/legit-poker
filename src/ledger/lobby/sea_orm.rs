@@ -2,7 +2,8 @@ use super::{
     ensure_buy_in, ensure_min_players, ensure_shuffler_sequence, ensure_unique_seats,
     validate_lobby_config, CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata,
     GameRecord, GameSetupError, HandRecord, JoinGameOutput, LedgerLobby, PlayerRecord,
-    RegisterShufflerOutput, ShufflerRecord, ShufflerRegistrationConfig,
+    PlayerSeatSnapshot, RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord,
+    ShufflerRegistrationConfig,
 };
 use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::sea_orm_active_enums::{
@@ -11,20 +12,30 @@ use crate::db::entity::sea_orm_active_enums::{
 use crate::db::entity::{
     game_players, game_shufflers, games, hand_seating, hand_shufflers, hands, players, shufflers,
 };
-use crate::engine::nl::types::{Chips, PlayerId, SeatId};
-use crate::ledger::types::{GameId, ShufflerId};
+use crate::engine::nl::types::{Chips, PlayerId, PlayerStatus, SeatId};
+use crate::ledger::hash::LedgerHasher;
+use crate::ledger::snapshot::{
+    AnyTableSnapshot, PhaseShuffling, PlayerIdentity, PlayerRoster, PlayerStackInfo, PlayerStacks,
+    SeatingMap, ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, TableAtShuffling,
+    TableSnapshot,
+};
+use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::LedgerOperator;
+use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalDeserialize;
 use async_trait::async_trait;
 use sea_orm::DbErr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
+use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
+use std::sync::Arc;
 
 pub struct SeaOrmLobby {
     connection: DatabaseConnection,
@@ -143,7 +154,7 @@ impl SeaOrmLobby {
 #[async_trait]
 impl<C> LedgerLobby<C> for SeaOrmLobby
 where
-    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + CanonicalDeserialize + Send + Sync + 'static,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
@@ -269,6 +280,8 @@ where
         ensure_min_players(params.min_players, &params.players)?;
         ensure_shuffler_sequence(&params.shufflers)?;
         ensure_buy_in(params.buy_in, &params.players)?;
+        let prepared_players = prepare_players::<C>(&params.players)?;
+        let prepared_shufflers = prepare_shufflers::<C>(&params.shufflers)?;
 
         let txn = self.begin().await?;
 
@@ -310,7 +323,16 @@ where
         }
 
         txn.commit().await?;
-        let _ = operator.state();
+        let state = operator.state();
+        let hasher = state.hasher();
+        let snapshot = build_initial_shuffling_snapshot(
+            &params,
+            hand_id,
+            &prepared_players,
+            &prepared_shufflers,
+            hasher.as_ref(),
+        )?;
+        state.upsert_snapshot(hand_id, AnyTableSnapshot::Shuffling(snapshot), true);
 
         let hand_record = HandRecord {
             game_id: params.game.state.id,
@@ -330,4 +352,178 @@ fn chips_to_i64(value: Chips) -> Result<i64, GameSetupError> {
     value
         .try_into()
         .map_err(|_| GameSetupError::validation("chip count exceeds database range"))
+}
+
+#[derive(Clone)]
+struct PreparedPlayer<C: CurveGroup> {
+    player_id: PlayerId,
+    seat: SeatId,
+    starting_stack: Chips,
+    public_key: C,
+}
+
+#[derive(Clone)]
+struct PreparedShuffler<C: CurveGroup> {
+    shuffler_id: ShufflerId,
+    sequence: u16,
+    public_key: C,
+    aggregated_public_key: C,
+}
+
+fn prepare_players<C>(
+    players: &[PlayerSeatSnapshot<C>],
+) -> Result<Vec<PreparedPlayer<C>>, GameSetupError>
+where
+    C: CurveGroup + CanonicalDeserialize,
+{
+    players
+        .iter()
+        .map(|seat| {
+            let message = format!("invalid public key for player in seat {}", seat.seat_id);
+            let public_key = deserialize_curve_point::<C>(&seat.public_key, message)?;
+            Ok(PreparedPlayer {
+                player_id: seat.player.state.id,
+                seat: seat.seat_id,
+                starting_stack: seat.starting_stack,
+                public_key,
+            })
+        })
+        .collect()
+}
+
+fn prepare_shufflers<C>(
+    shufflers: &[ShufflerAssignment<C>],
+) -> Result<Vec<PreparedShuffler<C>>, GameSetupError>
+where
+    C: CurveGroup + CanonicalDeserialize,
+{
+    shufflers
+        .iter()
+        .map(|assignment| {
+            let pk_msg = format!(
+                "invalid shuffler public key for shuffler {}",
+                assignment.shuffler.state.id
+            );
+            let public_key = deserialize_curve_point::<C>(&assignment.public_key, pk_msg)?;
+            let agg_msg = format!(
+                "invalid aggregated shuffler key for shuffler {}",
+                assignment.shuffler.state.id
+            );
+            let aggregated_public_key =
+                deserialize_curve_point::<C>(&assignment.aggregated_public_key, agg_msg)?;
+            Ok(PreparedShuffler {
+                shuffler_id: assignment.shuffler.state.id,
+                sequence: assignment.sequence,
+                public_key,
+                aggregated_public_key,
+            })
+        })
+        .collect()
+}
+
+fn deserialize_curve_point<C>(bytes: &[u8], context: impl Into<String>) -> Result<C, GameSetupError>
+where
+    C: CurveGroup + CanonicalDeserialize,
+{
+    C::deserialize_compressed(&mut &bytes[..])
+        .map_err(|_| GameSetupError::validation(context.into()))
+}
+
+fn build_initial_shuffling_snapshot<C>(
+    params: &CommenceGameParams<C>,
+    hand_id: HandId,
+    players: &[PreparedPlayer<C>],
+    shufflers: &[PreparedShuffler<C>],
+    hasher: &dyn LedgerHasher,
+) -> Result<TableAtShuffling<C>, GameSetupError>
+where
+    C: CurveGroup,
+{
+    let mut player_roster: PlayerRoster<C> = BTreeMap::new();
+    let mut seating: SeatingMap = BTreeMap::new();
+    let mut stacks: PlayerStacks = BTreeMap::new();
+
+    for player in players {
+        player_roster.insert(
+            player.player_id,
+            PlayerIdentity {
+                public_key: player.public_key.clone(),
+                nonce: 0,
+                seat: player.seat,
+            },
+        );
+        seating.insert(player.seat, Some(player.player_id));
+        let committed =
+            compute_initial_commitment(&params.hand_config, player.seat).min(player.starting_stack);
+        stacks.insert(
+            player.seat,
+            PlayerStackInfo {
+                seat: player.seat,
+                player_id: Some(player.player_id),
+                starting_stack: player.starting_stack,
+                committed_blind: committed,
+                status: PlayerStatus::Active,
+            },
+        );
+    }
+
+    let mut shuffler_roster: ShufflerRoster<C> = BTreeMap::new();
+    let mut expected: Vec<(u16, ShufflerId)> = Vec::with_capacity(shufflers.len());
+    for shuffler in shufflers {
+        shuffler_roster.insert(
+            shuffler.shuffler_id,
+            ShufflerIdentity {
+                public_key: shuffler.public_key.clone(),
+                aggregated_public_key: shuffler.aggregated_public_key.clone(),
+            },
+        );
+        expected.push((shuffler.sequence, shuffler.shuffler_id));
+    }
+    expected.sort_by_key(|(sequence, _)| *sequence);
+    let expected_order: Vec<ShufflerId> = expected.into_iter().map(|(_, id)| id).collect();
+
+    if expected_order.is_empty() {
+        return Err(GameSetupError::validation(
+            "initial snapshot requires at least one shuffler",
+        ));
+    }
+
+    let mut snapshot: TableSnapshot<PhaseShuffling, C> = TableSnapshot {
+        game_id: params.game.state.id,
+        hand_id: Some(hand_id),
+        cfg: Some(Arc::new(params.hand_config.clone())),
+        shufflers: Arc::new(shuffler_roster),
+        players: Arc::new(player_roster),
+        seating: Arc::new(seating),
+        stacks: Arc::new(stacks),
+        previous_hash: None,
+        state_hash: Default::default(),
+        shuffling: ShufflingSnapshot {
+            initial_deck: std::array::from_fn::<_, DECK_SIZE, _>(|_| {
+                ElGamalCiphertext::new(C::zero(), C::zero())
+            }),
+            steps: Vec::new(),
+            final_deck: std::array::from_fn::<_, DECK_SIZE, _>(|_| {
+                ElGamalCiphertext::new(C::zero(), C::zero())
+            }),
+            expected_order,
+        },
+        dealing: (),
+        betting: (),
+        reveals: (),
+    };
+    snapshot.initialize_hash(hasher);
+    Ok(snapshot)
+}
+
+fn compute_initial_commitment(cfg: &crate::engine::nl::types::HandConfig, seat: SeatId) -> Chips {
+    let stakes = &cfg.stakes;
+    let mut committed = stakes.ante;
+    if seat == cfg.small_blind_seat {
+        committed = committed.saturating_add(stakes.small_blind);
+    }
+    if seat == cfg.big_blind_seat {
+        committed = committed.saturating_add(stakes.big_blind);
+    }
+    committed
 }
