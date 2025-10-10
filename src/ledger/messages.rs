@@ -8,7 +8,9 @@ use crate::engine::nl::actions::PlayerBetAction;
 use crate::ledger::actor::AnyActor;
 use crate::ledger::{GameActor, GameId, HandId, PlayerActor, ShufflerActor};
 use crate::player::signing::append_player_bet_action;
-use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
+use crate::shuffling::data_structures::{
+    append_ciphertext, append_shuffle_proof, ElGamalCiphertext, ShuffleProof, DECK_SIZE,
+};
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
@@ -127,13 +129,12 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         for cipher in &self.deck_in {
-            append_serialized(builder, cipher);
+            append_ciphertext(builder, cipher);
         }
         for cipher in &self.deck_out {
-            append_serialized(builder, cipher);
+            append_ciphertext(builder, cipher);
         }
-        // TODO: fix signable
-        // append_serialized(builder, &self.proof);
+        append_shuffle_proof(builder, &self.proof);
     }
 }
 

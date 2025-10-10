@@ -9,6 +9,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+use crate::signing::{Signable, TranscriptBuilder};
+
 pub const DECK_SIZE: usize = 52;
 
 /// Convert a scalar field element to a base field element representation
@@ -89,7 +91,7 @@ impl<C: CurveGroup> ElGamalKeys<C> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct ShuffleProof<C: CurveGroup> {
     pub input_deck: Vec<ElGamalCiphertext<C>>,
     /// Sorted list of (encrypted card, random value) pairs, sorted by random value in ascending order
@@ -114,6 +116,107 @@ impl<C: CurveGroup> ShuffleProof<C> {
             sorted_deck,
             rerandomization_values,
         })
+    }
+}
+
+pub fn append_ciphertext<C: CurveGroup>(
+    builder: &mut TranscriptBuilder,
+    ciphertext: &ElGamalCiphertext<C>,
+) {
+    let mut buf = Vec::new();
+    ciphertext
+        .serialize_compressed(&mut buf)
+        .expect("ciphertext serialization should succeed");
+    builder.append_bytes(&buf);
+}
+
+pub fn append_shuffle_proof<C: CurveGroup>(
+    builder: &mut TranscriptBuilder,
+    proof: &ShuffleProof<C>,
+) {
+    let mut buf = Vec::new();
+    proof
+        .serialize_compressed(&mut buf)
+        .expect("shuffle proof serialization should succeed");
+    builder.append_bytes(&buf);
+}
+
+impl<C> Signable for ElGamalCiphertext<C>
+where
+    C: CurveGroup,
+{
+    fn domain_kind(&self) -> &'static str {
+        "shuffling/elgamal_ciphertext_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        append_ciphertext(builder, self);
+    }
+}
+
+impl<C> Signable for ShuffleProof<C>
+where
+    C: CurveGroup,
+{
+    fn domain_kind(&self) -> &'static str {
+        "shuffling/shuffle_proof_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        append_shuffle_proof(builder, self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_ec::{CurveGroup, PrimeGroup};
+    use ark_grumpkin::Projective as GrumpkinProjective;
+
+    type Curve = GrumpkinProjective;
+    type Scalar = <Curve as PrimeGroup>::ScalarField;
+    type Base = <Curve as CurveGroup>::BaseField;
+
+    fn sample_ciphertext() -> ElGamalCiphertext<Curve> {
+        let generator = Curve::generator();
+        let scalar = Scalar::from(5u64);
+        ElGamalCiphertext::new(generator * scalar, generator * scalar)
+    }
+
+    #[test]
+    fn ciphertext_signing_bytes_are_deterministic() {
+        let cipher_a = sample_ciphertext();
+        let cipher_b = cipher_a.clone();
+
+        assert_eq!(cipher_a.to_signing_bytes(), cipher_b.to_signing_bytes());
+
+        let generator = Curve::generator();
+        let different = ElGamalCiphertext::new(
+            generator * Scalar::from(7u64),
+            generator * Scalar::from(11u64),
+        );
+
+        assert_ne!(cipher_a.to_signing_bytes(), different.to_signing_bytes());
+    }
+
+    fn sample_shuffle_proof() -> ShuffleProof<Curve> {
+        let deck = vec![sample_ciphertext(); DECK_SIZE];
+        let sorted_deck = vec![(sample_ciphertext(), Base::from(0u64)); DECK_SIZE];
+        let rerandomization_values = vec![Scalar::from(0u64); DECK_SIZE];
+        ShuffleProof::new(deck, sorted_deck, rerandomization_values).expect("valid shuffle proof")
+    }
+
+    #[test]
+    fn shuffle_proof_signing_bytes_are_deterministic() {
+        let proof_a = sample_shuffle_proof();
+        let proof_b = proof_a.clone();
+
+        assert_eq!(proof_a.to_signing_bytes(), proof_b.to_signing_bytes());
+
+        let mut different = proof_a.clone();
+        different.rerandomization_values[0] = Scalar::from(1u64);
+
+        assert_ne!(proof_a.to_signing_bytes(), different.to_signing_bytes());
     }
 }
 
