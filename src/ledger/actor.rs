@@ -5,11 +5,9 @@ use crate::{
 
 use serde::{Deserialize, Serialize};
 
-pub trait GameActor {}
+use crate::signing::{Signable, TranscriptBuilder};
 
-pub trait ActorEncode {
-    fn encode(&self, out: &mut Vec<u8>);
-}
+pub trait GameActor {}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct PlayerActor {
@@ -19,11 +17,15 @@ pub struct PlayerActor {
 
 impl GameActor for PlayerActor {}
 
-impl ActorEncode for PlayerActor {
-    fn encode(&self, out: &mut Vec<u8>) {
-        out.push(1);
-        out.push(self.seat_id);
-        out.extend_from_slice(&self.player_id.to_be_bytes());
+impl Signable for PlayerActor {
+    fn domain_kind(&self) -> &'static str {
+        "ledger/player_actor_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u8(1);
+        builder.append_u8(self.seat_id);
+        builder.append_u64(self.player_id);
     }
 }
 
@@ -34,10 +36,14 @@ pub struct ShufflerActor {
 
 impl GameActor for ShufflerActor {}
 
-impl ActorEncode for ShufflerActor {
-    fn encode(&self, out: &mut Vec<u8>) {
-        out.push(2);
-        out.extend_from_slice(&self.shuffler_id.to_be_bytes());
+impl Signable for ShufflerActor {
+    fn domain_kind(&self) -> &'static str {
+        "ledger/shuffler_actor_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u8(2);
+        builder.append_i64(self.shuffler_id);
     }
 }
 
@@ -46,8 +52,12 @@ pub struct AnyActor;
 
 impl GameActor for AnyActor {}
 
-impl ActorEncode for AnyActor {
-    fn encode(&self, out: &mut Vec<u8>) {
-        out.push(0);
+impl Signable for AnyActor {
+    fn domain_kind(&self) -> &'static str {
+        "ledger/any_actor_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u8(0);
     }
 }

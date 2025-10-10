@@ -1,4 +1,5 @@
 use super::events::NormalizedAction;
+use crate::signing::{Signable, TranscriptBuilder};
 
 pub type Chips = u64;
 pub type SeatId = u8; // 0..=9
@@ -61,6 +62,39 @@ pub struct HandConfig {
     pub small_blind_seat: SeatId,
     pub big_blind_seat: SeatId,
     pub check_raise_allowed: bool, // default true in standard NLH
+}
+
+impl HandConfig {
+    pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u64(self.stakes.small_blind);
+        builder.append_u64(self.stakes.big_blind);
+        builder.append_u64(self.stakes.ante);
+        builder.append_u8(self.button);
+        builder.append_u8(self.small_blind_seat);
+        builder.append_u8(self.big_blind_seat);
+        builder.append_u8(self.check_raise_allowed as u8);
+    }
+}
+
+impl Signable for HandConfig {
+    fn domain_kind(&self) -> &'static str {
+        "engine/nl/hand_config_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        self.append_to_transcript(builder);
+    }
+}
+
+impl PlayerStatus {
+    pub fn as_byte(self) -> u8 {
+        match self {
+            PlayerStatus::Active => 0,
+            PlayerStatus::Folded => 1,
+            PlayerStatus::AllIn => 2,
+            PlayerStatus::SittingOut => 3,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

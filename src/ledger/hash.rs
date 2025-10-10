@@ -1,241 +1,121 @@
-use std::convert::TryFrom;
+use std::sync::Arc;
 
+use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;
-use ark_serialize::CanonicalSerialize;
+use ark_ff::PrimeField;
 use sha2::{Digest, Sha256};
 
-use crate::ledger::actor::ActorEncode;
 use crate::ledger::messages::{EnvelopedMessage, GameMessage};
-use crate::ledger::snapshot::{
-    HandPhase, PlayerRoster, PlayerStackInfo, PlayerStacks, SeatingMap, TableSnapshot,
-};
+use crate::ledger::snapshot::{HandPhase, TableSnapshot};
 use crate::ledger::types::{GameId, HandId, StateHash};
-use crate::shuffler::Shuffler;
-use crate::signing::Signable;
+use crate::poseidon_config;
+use crate::signing::{Signable, TranscriptBuilder};
 
-use crate::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
+use crate::shuffling::data_structures::append_curve_point;
 
-const DOMAIN_INITIAL: &[u8] = b"zkpoker/state/init/v1";
-const DOMAIN_MESSAGE: &[u8] = b"zkpoker/state/message/v1";
-const DOMAIN_CHAIN: &[u8] = b"zkpoker/state/chain/v1";
-
-fn finalize_hash(hasher: Sha256) -> StateHash {
-    let digest = hasher.finalize();
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&digest);
-    StateHash::from(bytes)
+/// Trait abstracting over the hashing backend used by the ledger.
+pub trait LedgerHasher: Send + Sync {
+    fn hash(&self, message: &[u8]) -> StateHash;
 }
 
-fn write_len(hasher: &mut Sha256, len: usize) {
-    let len_u32 = u32::try_from(len).expect("length exceeds u32");
-    hasher.update(&len_u32.to_be_bytes());
+/// Poseidon-based hasher suitable for SNARK-friendly usage.
+pub struct LedgerHasherPoseidon<F: PrimeField> {
+    params: ark_crypto_primitives::sponge::poseidon::PoseidonConfig<F>,
 }
 
-fn write_u8(hasher: &mut Sha256, value: u8) {
-    hasher.update(&[value]);
-}
-
-fn write_u64(hasher: &mut Sha256, value: u64) {
-    hasher.update(&value.to_be_bytes());
-}
-
-fn write_i64(hasher: &mut Sha256, value: i64) {
-    hasher.update(&value.to_be_bytes());
-}
-
-fn write_bool(hasher: &mut Sha256, value: bool) {
-    hasher.update(&[value as u8]);
-}
-
-fn write_bytes(hasher: &mut Sha256, bytes: &[u8]) {
-    write_len(hasher, bytes.len());
-    hasher.update(bytes);
-}
-
-fn write_curve<C: CurveGroup>(hasher: &mut Sha256, value: &C) {
-    let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .expect("curve serialization");
-    write_bytes(hasher, &buf);
-}
-
-fn hash_hand_config(hasher: &mut Sha256, cfg: &HandConfig) {
-    hasher.update(b"hand_config");
-    hash_table_stakes(hasher, &cfg.stakes);
-    write_u8(hasher, cfg.button);
-    write_u8(hasher, cfg.small_blind_seat);
-    write_u8(hasher, cfg.big_blind_seat);
-    write_bool(hasher, cfg.check_raise_allowed);
-}
-
-fn hash_table_stakes(hasher: &mut Sha256, stakes: &TableStakes) {
-    hasher.update(b"table_stakes");
-    write_u64(hasher, stakes.small_blind);
-    write_u64(hasher, stakes.big_blind);
-    write_u64(hasher, stakes.ante);
-}
-
-fn hash_shufflers<C: CurveGroup>(hasher: &mut Sha256, shufflers: &[Shuffler<C>]) {
-    hasher.update(b"shufflers");
-    write_len(hasher, shufflers.len());
-    for shuffler in shufflers {
-        write_u64(hasher, shuffler.index as u64);
-        write_curve(hasher, &shuffler.public_key);
-        write_curve(hasher, &shuffler.aggregated_public_key);
+impl<F: PrimeField> LedgerHasherPoseidon<F> {
+    pub fn new(params: ark_crypto_primitives::sponge::poseidon::PoseidonConfig<F>) -> Self {
+        Self { params }
     }
 }
 
-fn hash_player_roster<C: CurveGroup>(hasher: &mut Sha256, roster: &PlayerRoster<C>) {
-    hasher.update(b"player_roster");
-    write_len(hasher, roster.len());
-    for (player_id, identity) in roster {
-        write_u64(hasher, *player_id);
-        write_u8(hasher, identity.seat);
-        write_u64(hasher, identity.nonce);
-        write_curve(hasher, &identity.public_key);
+impl<F: PrimeField> LedgerHasher for LedgerHasherPoseidon<F> {
+    fn hash(&self, message: &[u8]) -> StateHash {
+        let mut sponge = PoseidonSponge::<F>::new(&self.params);
+        sponge.absorb(&message);
+        let output = sponge.squeeze_bytes(32);
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&output[..32]);
+        StateHash::from(bytes)
     }
 }
 
-fn hash_seating_map(hasher: &mut Sha256, seating: &SeatingMap) {
-    hasher.update(b"seating_map");
-    write_len(hasher, seating.len());
-    for (seat, player) in seating {
-        write_u8(hasher, *seat);
-        match player {
-            Some(id) => {
-                write_u8(hasher, 1);
-                write_u64(hasher, *id);
-            }
-            None => write_u8(hasher, 0),
-        }
+/// SHA-256 fallback hasher, useful for tests or tooling.
+pub struct LedgerHasherSha256;
+
+impl LedgerHasher for LedgerHasherSha256 {
+    fn hash(&self, message: &[u8]) -> StateHash {
+        let mut hasher = Sha256::new();
+        hasher.update(message);
+        let digest = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&digest);
+        StateHash::from(bytes)
     }
 }
 
-fn hash_player_stacks(hasher: &mut Sha256, stacks: &PlayerStacks) {
-    hasher.update(b"player_stacks");
-    write_len(hasher, stacks.len());
-    for (seat, info) in stacks {
-        write_u8(hasher, *seat);
-        hash_player_stack_info(hasher, info);
-    }
+pub fn default_poseidon_hasher<F: PrimeField>() -> Arc<dyn LedgerHasher + Send + Sync> {
+    Arc::new(LedgerHasherPoseidon::new(poseidon_config::<F>()))
 }
 
-fn hash_player_stack_info(hasher: &mut Sha256, info: &PlayerStackInfo) {
-    match info.player_id {
-        Some(id) => {
-            write_u8(hasher, 1);
-            write_u64(hasher, id);
-        }
-        None => write_u8(hasher, 0),
-    }
-
-    write_u64(hasher, info.starting_stack);
-    write_u64(hasher, info.committed_blind);
-    write_u8(hasher, player_status_code(info.status));
-}
-
-fn player_status_code(status: PlayerStatus) -> u8 {
-    match status {
-        PlayerStatus::Active => 0,
-        PlayerStatus::Folded => 1,
-        PlayerStatus::AllIn => 2,
-        PlayerStatus::SittingOut => 3,
-    }
-}
-
-fn write_ids(hasher: &mut Sha256, game_id: GameId, hand_id: Option<HandId>) {
-    write_i64(hasher, game_id);
+fn append_ids(builder: &mut TranscriptBuilder, game_id: GameId, hand_id: Option<HandId>) {
+    builder.append_i64(game_id);
     match hand_id {
         Some(id) => {
-            write_u8(hasher, 1);
-            write_i64(hasher, id);
+            builder.append_u8(1);
+            builder.append_i64(id);
         }
-        None => write_u8(hasher, 0),
+        None => builder.append_u8(0),
     }
 }
 
-pub fn compute_initial_state_hash<P, C>(snapshot: &TableSnapshot<P, C>) -> StateHash
+pub fn initial_snapshot_hash<P, C>(
+    snapshot: &TableSnapshot<P, C>,
+    hasher: &dyn LedgerHasher,
+) -> StateHash
 where
     P: HandPhase<C>,
     C: CurveGroup,
 {
-    let mut hasher = Sha256::new();
-    hasher.update(DOMAIN_INITIAL);
-    write_ids(&mut hasher, snapshot.game_id, snapshot.hand_id);
+    let mut builder = TranscriptBuilder::new("ledger/state/init");
+    append_ids(&mut builder, snapshot.game_id, snapshot.hand_id);
 
-    if let Some(cfg) = snapshot.cfg.as_ref() {
-        write_u8(&mut hasher, 1);
-        hash_hand_config(&mut hasher, cfg);
-    } else {
-        write_u8(&mut hasher, 0);
+    match snapshot.cfg.as_ref() {
+        Some(cfg) => {
+            builder.append_u8(1);
+            cfg.write_transcript(&mut builder);
+        }
+        None => builder.append_u8(0),
     }
 
-    hash_shufflers(&mut hasher, snapshot.shufflers.as_ref());
-    hash_player_roster(&mut hasher, snapshot.players.as_ref());
-    hash_seating_map(&mut hasher, snapshot.seating.as_ref());
-    hash_player_stacks(&mut hasher, snapshot.stacks.as_ref());
+    snapshot.shufflers.as_ref().write_transcript(&mut builder);
+    snapshot.players.as_ref().write_transcript(&mut builder);
+    snapshot.seating.as_ref().write_transcript(&mut builder);
+    snapshot.stacks.as_ref().write_transcript(&mut builder);
 
-    finalize_hash(hasher)
+    hasher.hash(&builder.finish())
 }
 
-pub fn hash_envelope<C, M>(envelope: &EnvelopedMessage<C, M>) -> StateHash
+pub fn message_hash<C, M>(envelope: &EnvelopedMessage<C, M>, hasher: &dyn LedgerHasher) -> StateHash
 where
     C: CurveGroup,
     M: GameMessage<C> + Signable,
-    M::Actor: ActorEncode,
+    M::Actor: Signable,
 {
-    let mut hasher = Sha256::new();
-    hasher.update(DOMAIN_MESSAGE);
-    write_ids(&mut hasher, envelope.game_id, Some(envelope.hand_id));
-    write_u64(&mut hasher, envelope.nonce);
+    let mut builder = TranscriptBuilder::new("ledger/state/msg");
+    append_ids(&mut builder, envelope.game_id, Some(envelope.hand_id));
+    builder.append_u64(envelope.nonce);
+    envelope.actor.write_transcript(&mut builder);
 
-    let mut actor_buf = Vec::new();
-    envelope.actor.encode(&mut actor_buf);
-    write_bytes(&mut hasher, &actor_buf);
+    append_curve_point(&mut builder, &envelope.public_key);
+    builder.append_bytes(&envelope.message.transcript);
 
-    let mut pk_bytes = Vec::new();
-    envelope
-        .public_key
-        .serialize_compressed(&mut pk_bytes)
-        .expect("public key serialization");
-    write_bytes(&mut hasher, &pk_bytes);
-
-    write_bytes(&mut hasher, &envelope.message.transcript);
-
-    finalize_hash(hasher)
+    hasher.hash(&builder.finish())
 }
 
-pub fn chain_state_hash(previous: StateHash, message_hash: StateHash) -> StateHash {
-    let mut hasher = Sha256::new();
-    hasher.update(DOMAIN_CHAIN);
-    hasher.update(previous.as_bytes());
-    hasher.update(message_hash.as_bytes());
-    finalize_hash(hasher)
-}
-
-impl<P, C> TableSnapshot<P, C>
-where
-    P: HandPhase<C>,
-    C: CurveGroup,
-{
-    pub fn initialize_hash(&mut self) {
-        self.previous_hash = None;
-        self.state_hash = compute_initial_state_hash(self);
-    }
-
-    pub fn advance_state(&mut self, message_hash: StateHash) {
-        let prev = self.state_hash;
-        self.previous_hash = Some(prev);
-        self.state_hash = chain_state_hash(prev, message_hash);
-    }
-
-    pub fn advance_state_with_message<M>(&mut self, envelope: &EnvelopedMessage<C, M>)
-    where
-        M: GameMessage<C> + Signable,
-        M::Actor: ActorEncode,
-    {
-        let message_hash = hash_envelope(envelope);
-        self.advance_state(message_hash);
-    }
+pub fn chain_hash(previous: StateHash, message: StateHash, hasher: &dyn LedgerHasher) -> StateHash {
+    let mut builder = TranscriptBuilder::new("ledger/state/chain");
+    builder.append_bytes(previous.as_bytes());
+    builder.append_bytes(message.as_bytes());
+    hasher.hash(&builder.finish())
 }

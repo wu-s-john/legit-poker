@@ -1,38 +1,93 @@
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use ark_ec::CurveGroup;
+use ark_ff::PrimeField;
 
+use crate::ledger::hash::{default_poseidon_hasher, LedgerHasher};
 use crate::ledger::snapshot::AnyTableSnapshot;
-use crate::ledger::types::HandId;
+use crate::ledger::types::{HandId, StateHash};
 
-// ---- Ledger state --------------------------------------------------------------------------
+type SharedHasher = Arc<dyn LedgerHasher + Send + Sync>;
+
+#[derive(Default)]
+struct HandLedger<C: CurveGroup> {
+    tip: Option<StateHash>,
+    snapshots: HashMap<StateHash, AnyTableSnapshot<C>>,
+}
 
 pub struct LedgerState<C>
 where
     C: CurveGroup,
 {
-    inner: RwLock<HashMap<HandId, AnyTableSnapshot<C>>>,
+    inner: RwLock<HashMap<HandId, HandLedger<C>>>,
+    hasher: SharedHasher,
 }
 
 impl<C> LedgerState<C>
 where
     C: CurveGroup,
 {
-    pub fn new() -> Self {
+    pub fn with_hasher(hasher: SharedHasher) -> Self {
         Self {
             inner: RwLock::new(HashMap::new()),
+            hasher,
         }
     }
 
-    pub fn snapshot(&self, hand_id: HandId) -> Option<AnyTableSnapshot<C>> {
+    pub fn hasher(&self) -> SharedHasher {
+        Arc::clone(&self.hasher)
+    }
+
+    pub fn hands(&self) -> Vec<HandId> {
         let guard = self.inner.read().expect("ledger state poisoned");
-        guard.get(&hand_id).cloned()
+        guard.keys().copied().collect()
+    }
+
+    pub fn tip_hash(&self, hand_id: HandId) -> Option<StateHash> {
+        let guard = self.inner.read().expect("ledger state poisoned");
+        guard.get(&hand_id).and_then(|ledger| ledger.tip)
+    }
+
+    pub fn tip_snapshot(&self, hand_id: HandId) -> Option<(StateHash, AnyTableSnapshot<C>)> {
+        let guard = self.inner.read().expect("ledger state poisoned");
+        let ledger = guard.get(&hand_id)?;
+        let tip_hash = ledger.tip?;
+        let snapshot = ledger.snapshots.get(&tip_hash)?.clone();
+        Some((tip_hash, snapshot))
+    }
+
+    pub fn snapshot(&self, hand_id: HandId, hash: StateHash) -> Option<AnyTableSnapshot<C>> {
+        let guard = self.inner.read().expect("ledger state poisoned");
+        guard
+            .get(&hand_id)
+            .and_then(|ledger| ledger.snapshots.get(&hash).cloned())
+    }
+
+    pub fn upsert_snapshot(&self, hand_id: HandId, snapshot: AnyTableSnapshot<C>, make_tip: bool) {
+        let hash = snapshot.state_hash();
+        let mut guard = self.inner.write().expect("ledger state poisoned");
+        let ledger = guard.entry(hand_id).or_insert_with(HandLedger::default);
+        ledger.snapshots.insert(hash, snapshot);
+        if make_tip || ledger.tip.is_none() {
+            ledger.tip = Some(hash);
+        }
+    }
+
+    pub fn set_tip(&self, hand_id: HandId, tip: Option<StateHash>) {
+        let mut guard = self.inner.write().expect("ledger state poisoned");
+        let ledger = guard.entry(hand_id).or_insert_with(HandLedger::default);
+        ledger.tip = tip;
+    }
+
+    pub fn remove_hand(&self, hand_id: HandId) {
+        let mut guard = self.inner.write().expect("ledger state poisoned");
+        guard.remove(&hand_id);
     }
 
     pub fn apply_event(
         &self,
-        event: &super::messages::AnyMessageEnvelope<C>,
+        event: &crate::ledger::messages::AnyMessageEnvelope<C>,
     ) -> anyhow::Result<()> {
         let _ = event;
         todo!("ledger state apply_event not implemented")
@@ -40,7 +95,7 @@ where
 
     pub fn replay<I>(&self, events: I) -> anyhow::Result<()>
     where
-        I: IntoIterator<Item = super::messages::AnyMessageEnvelope<C>>,
+        I: IntoIterator<Item = crate::ledger::messages::AnyMessageEnvelope<C>>,
     {
         for event in events {
             self.apply_event(&event)?;
@@ -49,18 +104,27 @@ where
     }
 }
 
+impl<C> LedgerState<C>
+where
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+{
+    pub fn new() -> Self {
+        Self::with_hasher(default_poseidon_hasher::<C::BaseField>())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::Arc;
 
     use super::*;
+    use crate::ledger::hash::LedgerHasher;
     use crate::ledger::snapshot::{
         build_default_card_plan, AnyTableSnapshot, PlayerStackInfo, PlayerStacks, RevealsSnapshot,
-        ShufflingSnapshot, ShufflingStep, TableAtShuffling, TableSnapshot,
+        ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, ShufflingStep, TableAtShuffling,
+        TableSnapshot,
     };
-    use crate::ledger::StateHash;
-    use crate::shuffler::Shuffler;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
@@ -78,8 +142,9 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_table_snapshot<C: CurveGroup>() -> TableAtShuffling<C> {
+    fn sample_table_snapshot<C: CurveGroup>(hasher: &dyn LedgerHasher) -> TableAtShuffling<C> {
         use crate::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
+        use std::sync::Arc;
 
         let shuffling = ShufflingSnapshot {
             initial_deck: std::array::from_fn(|_| sample_cipher()),
@@ -123,16 +188,20 @@ mod tests {
         seating_map.insert(0, Some(0));
         let _plan = build_default_card_plan(&hand_cfg, &seating_map);
 
+        let mut shufflers = ShufflerRoster::new();
+        shufflers.insert(
+            0,
+            ShufflerIdentity {
+                public_key: C::zero(),
+                aggregated_public_key: C::zero(),
+            },
+        );
+
         let mut snapshot = TableSnapshot {
             game_id: 0,
             hand_id: Some(0),
             cfg: Some(Arc::new(hand_cfg)),
-            shufflers: Arc::new(vec![Shuffler {
-                index: 0,
-                secret_key: C::ScalarField::zero(),
-                public_key: C::zero(),
-                aggregated_public_key: C::zero(),
-            }]),
+            shufflers: Arc::new(shufflers),
             players: Arc::new(BTreeMap::new()),
             seating: Arc::new(seating_map),
             stacks: Arc::new(stacks),
@@ -144,38 +213,54 @@ mod tests {
             reveals: (),
         };
 
-        snapshot.initialize_hash();
+        snapshot.initialize_hash(hasher);
         snapshot
     }
 
     #[test]
-    fn replay_with_no_events_keeps_state_empty() {
+    fn tip_updates_when_inserting() {
         let state = LedgerState::<Curve>::new();
-        assert!(state.replay(Vec::new()).is_ok());
-        assert!(state.snapshot(0).is_none());
+        let hasher = state.hasher();
+        let snapshot = sample_table_snapshot::<Curve>(&*hasher);
+        let any = AnyTableSnapshot::Shuffling(snapshot.clone());
+        state.upsert_snapshot(42, any, true);
+
+        let (tip_hash, tip_snapshot) = state.tip_snapshot(42).expect("tip exists");
+        assert_eq!(tip_hash, tip_snapshot.state_hash());
+        assert_eq!(tip_hash, snapshot.state_hash);
     }
 
     #[test]
-    fn snapshots_are_copied_on_read() {
+    fn snapshot_lookup_by_hash() {
         let state = LedgerState::<Curve>::new();
-        let mut guard = state.inner.write().unwrap();
-        guard.insert(0, AnyTableSnapshot::Shuffling(sample_table_snapshot()));
-        drop(guard);
+        let hasher = state.hasher();
+        let snapshot = sample_table_snapshot::<Curve>(&*hasher);
+        let hash = snapshot.state_hash;
+        state.upsert_snapshot(7, AnyTableSnapshot::Shuffling(snapshot), true);
 
-        let snapshot = state.snapshot(0).unwrap();
-        match snapshot {
-            AnyTableSnapshot::Shuffling(table) => {
-                assert_eq!(table.game_id, 0);
-                assert!(table.previous_hash.is_none());
-                assert_ne!(table.state_hash, StateHash::default());
-            }
-            _ => panic!("unexpected snapshot variant"),
-        }
+        let found = state.snapshot(7, hash).expect("snapshot stored");
+        assert_eq!(found.state_hash(), hash);
     }
 
     #[test]
-    fn any_table_snapshot_variants_exist() {
-        let shuffling = AnyTableSnapshot::Shuffling(sample_table_snapshot::<Curve>());
-        matches!(shuffling, AnyTableSnapshot::Shuffling(_));
+    fn set_tip_switches_head() {
+        let state = LedgerState::<Curve>::new();
+        let hasher = state.hasher();
+
+        let first = sample_table_snapshot::<Curve>(&*hasher);
+        let first_hash = first.state_hash;
+        state.upsert_snapshot(1, AnyTableSnapshot::Shuffling(first), true);
+
+        let mut second = sample_table_snapshot::<Curve>(&*hasher);
+        // simulate new hash by tweaking seed
+        second.state_hash = hasher.hash(b"second");
+        state.upsert_snapshot(1, AnyTableSnapshot::Shuffling(second.clone()), false);
+        state.set_tip(1, Some(second.state_hash));
+
+        let (tip_hash, _) = state.tip_snapshot(1).expect("tip should exist");
+        assert_eq!(tip_hash, second.state_hash);
+
+        // ensure original snapshot still accessible
+        assert!(state.snapshot(1, first_hash).is_some());
     }
 }

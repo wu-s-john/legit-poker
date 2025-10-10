@@ -33,9 +33,9 @@ use ark_r1cs_std::groups::CurveVar;
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError}; // trait bound needed by BG and opening
 
 use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon;
-use crate::shuffling::pedersen_commitment::opening_proof_gadget::{
-    verify_scalar_folding_link_gadget, PedersenCommitmentOpeningProofVar,
-};
+#[cfg(test)]
+use crate::shuffling::pedersen_commitment::opening_proof_gadget::verify_scalar_folding_link_gadget;
+use crate::shuffling::pedersen_commitment::opening_proof_gadget::PedersenCommitmentOpeningProofVar;
 use crate::shuffling::rs_shuffle::data_structures::{PermutationWitnessTraceVar, RSShuffleTrace};
 use crate::shuffling::rs_shuffle::permutation::{check_grand_product, IndexPositionPair};
 use crate::shuffling::rs_shuffle::rs_shuffle_gadget::rs_shuffle_indices;

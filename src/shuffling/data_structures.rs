@@ -130,6 +130,14 @@ pub fn append_ciphertext<C: CurveGroup>(
     builder.append_bytes(&buf);
 }
 
+pub fn append_curve_point<C: CurveGroup>(builder: &mut TranscriptBuilder, point: &C) {
+    let mut buf = Vec::new();
+    point
+        .serialize_compressed(&mut buf)
+        .expect("curve serialization should succeed");
+    builder.append_bytes(&buf);
+}
+
 pub fn append_shuffle_proof<C: CurveGroup>(
     builder: &mut TranscriptBuilder,
     proof: &ShuffleProof<C>,

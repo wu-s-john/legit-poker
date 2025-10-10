@@ -6,6 +6,7 @@ use ark_ff::PrimeField;
 use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL, Transition};
 use crate::engine::nl::types::{PlayerStatus, Street as EngineStreet};
+use crate::ledger::hash::LedgerHasher;
 use crate::ledger::messages::{
     EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage,
     GamePartialUnblindingShareMessage, GamePlayerMessage, GameShowdownMessage, GameShuffleMessage,
@@ -26,23 +27,27 @@ pub trait TransitionHandler<C>: GameMessage<C> + Signable
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
+        hasher: &H,
     ) -> Result<AnyTableSnapshot<C>>
     where
-        Self: Sized;
+        Self: Sized,
+        H: LedgerHasher;
 }
 
-pub fn apply_transition<C, M>(
+pub fn apply_transition<C, M, H>(
     snapshot: TableSnapshot<M::Phase, C>,
     envelope: &EnvelopedMessage<C, M>,
+    hasher: &H,
 ) -> Result<AnyTableSnapshot<C>>
 where
     C: CurveGroup,
     M: TransitionHandler<C>,
+    H: LedgerHasher,
 {
-    <M as TransitionHandler<C>>::apply_transition(snapshot, envelope)
+    <M as TransitionHandler<C>>::apply_transition(snapshot, envelope, hasher)
 }
 
 fn promote_to_dealing<C: CurveGroup>(
@@ -137,15 +142,18 @@ impl<C> TransitionHandler<C> for GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let shuffler_id = envelope.actor.shuffler_id;
         let shuffler = snapshot
             .shufflers
-            .iter()
-            .find(|s| s.index as i64 == shuffler_id)
+            .get(&shuffler_id)
             .context("unknown shuffler for shuffle message")?;
 
         let message = &envelope.message.value;
@@ -161,11 +169,11 @@ where
 
         snapshot.shuffling.final_deck = message.deck_out.clone();
         snapshot.shuffling.steps.push(ShufflingStep {
-            shuffler_public_key: shuffler.public_key,
+            shuffler_public_key: shuffler.public_key.clone(),
             proof: message.proof.clone(),
         });
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         if snapshot.shuffling.steps.len() == snapshot.shufflers.len() {
             promote_to_dealing(snapshot)
@@ -182,10 +190,14 @@ where
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos
@@ -194,8 +206,7 @@ where
 
         let shuffler = snapshot
             .shufflers
-            .iter()
-            .find(|s| s.index as i64 == shuffler_id)
+            .get(&shuffler_id)
             .context("unknown shuffler for blinding message")?;
 
         let destination = snapshot
@@ -220,7 +231,7 @@ where
             .get(&player_id)
             .context("player identity not found")?;
 
-        let aggregated_key = shuffler.aggregated_public_key;
+        let aggregated_key = shuffler.aggregated_public_key.clone();
 
         ensure!(
             envelope
@@ -280,7 +291,7 @@ where
             );
         }
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         let all_hole_cards_ready = snapshot
             .stacks
@@ -335,10 +346,14 @@ impl<C> TransitionHandler<C> for GamePartialUnblindingShareMessage<C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let _shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos
@@ -384,7 +399,7 @@ where
                 .insert((seat, hole_index), combined);
         }
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         Ok(AnyTableSnapshot::Dealing(snapshot))
     }
@@ -394,10 +409,14 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<PreflopStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -425,7 +444,7 @@ where
             .last_events
             .push(AnyPlayerActionMsg::Preflop(envelope.message.value.clone()));
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         match result {
             Transition::Continued { .. } => Ok(AnyTableSnapshot::Preflop(snapshot)),
@@ -502,10 +521,14 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<FlopStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -533,7 +556,7 @@ where
             .last_events
             .push(AnyPlayerActionMsg::Flop(envelope.message.value.clone()));
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         match result {
             Transition::Continued { .. } => Ok(AnyTableSnapshot::Flop(snapshot)),
@@ -623,10 +646,14 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<TurnStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -654,7 +681,7 @@ where
             .last_events
             .push(AnyPlayerActionMsg::Turn(envelope.message.value.clone()));
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         match result {
             Transition::Continued { .. } => Ok(AnyTableSnapshot::Turn(snapshot)),
@@ -744,10 +771,14 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<RiverStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -775,7 +806,7 @@ where
             .last_events
             .push(AnyPlayerActionMsg::River(envelope.message.value.clone()));
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         match result {
             Transition::Continued { .. } => Ok(AnyTableSnapshot::River(snapshot)),
@@ -801,10 +832,14 @@ where
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
 {
-    fn apply_transition(
+    fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-    ) -> Result<AnyTableSnapshot<C>> {
+        hasher: &H,
+    ) -> Result<AnyTableSnapshot<C>>
+    where
+        H: LedgerHasher,
+    {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -952,7 +987,7 @@ where
             "duplicate showdown reveal for seat {seat}"
         );
 
-        snapshot.advance_state_with_message(envelope);
+        snapshot.advance_state_with_message(envelope, hasher);
 
         let pending_reveals: Vec<_> = snapshot
             .stacks
