@@ -1,7 +1,7 @@
 use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
-use crate::shuffling::data_structures::ElGamalCiphertext;
+use crate::shuffling::data_structures::{append_curve_point, ElGamalCiphertext};
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
@@ -10,6 +10,8 @@ use ark_std::rand::Rng;
 use ark_std::{collections::HashMap, sync::Mutex};
 use once_cell::sync::Lazy;
 use tracing::{instrument, warn};
+
+use crate::signing::{Signable, TranscriptBuilder};
 
 const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption";
 
@@ -23,6 +25,22 @@ pub struct PlayerTargetedBlindingContribution<C: CurveGroup> {
     pub blinding_combined_contribution: C,
     /// Proof that the same δ_j was used for both contributions
     pub proof: ChaumPedersenProof<C>,
+}
+
+impl<C> Signable for PlayerTargetedBlindingContribution<C>
+where
+    C: CurveGroup,
+    C::ScalarField: PrimeField,
+{
+    fn domain_kind(&self) -> &'static str {
+        "player_decryption/blinding_contribution_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        append_curve_point(builder, &self.blinding_base_contribution);
+        append_curve_point(builder, &self.blinding_combined_contribution);
+        self.proof.write_transcript(builder);
+    }
 }
 
 impl<C> PlayerTargetedBlindingContribution<C>
@@ -115,6 +133,25 @@ pub struct PlayerAccessibleCiphertext<C: CurveGroup> {
     pub shuffler_proofs: Vec<ChaumPedersenProof<C>>,
 }
 
+impl<C> Signable for PlayerAccessibleCiphertext<C>
+where
+    C: CurveGroup,
+    C::ScalarField: PrimeField,
+{
+    fn domain_kind(&self) -> &'static str {
+        "player_decryption/player_accessible_ciphertext_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        append_curve_point(builder, &self.blinded_base);
+        append_curve_point(builder, &self.blinded_message_with_player_key);
+        append_curve_point(builder, &self.player_unblinding_helper);
+        for proof in &self.shuffler_proofs {
+            proof.write_transcript(builder);
+        }
+    }
+}
+
 /// Partial unblinding share from a single committee member
 /// Each committee member j provides their portion of unblinding: blinded_base^x_j where x_j is their secret share
 #[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
@@ -123,6 +160,20 @@ pub struct PartialUnblindingShare<C: CurveGroup> {
     pub share: C,
     /// Index of the committee member providing this share
     pub member_index: usize,
+}
+
+impl<C> Signable for PartialUnblindingShare<C>
+where
+    C: CurveGroup,
+{
+    fn domain_kind(&self) -> &'static str {
+        "player_decryption/partial_unblinding_share_v1"
+    }
+
+    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u8(self.member_index as u8);
+        append_curve_point(builder, &self.share);
+    }
 }
 
 /// Pre-computed mapping between card values (0-51) and their group element representations
