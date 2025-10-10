@@ -313,7 +313,9 @@ enum ActorContext<'a, C: CurveGroup> {
         player_id: PlayerId,
         identity: &'a PlayerIdentity<C>,
     },
-    Shuffler { shuffler_id: ShufflerId },
+    Shuffler {
+        shuffler_id: ShufflerId,
+    },
 }
 
 impl<'a, C: CurveGroup> ActorContext<'a, C> {
@@ -482,7 +484,7 @@ fn validate_partial_unblinding<C: CurveGroup>(
     table: &TableAtDealing<C>,
     seating: &SeatingMap,
     message: &GamePartialUnblindingShareMessage<C>,
-    _actor: &ShufflerActor,
+    actor: &ShufflerActor,
 ) -> Result<(), VerifyError> {
     let Some(card_ref) = message.card_in_deck_position.checked_add(1) else {
         return Err(VerifyError::InvalidMessage);
@@ -514,6 +516,23 @@ fn validate_partial_unblinding<C: CurveGroup>(
     if message.share.member_index >= table.shufflers.len() {
         return Err(VerifyError::InvalidMessage);
     }
+
+    let expected_index = table
+        .shufflers
+        .keys()
+        .enumerate()
+        .find_map(|(idx, shuffler_id)| {
+            if *shuffler_id == actor.shuffler_id {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .ok_or(VerifyError::InvalidMessage)?;
+    if expected_index != message.share.member_index {
+        return Err(VerifyError::InvalidMessage);
+    }
+
     Ok(())
 }
 
@@ -652,7 +671,7 @@ mod tests {
     use crate::ledger::types::{GameId, StateHash};
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use crate::shuffling::player_decryption::{
-        PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
+        PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
     };
     use crate::signing::Signable;
     use ark_bn254::G1Projective as Curve;
@@ -664,6 +683,7 @@ mod tests {
     const PLAYER_ID: PlayerId = 7;
     const PLAYER_SEAT: SeatId = 1;
     const SHUFFLER_ID: ShufflerId = 3;
+    const SECOND_SHUFFLER_ID: ShufflerId = 7;
 
     #[test]
     fn rejects_invalid_signatures() {
@@ -777,6 +797,40 @@ mod tests {
         let verifier = harness.verifier();
         let result = verifier.verify(HAND_ID, envelope);
         assert!(matches!(result, Err(VerifyError::InvalidMessage)));
+    }
+
+    #[test]
+    fn rejects_partial_unblinding_from_wrong_member_index() {
+        let mut harness = TestHarness::base(TestPhase::Dealing);
+        harness.shufflers.insert(
+            SECOND_SHUFFLER_ID,
+            ShufflerIdentity {
+                public_key: Curve::zero(),
+                aggregated_public_key: Curve::zero(),
+            },
+        );
+        harness.push_snapshot();
+        let envelope = harness.partial_unblinding_envelope(SECOND_SHUFFLER_ID, 0, 0);
+        let verifier = harness.verifier();
+        let result = verifier.verify(HAND_ID, envelope);
+        assert!(matches!(result, Err(VerifyError::InvalidMessage)));
+    }
+
+    #[test]
+    fn accepts_partial_unblinding_with_matching_member_index() {
+        let mut harness = TestHarness::base(TestPhase::Dealing);
+        harness.shufflers.insert(
+            SECOND_SHUFFLER_ID,
+            ShufflerIdentity {
+                public_key: Curve::zero(),
+                aggregated_public_key: Curve::zero(),
+            },
+        );
+        harness.push_snapshot();
+        let envelope = harness.partial_unblinding_envelope(SECOND_SHUFFLER_ID, 1, 0);
+        let verifier = harness.verifier();
+        let result = verifier.verify(HAND_ID, envelope);
+        assert!(result.is_ok());
     }
 
     // --- Test harness ----------------------------------------------------------------------
@@ -906,6 +960,29 @@ mod tests {
                 },
                 Curve::zero(),
                 0,
+            )
+        }
+
+        fn partial_unblinding_envelope(
+            &self,
+            shuffler_id: ShufflerId,
+            member_index: usize,
+            nonce: u64,
+        ) -> AnyMessageEnvelope<Curve> {
+            let message = AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
+                card_in_deck_position: 0,
+                share: PartialUnblindingShare {
+                    share: Curve::zero(),
+                    member_index,
+                },
+                _curve: std::marker::PhantomData,
+            });
+            build_envelope(
+                HAND_ID,
+                message,
+                AnyActor::Shuffler { shuffler_id },
+                Curve::zero(),
+                nonce,
             )
         }
 

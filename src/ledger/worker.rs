@@ -93,24 +93,33 @@ mod tests {
 
     struct MemoryQueue<C: CurveGroup> {
         inner: Arc<Mutex<VecDeque<AnyMessageEnvelope<C>>>>,
+        closed: Arc<Mutex<bool>>,
     }
 
     impl<C: CurveGroup> MemoryQueue<C> {
         fn new() -> Self {
             Self {
                 inner: Arc::new(Mutex::new(VecDeque::new())),
+                closed: Arc::new(Mutex::new(false)),
             }
         }
     }
 
     impl<C: CurveGroup> LedgerQueue<C> for MemoryQueue<C> {
         fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
+            if *self.closed.lock().unwrap() {
+                return Err(QueueError::Closed);
+            }
             self.inner.lock().unwrap().push_back(item);
             Ok(())
         }
 
         fn pop(&self) -> tokio::sync::oneshot::Receiver<AnyMessageEnvelope<C>> {
             let (tx, rx) = tokio::sync::oneshot::channel();
+            if *self.closed.lock().unwrap() {
+                drop(tx);
+                return rx;
+            }
             if let Some(item) = self.inner.lock().unwrap().pop_front() {
                 let _ = tx.send(item);
             }
@@ -119,6 +128,11 @@ mod tests {
 
         fn len(&self) -> usize {
             self.inner.lock().unwrap().len()
+        }
+
+        fn close(&self) {
+            *self.closed.lock().unwrap() = true;
+            self.inner.lock().unwrap().clear();
         }
     }
 

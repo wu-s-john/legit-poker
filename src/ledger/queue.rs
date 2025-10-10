@@ -13,6 +13,7 @@ where
     fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError>;
     fn pop(&self) -> Receiver<AnyMessageEnvelope<C>>;
     fn len(&self) -> usize;
+    fn close(&self);
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +47,16 @@ where
                 closed: false,
             }),
         }
+    }
+
+    fn close_inner(&self) {
+        let mut state = self.state.lock().expect("ledger queue poisoned");
+        if state.closed {
+            return;
+        }
+        state.closed = true;
+        state.waiters.clear();
+        state.items.clear();
     }
 }
 
@@ -113,6 +124,10 @@ where
         let state = self.state.lock().expect("ledger queue poisoned");
         state.items.len()
     }
+
+    fn close(&self) {
+        self.close_inner();
+    }
 }
 
 impl<C> Drop for FifoLedgerQueue<C>
@@ -120,11 +135,7 @@ where
     C: CurveGroup,
 {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.closed = true;
-            state.waiters.clear();
-            state.items.clear();
-        }
+        self.close_inner();
     }
 }
 
@@ -228,27 +239,29 @@ mod tests {
         assert_eq!(queue.len(), 0);
     }
 
-    struct ClosedQueue<C: CurveGroup>(std::marker::PhantomData<C>);
-
-    impl<C: CurveGroup> LedgerQueue<C> for ClosedQueue<C> {
-        fn push(&self, _item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
-            Err(QueueError::Closed)
-        }
-
-        fn pop(&self) -> Receiver<AnyMessageEnvelope<C>> {
-            let (_tx, rx) = tokio::sync::oneshot::channel();
-            rx
-        }
-
-        fn len(&self) -> usize {
-            0
-        }
+    #[test]
+    fn push_after_close_returns_error() {
+        let queue = FifoLedgerQueue::<Curve>::new(2);
+        queue.close();
+        let result = queue.push(sample_verified_envelope(0));
+        assert!(matches!(result, Err(QueueError::Closed)));
     }
 
     #[test]
-    fn push_after_close_returns_error() {
-        let queue = ClosedQueue::<Curve>(std::marker::PhantomData);
-        let result = queue.push(sample_verified_envelope(0));
-        assert!(matches!(result, Err(QueueError::Closed)));
+    fn pop_after_close_returns_err() {
+        let queue = FifoLedgerQueue::<Curve>::new(2);
+        queue.close();
+        let rt = Runtime::new().unwrap();
+        let result = rt.block_on(queue.pop());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn outstanding_waiters_receive_error_when_closed() {
+        let queue = FifoLedgerQueue::<Curve>::new(2);
+        let rx = queue.pop();
+        queue.close();
+        let rt = Runtime::new().unwrap();
+        assert!(rt.block_on(rx).is_err());
     }
 }
