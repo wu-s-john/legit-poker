@@ -19,6 +19,7 @@ impl EntityName for Entity {
 pub struct Model {
     pub game_id: i64,
     pub shuffler_id: i64,
+    pub sequence: i16,
     pub public_key: Vec<u8>,
     pub joined_at: TimeDateTimeWithTimeZone,
 }
@@ -27,6 +28,7 @@ pub struct Model {
 pub enum Column {
     GameId,
     ShufflerId,
+    Sequence,
     PublicKey,
     JoinedAt,
 }
@@ -56,6 +58,7 @@ impl ColumnTrait for Column {
         match self {
             Self::GameId => ColumnType::BigInteger.def(),
             Self::ShufflerId => ColumnType::BigInteger.def(),
+            Self::Sequence => ColumnType::SmallInteger.def(),
             Self::PublicKey => ColumnType::VarBinary(StringLen::None).def(),
             Self::JoinedAt => ColumnType::TimestampWithTimeZone.def(),
         }

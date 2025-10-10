@@ -1,5 +1,6 @@
 pub mod actor;
 pub mod hash;
+pub mod lobby;
 pub mod messages;
 mod operator;
 pub mod queue;
@@ -8,10 +9,15 @@ pub mod state;
 pub mod store;
 pub mod transition;
 pub mod types;
+pub mod typestate;
 pub mod verifier;
 pub mod worker;
 
 pub use actor::{GameActor, PlayerActor, ShufflerActor};
+pub use lobby::{
+    CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, GameSetupError,
+    JoinGameOutput, LedgerLobby, RegisterShufflerOutput, SeaOrmLobby, ShufflerRegistrationConfig,
+};
 pub use messages::{
     AnyGameMessage, EnvelopedMessage, FlopStreet, GameBlindingDecryptionMessage,
     GamePartialUnblindingShareMessage, GamePlayerMessage, GameShowdownMessage, GameShuffleMessage,
@@ -29,5 +35,6 @@ pub use types::{
     EntityKind, GameId, HandId, HandStatus, NonceKey, PublicKeyBytes, ShufflerId, SignatureBytes,
     StateHash,
 };
+pub use typestate::{DbRowStatus, MaybeSaved, NotSaved, Saved};
 pub use verifier::{LedgerVerifier, Verifier, VerifyError};
 pub use worker::{LedgerWorker, WorkerError};
