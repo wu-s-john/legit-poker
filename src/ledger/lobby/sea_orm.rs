@@ -4,6 +4,7 @@ use super::{
     GameRecord, GameSetupError, HandRecord, JoinGameOutput, LedgerLobby, PlayerRecord,
     RegisterShufflerOutput, ShufflerRecord, ShufflerRegistrationConfig,
 };
+use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::sea_orm_active_enums::{
     GameStatus as DbGameStatus, HandStatus as DbHandStatus,
 };
@@ -14,7 +15,9 @@ use crate::engine::nl::types::{Chips, PlayerId, SeatId};
 use crate::ledger::types::{GameId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::LedgerOperator;
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
+use ark_ff::PrimeField;
 use async_trait::async_trait;
 use sea_orm::DbErr;
 use sea_orm::{
@@ -140,7 +143,10 @@ impl SeaOrmLobby {
 #[async_trait]
 impl<C> LedgerLobby<C> for SeaOrmLobby
 where
-    C: CurveGroup + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
 {
     async fn host_game(
         &self,

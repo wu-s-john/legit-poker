@@ -247,7 +247,6 @@ mod tests {
     use super::*;
     use crate::engine::nl::types::Street;
 
-    #[ignore]
     #[test]
     #[ignore]
     fn build_initial_betting_state_uses_stack_info() {

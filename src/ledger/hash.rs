@@ -18,6 +18,15 @@ pub trait LedgerHasher: Send + Sync {
     fn hash(&self, message: &[u8]) -> StateHash;
 }
 
+impl<T> LedgerHasher for Arc<T>
+where
+    T: LedgerHasher + ?Sized,
+{
+    fn hash(&self, message: &[u8]) -> StateHash {
+        (**self).hash(message)
+    }
+}
+
 /// Poseidon-based hasher suitable for SNARK-friendly usage.
 pub struct LedgerHasherPoseidon<F: PrimeField> {
     params: ark_crypto_primitives::sponge::poseidon::PoseidonConfig<F>,

@@ -2,11 +2,14 @@ use super::types::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, JoinGameOutput,
     PlayerRecord, ShufflerRecord, ShufflerRegistrationConfig,
 };
+use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::types::{PlayerId, SeatId};
 use crate::ledger::types::{GameId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::LedgerOperator;
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
+use ark_ff::PrimeField;
 use async_trait::async_trait;
 use sea_orm::DbErr;
 
@@ -29,7 +32,10 @@ impl GameSetupError {
 #[async_trait]
 pub trait LedgerLobby<C>
 where
-    C: CurveGroup + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
 {
     async fn host_game(
         &self,

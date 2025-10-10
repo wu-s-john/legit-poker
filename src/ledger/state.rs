@@ -1,13 +1,23 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use anyhow::{anyhow, Context};
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
+use crate::curve_absorb::CurveAbsorb;
+use crate::ledger::actor::{AnyActor, PlayerActor, ShufflerActor};
 use crate::ledger::hash::{default_poseidon_hasher, LedgerHasher};
+use crate::ledger::messages::{
+    AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage, FlopStreet,
+    GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage, GamePlayerMessage,
+    GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
+};
 use crate::ledger::snapshot::AnyTableSnapshot;
+use crate::ledger::transition::apply_transition;
 use crate::ledger::types::{HandId, StateHash};
-
+use crate::signing::WithSignature;
 type SharedHasher = Arc<dyn LedgerHasher + Send + Sync>;
 
 #[derive(Default)]
@@ -85,22 +95,62 @@ where
         guard.remove(&hand_id);
     }
 
-    pub fn apply_event(
-        &self,
-        event: &crate::ledger::messages::AnyMessageEnvelope<C>,
-    ) -> anyhow::Result<()> {
-        let _ = event;
-        todo!("ledger state apply_event not implemented")
+    pub fn apply_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<ApplyOutcome<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
+        let hand_id = event.hand_id;
+        let (_, current_snapshot) = self
+            .tip_snapshot(hand_id)
+            .with_context(|| format!("no snapshot tip for hand {}", hand_id))?;
+        let hasher = self.hasher();
+
+        let outcome = self.apply_message(current_snapshot.clone(), event, &hasher)?;
+
+        if matches!(outcome.status, ApplyStatus::Success) {
+            self.upsert_snapshot(hand_id, outcome.snapshot.clone(), true);
+        }
+
+        Ok(outcome)
     }
 
     pub fn replay<I>(&self, events: I) -> anyhow::Result<()>
     where
-        I: IntoIterator<Item = crate::ledger::messages::AnyMessageEnvelope<C>>,
+        I: IntoIterator<Item = AnyMessageEnvelope<C>>,
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
     {
         for event in events {
-            self.apply_event(&event)?;
+            let outcome = self.apply_event(&event)?;
+            if !matches!(outcome.status, ApplyStatus::Success) {
+                return Err(anyhow!(
+                    "replay failed to apply event: hand_id={}, nonce={}",
+                    event.hand_id,
+                    event.nonce
+                ));
+            }
         }
         Ok(())
+    }
+}
+
+fn remap_signature<C, M>(
+    original: &WithSignature<crate::ledger::SignatureBytes, AnyGameMessage<C>>,
+    value: M,
+) -> WithSignature<crate::ledger::SignatureBytes, M>
+where
+    C: CurveGroup,
+    M: crate::signing::Signable,
+{
+    WithSignature {
+        value,
+        signature: original.signature.clone(),
+        transcript: original.transcript.clone(),
     }
 }
 
@@ -262,5 +312,421 @@ mod tests {
 
         // ensure original snapshot still accessible
         assert!(state.snapshot(1, first_hash).is_some());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ApplyOutcome<C: CurveGroup> {
+    pub status: ApplyStatus,
+    pub snapshot: AnyTableSnapshot<C>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApplyStatus {
+    Success,
+    Failed,
+}
+
+impl<C> LedgerState<C>
+where
+    C: CurveGroup,
+{
+    fn apply_message(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
+        match &event.message.value {
+            AnyGameMessage::Shuffle(message) => {
+                self.apply_shuffle(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::Blinding(message) => {
+                self.apply_blinding(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::PartialUnblinding(message) => {
+                self.apply_partial_unblinding(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::PlayerPreflop(message) => {
+                self.apply_player_preflop(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::PlayerFlop(message) => {
+                self.apply_player_flop(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::PlayerTurn(message) => {
+                self.apply_player_turn(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::PlayerRiver(message) => {
+                self.apply_player_river(snapshot, event, message.clone(), hasher)
+            }
+            AnyGameMessage::Showdown(message) => {
+                self.apply_showdown(snapshot, event, message.clone(), hasher)
+            }
+        }
+    }
+
+    fn apply_shuffle(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GameShuffleMessage<C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::Shuffling(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+
+        let actor = match event.actor {
+            AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Shuffling(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_blinding(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GameBlindingDecryptionMessage<C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
+        let table = match snapshot {
+            AnyTableSnapshot::Dealing(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+
+        let actor = match event.actor {
+            AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Dealing(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_partial_unblinding(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GamePartialUnblindingShareMessage<C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::Dealing(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+
+        let actor = match event.actor {
+            AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Dealing(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_player_preflop(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GamePlayerMessage<PreflopStreet, C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::Preflop(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+        let actor = match event.actor {
+            AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Preflop(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_player_flop(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GamePlayerMessage<FlopStreet, C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::Flop(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+        let actor = match event.actor {
+            AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Flop(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_player_turn(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GamePlayerMessage<TurnStreet, C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::Turn(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+        let actor = match event.actor {
+            AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Turn(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_player_river(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GamePlayerMessage<RiverStreet, C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>> {
+        let table = match snapshot {
+            AnyTableSnapshot::River(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+        let actor = match event.actor {
+            AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::River(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
+    }
+
+    fn apply_showdown(
+        &self,
+        snapshot: AnyTableSnapshot<C>,
+        event: &AnyMessageEnvelope<C>,
+        message: GameShowdownMessage<C>,
+        hasher: &SharedHasher,
+    ) -> anyhow::Result<ApplyOutcome<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+    {
+        let table = match snapshot {
+            AnyTableSnapshot::Showdown(table) => table,
+            other => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: other,
+                })
+            }
+        };
+
+        let actor = match event.actor {
+            AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
+            _ => {
+                return Ok(ApplyOutcome {
+                    status: ApplyStatus::Failed,
+                    snapshot: AnyTableSnapshot::Showdown(table),
+                })
+            }
+        };
+
+        let envelope = EnvelopedMessage {
+            hand_id: event.hand_id,
+            game_id: event.game_id,
+            actor,
+            nonce: event.nonce,
+            public_key: event.public_key.clone(),
+            message: remap_signature(&event.message, message),
+        };
+
+        let applied = apply_transition(table, &envelope, hasher)?;
+
+        Ok(ApplyOutcome {
+            status: ApplyStatus::Success,
+            snapshot: applied,
+        })
     }
 }

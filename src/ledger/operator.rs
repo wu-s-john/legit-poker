@@ -1,53 +1,64 @@
 use std::sync::Arc;
 
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
+use ark_ff::PrimeField;
 
 use super::messages::AnyMessageEnvelope;
-use super::queue::LedgerQueue;
 use super::state::LedgerState;
 use super::store::EventStore;
 use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
 use super::worker::LedgerWorker;
+use crate::curve_absorb::CurveAbsorb;
+use tokio::sync::mpsc;
+use tracing::error;
 
 /// Facade that wires together verifier, queue, worker, event store, and state.
 pub struct LedgerOperator<C>
 where
-    C: CurveGroup + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
 {
     verifier: Arc<dyn Verifier<C> + Send + Sync>,
-    queue: Arc<dyn LedgerQueue<C> + Send + Sync>,
+    sender: mpsc::Sender<AnyMessageEnvelope<C>>,
     event_store: Arc<dyn EventStore<C>>,
     state: Arc<LedgerState<C>>,
-    worker: LedgerWorker<C>,
 }
 
 impl<C> LedgerOperator<C>
 where
-    C: CurveGroup + Send + Sync + 'static,
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
 {
     pub fn new(
         verifier: Arc<dyn Verifier<C> + Send + Sync>,
-        queue: Arc<dyn LedgerQueue<C> + Send + Sync>,
+        sender: mpsc::Sender<AnyMessageEnvelope<C>>,
         event_store: Arc<dyn EventStore<C>>,
         state: Arc<LedgerState<C>>,
     ) -> Self {
-        let worker = LedgerWorker::new(queue.clone(), event_store.clone(), state.clone());
         Self {
             verifier,
-            queue,
+            sender,
             event_store,
             state,
-            worker,
         }
     }
 
     /// Called on startup to replay state and spawn the worker loop.
-    pub async fn start(&self) -> anyhow::Result<()> {
-        let events = self.event_store.load_all_events()?;
+    pub async fn start(&self, worker: LedgerWorker<C>) -> anyhow::Result<()> {
+        let events = self.event_store.load_all_events().await?;
         self.state.replay(events)?;
-        let _ = &self.worker;
-        todo!("ledger operator start not implemented")
+        tokio::spawn(async move {
+            if let Err(err) = worker.run().await {
+                error!("ledger worker exited with error: {err}");
+            }
+        });
+        Ok(())
     }
 
     /// Entry point for API submissions: verify and enqueue an action envelope.
@@ -57,8 +68,9 @@ where
         envelope: AnyMessageEnvelope<C>,
     ) -> Result<(), VerifyError> {
         let verified = self.verifier.verify(hand_id, envelope)?;
-        self.queue
-            .push(verified)
+        self.sender
+            .send(verified)
+            .await
             .map_err(|_| VerifyError::InvalidMessage)?;
         Ok(())
     }
@@ -70,16 +82,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::ledger::{LedgerVerifier, QueueError};
-
     use super::*;
     use crate::ledger::actor::AnyActor;
     use crate::ledger::{GameId, HandId};
     use crate::signing::WithSignature;
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
-    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
+    use tokio::sync::mpsc;
 
     fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
         use crate::engine::nl::actions::PlayerBetAction;
@@ -105,83 +115,45 @@ mod tests {
         }
     }
 
-    struct MemoryQueue<C: CurveGroup> {
-        inner: Arc<Mutex<VecDeque<AnyMessageEnvelope<C>>>>,
-        closed: Arc<Mutex<bool>>,
-    }
+    use crate::ledger::store::SeaOrmEventStore;
+    use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
+    use std::env;
+    use std::time::Duration as StdDuration;
 
-    impl<C: CurveGroup> MemoryQueue<C> {
-        fn new() -> Self {
-            Self {
-                inner: Arc::new(Mutex::new(VecDeque::new())),
-                closed: Arc::new(Mutex::new(false)),
+    async fn setup_event_store() -> Option<Arc<SeaOrmEventStore<Curve>>> {
+        let url = env::var("TEST_DATABASE_URL")
+            .or_else(|_| env::var("DATABASE_URL"))
+            .unwrap_or_else(|_| "postgresql://postgres:postgres@127.0.0.1:54322/postgres".into());
+
+        let mut opt = ConnectOptions::new(url);
+        opt.max_connections(5)
+            .min_connections(1)
+            .connect_timeout(StdDuration::from_secs(5))
+            .sqlx_logging(true);
+
+        let conn = match Database::connect(opt).await {
+            Ok(conn) => conn,
+            Err(err) => {
+                eprintln!("operator test: failed to connect to postgres ({err})");
+                return None;
             }
-        }
-    }
+        };
 
-    impl<C: CurveGroup> LedgerQueue<C> for MemoryQueue<C> {
-        fn push(&self, item: AnyMessageEnvelope<C>) -> Result<(), QueueError> {
-            if *self.closed.lock().unwrap() {
-                return Err(QueueError::Closed);
-            }
-            self.inner.lock().unwrap().push_back(item);
-            Ok(())
+        if let Err(err) = conn.ping().await {
+            eprintln!("operator test: ping postgres failed ({err})");
+            return None;
         }
 
-        fn pop(&self) -> tokio::sync::oneshot::Receiver<AnyMessageEnvelope<C>> {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            if *self.closed.lock().unwrap() {
-                drop(tx);
-                return rx;
-            }
-            if let Some(item) = self.inner.lock().unwrap().pop_front() {
-                let _ = tx.send(item);
-            }
-            rx
+        let truncate = Statement::from_string(
+            DbBackend::Postgres,
+            "TRUNCATE TABLE public.events RESTART IDENTITY CASCADE",
+        );
+        if let Err(err) = conn.execute(truncate).await {
+            eprintln!("operator test: failed to truncate events table ({err})");
+            return None;
         }
 
-        fn len(&self) -> usize {
-            self.inner.lock().unwrap().len()
-        }
-
-        fn close(&self) {
-            *self.closed.lock().unwrap() = true;
-            self.inner.lock().unwrap().clear();
-        }
-    }
-
-    struct MemoryStore<C: CurveGroup> {
-        events: Arc<Mutex<Vec<AnyMessageEnvelope<C>>>>,
-    }
-
-    impl<C: CurveGroup> MemoryStore<C> {
-        fn new() -> Self {
-            Self {
-                events: Arc::new(Mutex::new(Vec::new())),
-            }
-        }
-
-        fn len(&self) -> usize {
-            self.events.lock().unwrap().len()
-        }
-    }
-
-    impl<C: CurveGroup> EventStore<C> for MemoryStore<C> {
-        fn persist_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<()> {
-            self.events.lock().unwrap().push(event.clone());
-            Ok(())
-        }
-
-        fn load_all_events(&self) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
-            Ok(self.events.lock().unwrap().clone())
-        }
-
-        fn load_hand_events(
-            &self,
-            _hand_id: crate::ledger::types::HandId,
-        ) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
-            Ok(self.events.lock().unwrap().clone())
-        }
+        Some(Arc::new(SeaOrmEventStore::new(conn)))
     }
 
     struct NoopVerifier {
@@ -198,44 +170,55 @@ mod tests {
         }
     }
 
-    #[test]
-    fn operator_can_be_constructed() {
-        let queue = Arc::new(MemoryQueue::<Curve>::new());
-        let store = Arc::new(MemoryStore::<Curve>::new());
+    #[tokio::test]
+    async fn operator_can_be_constructed() {
+        let (tx, _rx) = mpsc::channel(4);
+        let Some(store) = setup_event_store().await else {
+            return;
+        };
+        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator = LedgerOperator::new(verifier, queue.clone(), store.clone(), state.clone());
-        assert_eq!(queue.len(), 0);
-        assert_eq!(store.len(), 0);
+        let operator =
+            LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
+        assert!(state.hands().is_empty());
         let _ = operator;
     }
 
-    #[test]
-    #[should_panic]
-    fn start_is_not_implemented() {
-        let queue = Arc::new(MemoryQueue::<Curve>::new());
-        let store = Arc::new(MemoryStore::<Curve>::new());
+    #[tokio::test]
+    async fn start_replays_and_starts_worker() {
+        let (tx, rx) = mpsc::channel(4);
+        let Some(store) = setup_event_store().await else {
+            return;
+        };
+        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator = LedgerOperator::new(verifier, queue, store, state);
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(operator.start()).unwrap();
+        let operator =
+            LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
+        let worker = LedgerWorker::new(rx, Arc::clone(&event_store), Arc::clone(&state));
+        operator.start(worker).await.unwrap();
     }
 
-    #[test]
-    #[should_panic]
-    fn submit_is_not_implemented() {
-        let queue = Arc::new(MemoryQueue::<Curve>::new());
-        let store = Arc::new(MemoryStore::<Curve>::new());
+    #[tokio::test]
+    async fn submit_enqueues_messages() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let Some(store) = setup_event_store().await else {
+            return;
+        };
+        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
         let state = Arc::new(LedgerState::<Curve>::new());
-        let verifier = Arc::new(LedgerVerifier::new(Arc::clone(&state)));
-        let operator = LedgerOperator::new(verifier, queue, store, state);
+        let verifier = Arc::new(NoopVerifier {
+            _state: Arc::clone(&state),
+        });
+        let operator = LedgerOperator::new(verifier, tx, event_store, Arc::clone(&state));
         let envelope = sample_verified_envelope(10);
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(operator.submit(0, envelope)).unwrap();
+        operator.submit(0, envelope).await.unwrap();
+        let received = rx.recv().await.expect("message enqueued");
+        assert_eq!(received.nonce, 0);
     }
 }

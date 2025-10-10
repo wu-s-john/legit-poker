@@ -157,7 +157,7 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 let actor = ShufflerActor {
                     shuffler_id: *shuffler_id,
                 };
-                validate_partial_unblinding(table, seating, msg, &actor)?;
+                validate_partial_unblinding(&table, seating, &msg, &actor)?;
             }
             (
                 AnyTableSnapshot::Preflop(table),
@@ -222,7 +222,7 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                     seat_id: *seat,
                     player_id: *player_id,
                 };
-                validate_showdown(table, seating, players, &actor, msg)?;
+                validate_showdown(&table, seating, players, &actor, &msg)?;
             }
             (AnyTableSnapshot::Complete(_), _, _) => return Err(VerifyError::PhaseMismatch),
             _ => return Err(VerifyError::PhaseMismatch),
@@ -458,13 +458,13 @@ fn validate_blinding<C: CurveGroup>(
         .get(&card_ref)
         .ok_or(VerifyError::InvalidMessage)?;
     let (seat, hole_index) = match destination {
-        CardDestination::Hole { seat, hole_index } => (*seat, *hole_index),
+        CardDestination::Hole { seat, hole_index } => (seat, *hole_index),
         _ => return Err(VerifyError::InvalidMessage),
     };
     if table
         .dealing
         .player_blinding_contribs
-        .contains_key(&(actor.shuffler_id, seat, hole_index))
+        .contains_key(&(actor.shuffler_id, *seat, hole_index))
     {
         return Err(VerifyError::InvalidMessage);
     }
@@ -495,7 +495,7 @@ fn validate_partial_unblinding<C: CurveGroup>(
         .get(&card_ref)
         .ok_or(VerifyError::InvalidMessage)?;
     let (seat, hole_index) = match destination {
-        CardDestination::Hole { seat, hole_index } => (*seat, *hole_index),
+        CardDestination::Hole { seat, hole_index } => (seat, *hole_index),
         _ => return Err(VerifyError::InvalidMessage),
     };
     if seating.get(&seat).copied().flatten().is_none() {
@@ -504,7 +504,7 @@ fn validate_partial_unblinding<C: CurveGroup>(
     if let Some(existing) = table
         .dealing
         .player_unblinding_shares
-        .get(&(seat, hole_index))
+        .get(&(*seat, hole_index))
     {
         if existing.contains_key(&message.share.member_index)
             || existing.len() >= table.shufflers.len()
@@ -616,16 +616,16 @@ where
             .get(&card_ref)
             .ok_or(VerifyError::InvalidMessage)?;
         let (seat, hole_index) = match destination {
-            CardDestination::Hole { seat, hole_index } => (*seat, *hole_index),
+            CardDestination::Hole { seat, hole_index } => (seat, *hole_index),
             _ => return Err(VerifyError::InvalidMessage),
         };
-        if seat != actor.seat_id || hole_index != idx as u8 {
+        if *seat != actor.seat_id || hole_index != idx as u8 {
             return Err(VerifyError::InvalidMessage);
         }
         let stored_cipher = table
             .dealing
             .player_ciphertexts
-            .get(&(seat, hole_index))
+            .get(&(*seat, hole_index))
             .ok_or(VerifyError::InvalidMessage)?;
         if stored_cipher.blinded_base != provided_cipher.blinded_base
             || stored_cipher.player_unblinding_helper != provided_cipher.player_unblinding_helper
@@ -636,7 +636,7 @@ where
         table
             .dealing
             .player_unblinding_combined
-            .get(&(seat, hole_index))
+            .get(&(*seat, hole_index))
             .ok_or(VerifyError::InvalidMessage)?;
 
         seen_cards[idx] = deck_pos;
