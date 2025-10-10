@@ -310,7 +310,7 @@ where
         }
 
         txn.commit().await?;
-        let _ = operator; // TODO: integrate with worker bootstrap when available.
+        let _ = operator.state();
 
         let hand_record = HandRecord {
             game_id: params.game.state.id,

@@ -9,9 +9,9 @@ pub fn validate_lobby_config(cfg: &GameLobbyConfig) -> Result<(), GameSetupError
             "max_players must be greater than 1",
         ));
     }
-    if cfg.min_players_to_start <= 1 {
+    if cfg.min_players_to_start < 3 {
         return Err(GameSetupError::validation(
-            "min_players_to_start must be greater than 1",
+            "min_players_to_start must be at least 3",
         ));
     }
     if cfg.min_players_to_start > cfg.max_players {
@@ -46,7 +46,8 @@ pub fn ensure_min_players<C>(
     min_players: i16,
     players: &[PlayerSeatSnapshot<C>],
 ) -> Result<(), GameSetupError> {
-    if players.len() < min_players as usize {
+    let min_required = if min_players < 3 { 3 } else { min_players } as usize;
+    if players.len() < min_required {
         return Err(GameSetupError::validation(
             "not enough players to start the hand",
         ));

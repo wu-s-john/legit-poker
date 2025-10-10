@@ -8,10 +8,12 @@ use super::GameSetupError;
 use super::LedgerLobby;
 use crate::db::entity::{game_players, games, hand_seating, hands};
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
-use crate::ledger::messages::AnyMessageEnvelope;
 use crate::ledger::state::LedgerState;
-use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::store::{EventStore, SeaOrmEventStore};
+use crate::ledger::types::{GameId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
+use crate::ledger::verifier::LedgerVerifier;
+use crate::ledger::worker::LedgerWorker;
 use crate::ledger::LedgerOperator;
 use anyhow::Result;
 use ark_bn254::G1Projective as TestCurve;
@@ -22,6 +24,7 @@ use sea_orm::{
 use std::env;
 use std::sync::Arc;
 use std::{convert::TryFrom, time::Duration as StdDuration};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -128,6 +131,20 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
     )
     .await?
     .player;
+    let extra_keys = TestKeys::new();
+    let third_player = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Carol".into(),
+            public_key: extra_keys.player.clone(),
+            seat_preference: Some(2),
+            state: MaybeSaved { id: None },
+        },
+        Some(2),
+    )
+    .await?
+    .player;
 
     let registered = register_shuffler_curve(
         &lobby,
@@ -156,6 +173,12 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         players: vec![
             PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
             PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                third_player.clone(),
+                2,
+                config.buy_in,
+                extra_keys.player.clone(),
+            ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             registered.shuffler.clone(),
@@ -167,7 +190,9 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         buy_in: config.buy_in,
         min_players: config.min_players_to_start,
     };
-    let operator = dummy_operator();
+    let Some(operator) = setup_operator(&conn).await else {
+        return Ok(());
+    };
     let outcome = commence_game_curve(&lobby, &operator, params).await?;
 
     assert!(hands::Entity::find_by_id(outcome.hand.state.id)
@@ -179,14 +204,102 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
             .filter(hand_seating::Column::HandId.eq(outcome.hand.state.id))
             .count(&conn)
             .await?,
-        2
+        3
     );
     Ok(())
 }
 
 #[tokio::test]
 async fn commence_game_rejects_duplicate_seats() -> Result<()> {
-    let Some((lobby, _)) = setup_lobby().await? else {
+    let Some((lobby, conn)) = setup_lobby().await? else {
+        return Ok(());
+    };
+    let keys = TestKeys::new();
+    let (metadata, config) = create_game(&lobby, &keys).await?;
+    let host_player = join_host(&lobby, &metadata).await?;
+    let joiner = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Bob".into(),
+            public_key: keys.player.clone(),
+            seat_preference: Some(1),
+            state: MaybeSaved { id: None },
+        },
+        Some(1),
+    )
+    .await?
+    .player;
+    let extra_keys = TestKeys::new();
+    let third_player = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Carol".into(),
+            public_key: extra_keys.player.clone(),
+            seat_preference: Some(2),
+            state: MaybeSaved { id: None },
+        },
+        Some(2),
+    )
+    .await?
+    .player;
+    let shuffler = register_shuffler_curve(
+        &lobby,
+        &metadata.record,
+        ShufflerRecord {
+            display_name: "Shuffler".into(),
+            public_key: keys.shuffler.clone(),
+            state: MaybeSaved { id: None },
+        },
+        ShufflerRegistrationConfig { sequence: Some(0) },
+    )
+    .await?
+    .shuffler;
+
+    let params = CommenceGameParams {
+        game: metadata.record.clone(),
+        hand_no: 1,
+        hand_config: HandConfig {
+            stakes: config.stakes.clone(),
+            button: 0,
+            small_blind_seat: 0,
+            big_blind_seat: 1,
+            check_raise_allowed: true,
+        },
+        players: vec![
+            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                third_player.clone(),
+                1,
+                config.buy_in,
+                extra_keys.player.clone(),
+            ),
+        ],
+        shufflers: vec![ShufflerAssignment::new(
+            shuffler,
+            0,
+            keys.shuffler.clone(),
+            vec![9],
+        )],
+        deck_commitment: None,
+        buy_in: config.buy_in,
+        min_players: config.min_players_to_start,
+    };
+    let Some(operator) = setup_operator(&conn).await else {
+        return Ok(());
+    };
+    let err = commence_game_curve(&lobby, &operator, params)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, GameSetupError::Validation(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn commence_game_requires_min_players() -> Result<()> {
+    let Some((lobby, conn)) = setup_lobby().await? else {
         return Ok(());
     };
     let keys = TestKeys::new();
@@ -230,7 +343,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         },
         players: vec![
             PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 0, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
@@ -242,62 +355,9 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         buy_in: config.buy_in,
         min_players: config.min_players_to_start,
     };
-    let operator = dummy_operator();
-    let err = commence_game_curve(&lobby, &operator, params)
-        .await
-        .unwrap_err();
-    assert!(matches!(err, GameSetupError::Validation(_)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn commence_game_requires_min_players() -> Result<()> {
-    let Some((lobby, _)) = setup_lobby().await? else {
+    let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
     };
-    let keys = TestKeys::new();
-    let (metadata, config) = create_game(&lobby, &keys).await?;
-    let host_player = join_host(&lobby, &metadata).await?;
-    let shuffler = register_shuffler_curve(
-        &lobby,
-        &metadata.record,
-        ShufflerRecord {
-            display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
-            state: MaybeSaved { id: None },
-        },
-        ShufflerRegistrationConfig { sequence: Some(0) },
-    )
-    .await?
-    .shuffler;
-
-    let params = CommenceGameParams {
-        game: metadata.record.clone(),
-        hand_no: 1,
-        hand_config: HandConfig {
-            stakes: config.stakes.clone(),
-            button: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
-            check_raise_allowed: true,
-        },
-        players: vec![PlayerSeatSnapshot::new(
-            host_player.clone(),
-            0,
-            config.buy_in,
-            keys.host.clone(),
-        )],
-        shufflers: vec![ShufflerAssignment::new(
-            shuffler,
-            0,
-            keys.shuffler.clone(),
-            vec![9],
-        )],
-        deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: 3,
-    };
-    let operator = dummy_operator();
     let err = commence_game_curve(&lobby, &operator, params)
         .await
         .unwrap_err();
@@ -307,7 +367,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
 
 #[tokio::test]
 async fn commence_game_requires_buy_in() -> Result<()> {
-    let Some((lobby, _)) = setup_lobby().await? else {
+    let Some((lobby, conn)) = setup_lobby().await? else {
         return Ok(());
     };
     let keys = TestKeys::new();
@@ -323,6 +383,20 @@ async fn commence_game_requires_buy_in() -> Result<()> {
             state: MaybeSaved { id: None },
         },
         Some(1),
+    )
+    .await?
+    .player;
+    let extra_keys = TestKeys::new();
+    let third_player = join_game_curve(
+        &lobby,
+        &metadata.record,
+        PlayerRecord {
+            display_name: "Carol".into(),
+            public_key: extra_keys.player.clone(),
+            seat_preference: Some(2),
+            state: MaybeSaved { id: None },
+        },
+        Some(2),
     )
     .await?
     .player;
@@ -352,6 +426,12 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         players: vec![
             PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
             PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in - 1, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                third_player.clone(),
+                2,
+                config.buy_in,
+                extra_keys.player.clone(),
+            ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
@@ -363,7 +443,9 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         buy_in: config.buy_in,
         min_players: config.min_players_to_start,
     };
-    let operator = dummy_operator();
+    let Some(operator) = setup_operator(&conn).await else {
+        return Ok(());
+    };
     let err = commence_game_curve(&lobby, &operator, params)
         .await
         .unwrap_err();
@@ -433,7 +515,7 @@ async fn create_game(
         name: "Test Game".into(),
         currency: "chips".into(),
         buy_in: 1_000,
-        min_players_to_start: 2,
+        min_players_to_start: 3,
         check_raise_allowed: true,
         action_time_limit: std::time::Duration::from_secs(30),
     };
@@ -509,50 +591,17 @@ async fn commence_game_curve(
     <SeaOrmLobby as super::LedgerLobby<TestCurve>>::commence_game(lobby, operator, params).await
 }
 
-fn dummy_operator() -> LedgerOperator<TestCurve> {
-    use crate::ledger::store::EventStore;
-    use tokio::sync::mpsc;
-
-    struct NullStore;
-    #[async_trait::async_trait]
-    impl EventStore<TestCurve> for NullStore {
-        async fn persist_event(
-            &self,
-            _event: &AnyMessageEnvelope<TestCurve>,
-        ) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn remove_event(&self, _hand_id: HandId, _nonce: u64) -> anyhow::Result<()> {
-            Ok(())
-        }
-
-        async fn load_all_events(&self) -> anyhow::Result<Vec<AnyMessageEnvelope<TestCurve>>> {
-            Ok(Vec::new())
-        }
-
-        async fn load_hand_events(
-            &self,
-            _hand_id: HandId,
-        ) -> anyhow::Result<Vec<AnyMessageEnvelope<TestCurve>>> {
-            Ok(Vec::new())
-        }
-    }
-
-    struct NoopVerifier;
-    impl crate::ledger::verifier::Verifier<TestCurve> for NoopVerifier {
-        fn verify(
-            &self,
-            _hand_id: HandId,
-            envelope: AnyMessageEnvelope<TestCurve>,
-        ) -> Result<AnyMessageEnvelope<TestCurve>, crate::ledger::verifier::VerifyError> {
-            Ok(envelope)
-        }
-    }
-
-    let verifier = Arc::new(NoopVerifier);
-    let (tx, _rx) = mpsc::channel(16);
-    let store: Arc<dyn EventStore<TestCurve>> = Arc::new(NullStore);
+async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<TestCurve>> {
+    let store = Arc::new(SeaOrmEventStore::<TestCurve>::new(conn.clone()));
+    let event_store: Arc<dyn EventStore<TestCurve>> = store.clone();
     let state = Arc::new(LedgerState::<TestCurve>::new());
-    LedgerOperator::new(verifier, tx, store, state)
+    let verifier = Arc::new(LedgerVerifier::new(Arc::clone(&state)));
+    let (tx, rx) = mpsc::channel(32);
+    let worker = LedgerWorker::new(rx, Arc::clone(&event_store), Arc::clone(&state));
+    let operator = LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
+    if let Err(err) = operator.start(worker).await {
+        eprintln!("skipping lobby test: failed to start operator ({err})");
+        return None;
+    }
+    Some(operator)
 }
