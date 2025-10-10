@@ -1,5 +1,4 @@
 use ark_ec::CurveGroup;
-use ark_serialize::CanonicalSerialize;
 use serde::Serialize;
 use std::marker::PhantomData;
 
@@ -100,14 +99,6 @@ where
     }
 }
 
-fn append_serialized<T: CanonicalSerialize>(builder: &mut TranscriptBuilder, value: &T) {
-    let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .expect("serialization should succeed");
-    builder.append_bytes(&buf);
-}
-
 #[derive(Debug, Clone)]
 pub struct GameShuffleMessage<C>
 where
@@ -158,7 +149,7 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
-        append_serialized(builder, &self.share);
+        self.share.write_transcript(builder);
     }
 }
 
@@ -182,7 +173,7 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
-        append_serialized(builder, &self.share);
+        self.share.write_transcript(builder);
     }
 }
 
@@ -207,13 +198,13 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         for proof in &self.chaum_pedersen_proofs {
-            append_serialized(builder, proof);
+            proof.write_transcript(builder);
         }
         for &pos in &self.card_in_deck_position {
             builder.append_u8(pos);
         }
         for ct in &self.hole_ciphertexts {
-            append_serialized(builder, ct);
+            ct.write_transcript(builder);
         }
     }
 }
