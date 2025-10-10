@@ -169,7 +169,7 @@ mod tests {
         AnyMessageEnvelope {
             hand_id: 0,
             game_id: 0,
-            actor: AnyActor::default(),
+            actor: AnyActor::None,
             nonce,
             public_key: Curve::zero(),
             message: WithSignature {

@@ -2,7 +2,6 @@ use crate::{
     engine::nl::{PlayerId, SeatId},
     ledger::ShufflerId,
 };
-
 use serde::{Deserialize, Serialize};
 
 use crate::signing::{Signable, TranscriptBuilder};
@@ -47,8 +46,23 @@ impl Signable for ShufflerActor {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, Clone, Copy)]
-pub struct AnyActor;
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum AnyActor {
+    None,
+    Player {
+        seat_id: SeatId,
+        player_id: PlayerId,
+    },
+    Shuffler {
+        shuffler_id: ShufflerId,
+    },
+}
+
+impl Default for AnyActor {
+    fn default() -> Self {
+        AnyActor::None
+    }
+}
 
 impl GameActor for AnyActor {}
 
@@ -58,6 +72,17 @@ impl Signable for AnyActor {
     }
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(0);
+        match self {
+            AnyActor::None => builder.append_u8(0),
+            AnyActor::Player { seat_id, player_id } => {
+                builder.append_u8(1);
+                builder.append_u8(*seat_id);
+                builder.append_u64(*player_id);
+            }
+            AnyActor::Shuffler { shuffler_id } => {
+                builder.append_u8(2);
+                builder.append_i64(*shuffler_id);
+            }
+        }
     }
 }

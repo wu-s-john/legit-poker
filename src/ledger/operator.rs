@@ -94,7 +94,7 @@ mod tests {
         AnyMessageEnvelope {
             hand_id: HandId::default(),
             game_id: GameId::default(),
-            actor: AnyActor::default(),
+            actor: AnyActor::None,
             nonce,
             public_key: Curve::zero(),
             message: WithSignature {
@@ -170,7 +170,9 @@ mod tests {
         }
     }
 
-    struct NoopVerifier;
+    struct NoopVerifier {
+        _state: Arc<LedgerState<Curve>>,
+    }
 
     impl Verifier<Curve> for NoopVerifier {
         fn verify(
@@ -184,10 +186,12 @@ mod tests {
 
     #[test]
     fn operator_can_be_constructed() {
-        let verifier = Arc::new(NoopVerifier);
         let queue = Arc::new(MemoryQueue::<Curve>::new());
         let store = Arc::new(MemoryStore::<Curve>::new());
         let state = Arc::new(LedgerState::<Curve>::new());
+        let verifier = Arc::new(NoopVerifier {
+            _state: Arc::clone(&state),
+        });
         let operator = LedgerOperator::new(verifier, queue.clone(), store.clone(), state.clone());
         assert_eq!(queue.len(), 0);
         assert_eq!(store.len(), 0);
@@ -197,10 +201,12 @@ mod tests {
     #[test]
     #[should_panic]
     fn start_is_not_implemented() {
-        let verifier = Arc::new(NoopVerifier);
         let queue = Arc::new(MemoryQueue::<Curve>::new());
         let store = Arc::new(MemoryStore::<Curve>::new());
         let state = Arc::new(LedgerState::<Curve>::new());
+        let verifier = Arc::new(NoopVerifier {
+            _state: Arc::clone(&state),
+        });
         let operator = LedgerOperator::new(verifier, queue, store, state);
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(operator.start()).unwrap();
@@ -209,10 +215,10 @@ mod tests {
     #[test]
     #[should_panic]
     fn submit_is_not_implemented() {
-        let verifier = Arc::new(LedgerVerifier); // real verifier still unimplemented
         let queue = Arc::new(MemoryQueue::<Curve>::new());
         let store = Arc::new(MemoryStore::<Curve>::new());
         let state = Arc::new(LedgerState::<Curve>::new());
+        let verifier = Arc::new(LedgerVerifier::new(Arc::clone(&state)));
         let operator = LedgerOperator::new(verifier, queue, store, state);
         let envelope = sample_verified_envelope(10);
         let rt = tokio::runtime::Runtime::new().unwrap();
