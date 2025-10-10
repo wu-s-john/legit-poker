@@ -249,6 +249,7 @@ mod tests {
 
     #[ignore]
     #[test]
+    #[ignore]
     fn build_initial_betting_state_uses_stack_info() {
         let cfg = HandConfig {
             stakes: crate::engine::nl::types::TableStakes {

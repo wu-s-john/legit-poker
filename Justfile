@@ -14,6 +14,10 @@ export RUST_LOG := env_var_or_default("RUST_LOG", "info")
 # Database defaults (override via environment)
 
 export DATABASE_URL := env_var_or_default("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
+export TEST_DATABASE_URL := env_var_or_default(
+    "TEST_DATABASE_URL",
+    env_var_or_default("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
+)
 export SCHEMA := env_var_or_default("SCHEMA", "public")
 export TABLE := env_var_or_default("TABLE", "test")
 export PUB := env_var_or_default("PUB", "supabase_realtime")

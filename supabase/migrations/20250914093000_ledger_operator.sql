@@ -45,6 +45,7 @@ CREATE TABLE game_players (
 CREATE TABLE game_shufflers (
     game_id     BIGINT      NOT NULL REFERENCES games(id) ON DELETE CASCADE,
     shuffler_id BIGINT      NOT NULL REFERENCES shufflers(id),
+    sequence    SMALLINT    NOT NULL,
     public_key  BYTEA       NOT NULL,
     joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (game_id, shuffler_id)
