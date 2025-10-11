@@ -33,6 +33,7 @@ pub use phases::{
 
 // Shared alias used throughout snapshots
 pub type Shared<T> = Arc<T>;
+pub type SnapshotSeq = u32;
 
 // ---- Player identity / seating --------------------------------------------------------------
 
@@ -358,6 +359,7 @@ where
 {
     pub game_id: GameId,
     pub hand_id: Option<HandId>,
+    pub sequence: SnapshotSeq,
     pub cfg: Option<Shared<HandConfig>>,
     pub shufflers: Shared<ShufflerRoster<C>>,
     pub players: Shared<PlayerRoster<C>>,
@@ -386,6 +388,7 @@ where
     C: CurveGroup,
 {
     pub fn initialize_hash(&mut self, hasher: &dyn LedgerHasher) {
+        self.sequence = 0;
         self.previous_hash = None;
         self.state_hash = initial_snapshot_hash(self, hasher);
     }
@@ -402,6 +405,7 @@ where
         let chained = chain_hash(self.state_hash, message, hasher);
         self.previous_hash = Some(self.state_hash);
         self.state_hash = chained;
+        self.sequence = self.sequence.saturating_add(1);
     }
 }
 

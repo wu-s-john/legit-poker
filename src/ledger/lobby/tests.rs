@@ -7,11 +7,13 @@ use super::types::{
     ShufflerRegistrationConfig,
 };
 use super::GameSetupError;
-use crate::db::entity::{game_players, games, hand_seating, hands};
+use crate::curve_absorb::CurveAbsorb;
+use crate::db::entity::{game_players, games, hand_player, hands};
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
+use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::state::LedgerState;
-use crate::ledger::store::{EventStore, SeaOrmEventStore};
+use crate::ledger::store::{EventStore, SeaOrmEventStore, SnapshotStore};
 use crate::ledger::types::{GameId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::verifier::LedgerVerifier;
@@ -19,10 +21,13 @@ use crate::ledger::worker::LedgerWorker;
 use crate::ledger::LedgerOperator;
 use anyhow::Result;
 use ark_bn254::{Fr as TestScalar, G1Projective as TestCurve};
-use ark_ec::PrimeGroup;
+use ark_crypto_primitives::sponge::Absorb;
+use ark_ec::{CurveGroup, PrimeGroup};
+use ark_ff::PrimeField;
 use ark_ff::UniformRand;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
+use async_trait::async_trait;
 use sea_orm::{
     ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend,
     EntityTrait, PaginatorTrait, QueryFilter, Statement,
@@ -206,8 +211,8 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         .await?
         .is_some());
     assert_eq!(
-        hand_seating::Entity::find()
-            .filter(hand_seating::Column::HandId.eq(outcome.hand.state.id))
+        hand_player::Entity::find()
+            .filter(hand_player::Column::HandId.eq(outcome.hand.state.id))
             .count(&conn)
             .await?,
         3
@@ -637,6 +642,19 @@ async fn setup_lobby() -> Result<Option<(SeaOrmLobby, DatabaseConnection)>> {
         eprintln!("skipping lobby test: ping postgres failed ({err})");
         return Ok(None);
     }
+    // Acquire a global advisory lock so tests run sequentially against the schema.
+    // The lock is released automatically when the connection is dropped.
+    if let Err(err) = conn
+        .execute(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT pg_advisory_lock(8675309)",
+        ))
+        .await
+    {
+        eprintln!("skipping lobby test: failed to acquire advisory lock ({err})");
+        return Ok(None);
+    }
+
     if let Err(err) = reset_database(&conn).await {
         eprintln!("skipping lobby test: failed to reset database ({err})");
         return Ok(None);
@@ -693,9 +711,20 @@ async fn join_host(
 async fn reset_database(conn: &DatabaseConnection) -> Result<()> {
     conn.execute(Statement::from_string(
         DbBackend::Postgres,
-        "TRUNCATE TABLE public.events, public.hand_shufflers, public.hand_seating, public.hands, \
-         public.game_shufflers, public.game_players, public.games, \
-         public.shufflers, public.players RESTART IDENTITY CASCADE",
+        "TRUNCATE TABLE \
+            public.table_snapshots, \
+            public.phases, \
+            public.hand_configs, \
+            public.events, \
+            public.hand_shufflers, \
+            public.hand_player, \
+            public.hands, \
+            public.game_shufflers, \
+            public.game_players, \
+            public.games, \
+            public.shufflers, \
+            public.players \
+         RESTART IDENTITY CASCADE",
     ))
     .await?;
     Ok(())
@@ -736,13 +765,42 @@ async fn commence_game_curve(
     <SeaOrmLobby as super::LedgerLobby<TestCurve>>::commence_game(lobby, operator, params).await
 }
 
+#[derive(Default)]
+struct NoopSnapshotStore<C> {
+    _marker: std::marker::PhantomData<C>,
+}
+
+#[async_trait]
+impl<C> SnapshotStore<C> for NoopSnapshotStore<C>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+{
+    async fn persist_snapshot(
+        &self,
+        _snapshot: &AnyTableSnapshot<C>,
+        _hasher: &Arc<dyn LedgerHasher + Send + Sync>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<TestCurve>> {
-    let store = Arc::new(SeaOrmEventStore::<TestCurve>::new(conn.clone()));
-    let event_store: Arc<dyn EventStore<TestCurve>> = store.clone();
+    let event_store: Arc<dyn EventStore<TestCurve>> =
+        Arc::new(SeaOrmEventStore::<TestCurve>::new(conn.clone()));
+    let snapshot_store: Arc<dyn SnapshotStore<TestCurve>> =
+        Arc::new(NoopSnapshotStore::<TestCurve>::default());
     let state = Arc::new(LedgerState::<TestCurve>::new());
     let verifier = Arc::new(LedgerVerifier::new(Arc::clone(&state)));
     let (tx, rx) = mpsc::channel(32);
-    let worker = LedgerWorker::new(rx, Arc::clone(&event_store), Arc::clone(&state));
+    let worker = LedgerWorker::new(
+        rx,
+        Arc::clone(&event_store),
+        Arc::clone(&snapshot_store),
+        Arc::clone(&state),
+    );
     let operator = LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
     if let Err(err) = operator.start(worker).await {
         eprintln!("skipping lobby test: failed to start operator ({err})");

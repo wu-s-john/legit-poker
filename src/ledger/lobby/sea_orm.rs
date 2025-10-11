@@ -10,7 +10,7 @@ use crate::db::entity::sea_orm_active_enums::{
     GameStatus as DbGameStatus, HandStatus as DbHandStatus,
 };
 use crate::db::entity::{
-    game_players, game_shufflers, games, hand_seating, hand_shufflers, hands, players, shufflers,
+    game_players, game_shufflers, games, hand_player, hand_shufflers, hands, players, shufflers,
 };
 use crate::engine::nl::types::{Chips, PlayerId, PlayerStatus, SeatId};
 use crate::ledger::hash::LedgerHasher;
@@ -184,7 +184,7 @@ where
             big_blind: Set(big_blind),
             ante: Set(ante),
             rake_bps: Set(lobby.rake_bps),
-            status: Set(DbGameStatus::Open),
+            status: Set(DbGameStatus::Onboarding),
             ..Default::default()
         };
         let inserted = game_active.insert(&txn).await?;
@@ -301,14 +301,14 @@ where
         for seat in &params.players {
             let player_db_id = i64::try_from(seat.player.state.id)
                 .map_err(|_| GameSetupError::validation("player id overflow"))?;
-            let starting_stack = chips_to_i64(seat.starting_stack)?;
-            let model = hand_seating::ActiveModel {
-                hand_id: Set(hand_id),
+
+            let model = hand_player::ActiveModel {
                 game_id: Set(params.game.state.id),
-                seat: Set(seat.seat_id as i16),
+                hand_id: Set(hand_id),
                 player_id: Set(player_db_id),
-                player_public_key: Set(seat.public_key.clone()),
-                starting_stack: Set(starting_stack),
+                seat: Set(seat.seat_id as i16),
+                nonce: Set(0),
+                ..Default::default()
             };
             model.insert(&txn).await?;
         }
@@ -491,6 +491,7 @@ where
     let mut snapshot: TableSnapshot<PhaseShuffling, C> = TableSnapshot {
         game_id: params.game.state.id,
         hand_id: Some(hand_id),
+        sequence: 0,
         cfg: Some(Arc::new(params.hand_config.clone())),
         shufflers: Arc::new(shuffler_roster),
         players: Arc::new(player_roster),

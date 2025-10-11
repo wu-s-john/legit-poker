@@ -1,0 +1,33 @@
+stateDiagram-v2
+    [*] --> Onboarding: Host creates game
+
+    state "Onboarding" as Onboarding {
+        [*] --> Lobby
+        Lobby --> Lobby: Players join/leave
+        Lobby --> Ready: Host starts game
+    }
+
+    Onboarding --> Active: First hand created
+
+    state Active {
+        [*] --> HandSetup
+
+        state "Hand Lifecycle" as HandLifecycle {
+            [*] --> Shuffling
+            Shuffling --> Dealing
+            Dealing --> Betting_Preflop: Preflop betting
+            Betting_Preflop --> Betting_Flop: Flop dealt
+            Betting_Flop --> Betting_Turn: Turn dealt
+            Betting_Turn --> Betting_River: River dealt
+            Betting_River --> Showdown: Reveal hands or fold resolution
+            Showdown --> Complete
+            Complete --> [*]
+        }
+
+        HandSetup --> HandLifecycle: Snapshot initialized
+        HandLifecycle --> HandSetup: Next hand begins
+        HandLifecycle --> Closing: Host stops game
+    }
+
+    Active --> Closed: Host ends game
+    Closed --> [*]

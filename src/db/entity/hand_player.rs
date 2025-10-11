@@ -11,40 +11,41 @@ impl EntityName for Entity {
         Some("public")
     }
     fn table_name(&self) -> &str {
-        "hand_seating"
+        "hand_player"
     }
 }
 
 #[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Eq, Serialize, Deserialize)]
 pub struct Model {
-    pub hand_id: i64,
+    pub id: i64,
     pub game_id: i64,
-    pub seat: i16,
+    pub hand_id: i64,
     pub player_id: i64,
-    pub player_public_key: Vec<u8>,
-    pub starting_stack: i64,
+    pub seat: i16,
+    pub nonce: i64,
+    pub joined_at: TimeDateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 pub enum Column {
-    HandId,
+    Id,
     GameId,
-    Seat,
+    HandId,
     PlayerId,
-    PlayerPublicKey,
-    StartingStack,
+    Seat,
+    Nonce,
+    JoinedAt,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
 pub enum PrimaryKey {
-    HandId,
-    Seat,
+    Id,
 }
 
 impl PrimaryKeyTrait for PrimaryKey {
-    type ValueType = (i64, i16);
+    type ValueType = i64;
     fn auto_increment() -> bool {
-        false
+        true
     }
 }
 
@@ -53,18 +54,20 @@ pub enum Relation {
     GamePlayers,
     Games,
     Hands,
+    Players,
 }
 
 impl ColumnTrait for Column {
     type EntityName = Entity;
     fn def(&self) -> ColumnDef {
         match self {
-            Self::HandId => ColumnType::BigInteger.def(),
+            Self::Id => ColumnType::BigInteger.def(),
             Self::GameId => ColumnType::BigInteger.def(),
-            Self::Seat => ColumnType::SmallInteger.def(),
+            Self::HandId => ColumnType::BigInteger.def(),
             Self::PlayerId => ColumnType::BigInteger.def(),
-            Self::PlayerPublicKey => ColumnType::VarBinary(StringLen::None).def(),
-            Self::StartingStack => ColumnType::BigInteger.def(),
+            Self::Seat => ColumnType::SmallInteger.def(),
+            Self::Nonce => ColumnType::BigInteger.def(),
+            Self::JoinedAt => ColumnType::TimestampWithTimeZone.def(),
         }
     }
 }
@@ -87,6 +90,10 @@ impl RelationTrait for Relation {
                 .from(Column::HandId)
                 .to(super::hands::Column::Id)
                 .into(),
+            Self::Players => Entity::belongs_to(super::players::Entity)
+                .from(Column::PlayerId)
+                .to(super::players::Column::Id)
+                .into(),
         }
     }
 }
@@ -106,6 +113,12 @@ impl Related<super::games::Entity> for Entity {
 impl Related<super::hands::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Hands.def()
+    }
+}
+
+impl Related<super::players::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Players.def()
     }
 }
 

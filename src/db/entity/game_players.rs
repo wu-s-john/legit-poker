@@ -47,7 +47,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Games,
-    HandSeating,
+    HandPlayer,
     Players,
 }
 
@@ -70,7 +70,7 @@ impl RelationTrait for Relation {
                 .from(Column::GameId)
                 .to(super::games::Column::Id)
                 .into(),
-            Self::HandSeating => Entity::has_many(super::hand_seating::Entity).into(),
+            Self::HandPlayer => Entity::has_many(super::hand_player::Entity).into(),
             Self::Players => Entity::belongs_to(super::players::Entity)
                 .from(Column::PlayerId)
                 .to(super::players::Column::Id)
@@ -85,9 +85,9 @@ impl Related<super::games::Entity> for Entity {
     }
 }
 
-impl Related<super::hand_seating::Entity> for Entity {
+impl Related<super::hand_player::Entity> for Entity {
     fn to() -> RelationDef {
-        Relation::HandSeating.def()
+        Relation::HandPlayer.def()
     }
 }
 

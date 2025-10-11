@@ -6,12 +6,13 @@ zkPoker needs a single authority that accepts signed game messages, enforces tur
 ## Goals
 - Deterministic ordering of all player/shuffler messages per hand.
 - Persist every accepted event before mutating in-memory state.
+- Capture the sequence-0 snapshot (seating, stacks, shufflers) when a hand is created so crash recovery can replay from a known baseline.
 - Provide simple APIs for submitting actions, reading hand state, and ending games.
 - Keep codecs generic over `CurveGroup` so cryptographic proofs remain flexible.
 
 ## Non-Goals
 - No streaming/WebSocket feeds in v1 (polling only).
-- No on-disk snapshots; rebuild state from the `events` log.
+- No historical snapshot archival beyond sequence-0; the system still rebuilds everything after the opening snapshot from the `events` log.
 - No multi-worker sharding; a single ledger worker consumes the queue.
 
 ## Message Flow
@@ -132,6 +133,12 @@ loop {
 - Persistence occurs before state mutation.
 - On `apply` failure, roll back and drop the event.
 - On startup, replay `events` ordered by `(hand_id, id)` to rebuild state.
+
+### Initial Snapshot Persistence
+- `commence_game` inserts the `hands`, `hand_player`, and `hand_shufflers` rows, then builds the sequence-0 `TableSnapshot`.
+- The same SeaORM snapshot store code serialises the snapshot (including `player_stacks` JSON, shuffler roster, and phase hashes) and writes it to `table_snapshots`/`phases` inside the in-flight transaction.
+- Only after the snapshot insert succeeds do we `txn.commit()` and call `state.upsert_snapshot` so both the database and in-memory state start from the exact baseline.
+- Subsequent snapshots (sequence ≥ 1) are still persisted by the worker after each successful event application.
 
 ## Database Schema
 ```sql

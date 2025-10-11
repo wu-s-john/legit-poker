@@ -64,3 +64,11 @@ impl<C: CurveGroup> HandPhase<C> for PhaseComplete {
     type BettingS = BettingSnapshot<C>;
     type RevealsS = RevealsSnapshot<C>;
 }
+
+#[derive(Clone, Debug)]
+pub enum AnyPhase<C: CurveGroup> {
+    Shuffling(ShufflingSnapshot<C>),
+    Dealing(DealingSnapshot<C>),
+    Betting(BettingSnapshot<C>),
+    Reveals(RevealsSnapshot<C>),
+}

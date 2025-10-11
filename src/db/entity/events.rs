@@ -67,6 +67,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
     Hands,
+    Phases,
 }
 
 impl ColumnTrait for Column {
@@ -98,6 +99,7 @@ impl RelationTrait for Relation {
                 .from(Column::HandId)
                 .to(super::hands::Column::Id)
                 .into(),
+            Self::Phases => Entity::has_many(super::phases::Entity).into(),
         }
     }
 }
@@ -105,6 +107,12 @@ impl RelationTrait for Relation {
 impl Related<super::hands::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Hands.def()
+    }
+}
+
+impl Related<super::phases::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Phases.def()
     }
 }
 

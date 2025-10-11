@@ -83,18 +83,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::nl::actions::PlayerBetAction;
     use crate::ledger::actor::AnyActor;
+    use crate::ledger::messages::{AnyGameMessage, GamePlayerMessage, PreflopStreet};
+    use crate::ledger::store::{SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
     use crate::ledger::{GameId, HandId};
     use crate::signing::WithSignature;
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
-    use std::sync::{Arc, Mutex};
+    use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
+    use std::env;
+    use std::sync::Arc;
+    use std::time::Duration as StdDuration;
     use tokio::sync::mpsc;
 
     fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
-        use crate::engine::nl::actions::PlayerBetAction;
-        use crate::ledger::messages::{AnyGameMessage, GamePlayerMessage, PreflopStreet};
-
         let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage {
             street: PreflopStreet,
             action: PlayerBetAction::Check,
@@ -114,11 +117,6 @@ mod tests {
             },
         }
     }
-
-    use crate::ledger::store::SeaOrmEventStore;
-    use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
-    use std::env;
-    use std::time::Duration as StdDuration;
 
     async fn setup_event_store() -> Option<Arc<SeaOrmEventStore<Curve>>> {
         let url = env::var("TEST_DATABASE_URL")
@@ -176,13 +174,16 @@ mod tests {
         let Some(store) = setup_event_store().await else {
             return;
         };
-        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator =
-            LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
+        let operator = LedgerOperator::new(
+            verifier,
+            tx,
+            Arc::clone(&store) as Arc<dyn EventStore<Curve>>,
+            Arc::clone(&state),
+        );
         assert!(state.hands().is_empty());
         let _ = operator;
     }
@@ -193,14 +194,25 @@ mod tests {
         let Some(store) = setup_event_store().await else {
             return;
         };
-        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
+        let snapshot_store: Arc<dyn SnapshotStore<Curve>> =
+            Arc::new(SeaOrmSnapshotStore::new(store.connection.clone()));
+        let event_store_trait: Arc<dyn EventStore<Curve>> = Arc::clone(&store);
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator =
-            LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
-        let worker = LedgerWorker::new(rx, Arc::clone(&event_store), Arc::clone(&state));
+        let operator = LedgerOperator::new(
+            verifier,
+            tx,
+            Arc::clone(&event_store_trait),
+            Arc::clone(&state),
+        );
+        let worker = LedgerWorker::new(
+            rx,
+            Arc::clone(&event_store_trait),
+            Arc::clone(&snapshot_store),
+            Arc::clone(&state),
+        );
         operator.start(worker).await.unwrap();
     }
 
@@ -210,12 +222,12 @@ mod tests {
         let Some(store) = setup_event_store().await else {
             return;
         };
-        let event_store: Arc<dyn EventStore<Curve>> = store.clone();
+        let event_store_trait: Arc<dyn EventStore<Curve>> = Arc::clone(&store);
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator = LedgerOperator::new(verifier, tx, event_store, Arc::clone(&state));
+        let operator = LedgerOperator::new(verifier, tx, event_store_trait, Arc::clone(&state));
         let envelope = sample_verified_envelope(10);
         operator.submit(0, envelope).await.unwrap();
         let received = rx.recv().await.expect("message enqueued");

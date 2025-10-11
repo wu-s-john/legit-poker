@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use super::messages::AnyMessageEnvelope;
 use super::state::{ApplyStatus, LedgerState};
-use super::store::EventStore;
+use super::store::{EventStore, SnapshotStore};
 use crate::curve_absorb::CurveAbsorb;
 use tokio::sync::mpsc;
 use tracing::{error, info, instrument, warn};
@@ -23,6 +23,7 @@ where
 {
     receiver: mpsc::Receiver<AnyMessageEnvelope<C>>,
     event_store: Arc<dyn EventStore<C>>,
+    snapshot_store: Arc<dyn SnapshotStore<C>>,
     state: Arc<LedgerState<C>>,
     _marker: std::marker::PhantomData<C>,
 }
@@ -37,11 +38,13 @@ where
     pub fn new(
         receiver: mpsc::Receiver<AnyMessageEnvelope<C>>,
         event_store: Arc<dyn EventStore<C>>,
+        snapshot_store: Arc<dyn SnapshotStore<C>>,
         state: Arc<LedgerState<C>>,
     ) -> Self {
         Self {
             receiver,
             event_store,
+            snapshot_store,
             state,
             _marker: std::marker::PhantomData,
         }
@@ -114,11 +117,35 @@ where
 
         match self.state.apply_event(&event) {
             Ok(outcome) if matches!(outcome.status, ApplyStatus::Success) => {
+                let snapshot = outcome.snapshot;
+                let hasher = self.state.hasher();
+                if let Err(err) = self
+                    .snapshot_store
+                    .persist_snapshot(&snapshot, &hasher)
+                    .await
+                {
+                    error!(
+                        target: LOG_TARGET,
+                        error = ?err,
+                        hand_id = event.hand_id,
+                        nonce = event.nonce,
+                        "failed to persist snapshot"
+                    );
+                    self.rollback_persisted(event.hand_id, event.nonce).await?;
+                    return Err(WorkerError::Database);
+                }
+
                 info!(
                     target: LOG_TARGET,
                     hand_id = event.hand_id,
                     nonce = event.nonce,
                     "state applied successfully"
+                );
+                info!(
+                    target: LOG_TARGET,
+                    hand_id = event.hand_id,
+                    nonce = event.nonce,
+                    "persisted snapshot"
                 );
                 Ok(())
             }
@@ -184,12 +211,36 @@ mod tests {
     use tracing::{info, Level};
     use tracing_subscriber::{filter, fmt, prelude::*};
 
+    use crate::ledger::hash::LedgerHasher;
     use crate::ledger::messages::{AnyGameMessage, GameShuffleMessage};
     use crate::ledger::snapshot::PhaseShuffling;
     use crate::ledger::store::SeaOrmEventStore;
     use crate::ledger::types::StateHash;
     use crate::ledger::worker::WorkerError;
     use crate::signing::WithSignature;
+    use async_trait::async_trait;
+
+    #[derive(Default)]
+    struct NoopSnapshotStore<C> {
+        _marker: std::marker::PhantomData<C>,
+    }
+
+    #[async_trait]
+    impl<C> SnapshotStore<C> for NoopSnapshotStore<C>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
+        async fn persist_snapshot(
+            &self,
+            _snapshot: &AnyTableSnapshot<C>,
+            _hasher: &Arc<dyn LedgerHasher + Send + Sync>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
 
     fn sample_cipher() -> ElGamalCiphertext<Curve> {
         ElGamalCiphertext::new(Curve::zero(), Curve::zero())
@@ -231,6 +282,7 @@ mod tests {
         let mut snapshot: TableSnapshot<PhaseShuffling, Curve> = TableSnapshot {
             game_id: 0,
             hand_id: Some(hand_id),
+            sequence: 0,
             cfg: None,
             shufflers: Arc::new(roster),
             players: Arc::new(Default::default()),
@@ -402,6 +454,7 @@ mod tests {
 
     #[tokio::test]
     async fn worker_can_be_constructed() {
+        let _guard = setup_test_tracing();
         let (_tx, rx) = mpsc::channel(16);
         let Some(store) = setup_event_store().await else {
             return;
@@ -410,13 +463,19 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
-        let worker = LedgerWorker::new(rx, store.clone(), state.clone());
+        let worker = LedgerWorker::new(
+            rx,
+            store.clone(),
+            Arc::new(NoopSnapshotStore::<Curve>::default()),
+            state.clone(),
+        );
         assert!(state.hands().is_empty());
         let _ = worker;
     }
 
     #[tokio::test]
     async fn persist_before_apply() {
+        let _guard = setup_test_tracing();
         let (_tx, rx) = mpsc::channel(16);
         let Some(store) = setup_event_store().await else {
             return;
@@ -426,7 +485,12 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
-        let worker = LedgerWorker::new(rx, store.clone(), state.clone());
+        let worker = LedgerWorker::new(
+            rx,
+            store.clone(),
+            Arc::new(NoopSnapshotStore::<Curve>::default()),
+            state.clone(),
+        );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
         let before_tip = state.tip_hash(hand_id);
@@ -444,6 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn rollback_on_state_failure() {
+        let _guard = setup_test_tracing();
         let (_tx, rx) = mpsc::channel(16);
         let Some(store) = setup_event_store().await else {
             return;
@@ -453,7 +518,12 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
-        let worker = LedgerWorker::new(rx, store.clone(), state.clone());
+        let worker = LedgerWorker::new(
+            rx,
+            store.clone(),
+            Arc::new(NoopSnapshotStore::<Curve>::default()),
+            state.clone(),
+        );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
         state.remove_hand(hand_id);
@@ -481,7 +551,12 @@ mod tests {
             .expect("seed worker hands");
         let state = Arc::new(LedgerState::<Curve>::new());
 
-        let worker = LedgerWorker::new(rx, store.clone(), state.clone());
+        let worker = LedgerWorker::new(
+            rx,
+            store.clone(),
+            Arc::new(NoopSnapshotStore::<Curve>::default()),
+            state.clone(),
+        );
         let runner = tokio::spawn(async move { worker.run().await.unwrap() });
 
         for (idx, hand_id) in hand_ids.iter().enumerate() {

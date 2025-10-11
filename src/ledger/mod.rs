@@ -28,7 +28,7 @@ pub use snapshot::{
     TableAtShowdown, TableAtShuffling, TableAtTurn, TableSnapshot,
 };
 pub use state::LedgerState;
-pub use store::EventStore;
+pub use store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
 pub use types::{
     EntityKind, GameId, HandId, HandStatus, NonceKey, PublicKeyBytes, ShufflerId, SignatureBytes,
     StateHash,

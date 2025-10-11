@@ -251,6 +251,7 @@ mod tests {
         let mut snapshot = TableSnapshot {
             game_id: 0,
             hand_id: Some(0),
+            sequence: 0,
             cfg: Some(Arc::new(hand_cfg)),
             shufflers: Arc::new(shufflers),
             players: Arc::new(BTreeMap::new()),

@@ -1028,6 +1028,7 @@ mod tests {
             let mut snapshot = TableSnapshot {
                 game_id: GAME_ID,
                 hand_id: Some(HAND_ID),
+                sequence: 0,
                 cfg: Some(Arc::new(default_hand_config())),
                 shufflers: Arc::new(self.shufflers.clone()),
                 players: Arc::new(self.players.clone()),
@@ -1091,6 +1092,7 @@ mod tests {
             let mut snapshot = TableSnapshot {
                 game_id: GAME_ID,
                 hand_id: Some(HAND_ID),
+                sequence: 0,
                 cfg: Some(Arc::new(default_hand_config())),
                 shufflers: Arc::new(self.shufflers.clone()),
                 players: Arc::new(self.players.clone()),
@@ -1128,6 +1130,7 @@ mod tests {
             let mut snapshot = TableSnapshot {
                 game_id: GAME_ID,
                 hand_id: Some(HAND_ID),
+                sequence: 0,
                 cfg: Some(Arc::new(default_hand_config())),
                 shufflers: Arc::new(self.shufflers.clone()),
                 players: Arc::new(self.players.clone()),

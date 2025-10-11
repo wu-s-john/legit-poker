@@ -56,6 +56,7 @@ fn promote_to_dealing<C: CurveGroup>(
     let TableSnapshot {
         game_id,
         hand_id,
+        sequence,
         cfg,
         shufflers,
         players,
@@ -86,6 +87,7 @@ fn promote_to_dealing<C: CurveGroup>(
     Ok(AnyTableSnapshot::Dealing(TableSnapshot {
         game_id,
         hand_id,
+        sequence,
         cfg,
         shufflers,
         players,
@@ -106,6 +108,7 @@ fn promote_to_showdown_from_river<C: CurveGroup>(
     let TableSnapshot {
         game_id,
         hand_id,
+        sequence,
         cfg,
         shufflers,
         players,
@@ -122,6 +125,7 @@ fn promote_to_showdown_from_river<C: CurveGroup>(
     TableSnapshot {
         game_id,
         hand_id,
+        sequence,
         cfg,
         shufflers,
         players,
@@ -324,6 +328,7 @@ where
             Ok(AnyTableSnapshot::Preflop(TableSnapshot {
                 game_id: snapshot.game_id,
                 hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
                 cfg: snapshot.cfg,
                 shufflers: snapshot.shufflers,
                 players: snapshot.players,
@@ -485,6 +490,7 @@ where
                 Ok(AnyTableSnapshot::Flop(TableSnapshot {
                     game_id: snapshot.game_id,
                     hand_id: snapshot.hand_id,
+                    sequence: snapshot.sequence,
                     cfg: snapshot.cfg,
                     shufflers: snapshot.shufflers,
                     players: snapshot.players,
@@ -501,6 +507,7 @@ where
             Transition::HandEnd { .. } => Ok(AnyTableSnapshot::Showdown(TableSnapshot {
                 game_id: snapshot.game_id,
                 hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
                 cfg: snapshot.cfg,
                 shufflers: snapshot.shufflers,
                 players: snapshot.players,
@@ -610,6 +617,7 @@ where
                 Ok(AnyTableSnapshot::Turn(TableSnapshot {
                     game_id: snapshot.game_id,
                     hand_id: snapshot.hand_id,
+                    sequence: snapshot.sequence,
                     cfg: snapshot.cfg,
                     shufflers: snapshot.shufflers,
                     players: snapshot.players,
@@ -626,6 +634,7 @@ where
             Transition::HandEnd { .. } => Ok(AnyTableSnapshot::Showdown(TableSnapshot {
                 game_id: snapshot.game_id,
                 hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
                 cfg: snapshot.cfg,
                 shufflers: snapshot.shufflers,
                 players: snapshot.players,
@@ -735,6 +744,7 @@ where
                 Ok(AnyTableSnapshot::River(TableSnapshot {
                     game_id: snapshot.game_id,
                     hand_id: snapshot.hand_id,
+                    sequence: snapshot.sequence,
                     cfg: snapshot.cfg,
                     shufflers: snapshot.shufflers,
                     players: snapshot.players,
@@ -751,6 +761,7 @@ where
             Transition::HandEnd { .. } => Ok(AnyTableSnapshot::Showdown(TableSnapshot {
                 game_id: snapshot.game_id,
                 hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
                 cfg: snapshot.cfg,
                 shufflers: snapshot.shufflers,
                 players: snapshot.players,
@@ -1006,6 +1017,7 @@ where
             Ok(AnyTableSnapshot::Complete(TableSnapshot {
                 game_id: snapshot.game_id,
                 hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
                 cfg: snapshot.cfg,
                 shufflers: snapshot.shufflers,
                 players: snapshot.players,

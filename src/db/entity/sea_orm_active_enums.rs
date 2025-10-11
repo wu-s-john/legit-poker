@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "game_status")]
 pub enum GameStatus {
-    #[sea_orm(string_value = "open")]
-    Open,
+    #[sea_orm(string_value = "onboarding")]
+    Onboarding,
     #[sea_orm(string_value = "active")]
     Active,
-    #[sea_orm(string_value = "completed")]
-    Completed,
+    #[sea_orm(string_value = "closed")]
+    Closed,
     #[sea_orm(string_value = "archived")]
     Archived,
 }
@@ -32,4 +32,16 @@ pub enum HandStatus {
     Complete,
     #[sea_orm(string_value = "cancelled")]
     Cancelled,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "phase_kind")]
+pub enum PhaseKind {
+    #[sea_orm(string_value = "shuffling")]
+    Shuffling,
+    #[sea_orm(string_value = "dealing")]
+    Dealing,
+    #[sea_orm(string_value = "betting")]
+    Betting,
+    #[sea_orm(string_value = "reveals")]
+    Reveals,
 }
