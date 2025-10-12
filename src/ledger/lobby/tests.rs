@@ -13,6 +13,7 @@ use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::state::LedgerState;
+use crate::ledger::store::snapshot::PreparedSnapshot;
 use crate::ledger::store::{EventStore, SeaOrmEventStore, SnapshotStore};
 use crate::ledger::types::{GameId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
@@ -29,8 +30,8 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use async_trait::async_trait;
 use sea_orm::{
-    ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend,
-    EntityTrait, PaginatorTrait, QueryFilter, Statement,
+    ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection,
+    DatabaseTransaction, DbBackend, EntityTrait, PaginatorTrait, QueryFilter, Statement,
 };
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -782,6 +783,14 @@ where
         &self,
         _snapshot: &AnyTableSnapshot<C>,
         _hasher: &Arc<dyn LedgerHasher + Send + Sync>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn persist_snapshot_in_txn(
+        &self,
+        _txn: &DatabaseTransaction,
+        _prepared: &PreparedSnapshot,
     ) -> anyhow::Result<()> {
         Ok(())
     }

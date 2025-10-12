@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{anyhow, Context};
+use anyhow::{bail, Context};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -15,15 +15,39 @@ use crate::ledger::messages::{
     GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
 };
 use crate::ledger::snapshot::AnyTableSnapshot;
+#[cfg(test)]
+use crate::ledger::snapshot::SnapshotStatus;
 use crate::ledger::transition::apply_transition;
 use crate::ledger::types::{HandId, StateHash};
 use crate::signing::WithSignature;
 type SharedHasher = Arc<dyn LedgerHasher + Send + Sync>;
 
-#[derive(Default)]
 struct HandLedger<C: CurveGroup> {
-    tip: Option<StateHash>,
+    tip_hash: StateHash,
+    tip_snapshot: AnyTableSnapshot<C>,
     snapshots: HashMap<StateHash, AnyTableSnapshot<C>>,
+}
+
+impl<C: CurveGroup> HandLedger<C> {
+    fn new(snapshot: AnyTableSnapshot<C>) -> Self {
+        let hash = snapshot.state_hash();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(hash, snapshot.clone());
+        Self {
+            tip_hash: hash,
+            tip_snapshot: snapshot,
+            snapshots,
+        }
+    }
+
+    fn insert(&mut self, snapshot: AnyTableSnapshot<C>, make_tip: bool) {
+        let hash = snapshot.state_hash();
+        self.snapshots.insert(hash, snapshot.clone());
+        if make_tip || hash == self.tip_hash {
+            self.tip_hash = hash;
+            self.tip_snapshot = snapshot;
+        }
+    }
 }
 
 pub struct LedgerState<C>
@@ -56,15 +80,14 @@ where
 
     pub fn tip_hash(&self, hand_id: HandId) -> Option<StateHash> {
         let guard = self.inner.read().expect("ledger state poisoned");
-        guard.get(&hand_id).and_then(|ledger| ledger.tip)
+        guard.get(&hand_id).map(|ledger| ledger.tip_hash)
     }
 
     pub fn tip_snapshot(&self, hand_id: HandId) -> Option<(StateHash, AnyTableSnapshot<C>)> {
         let guard = self.inner.read().expect("ledger state poisoned");
-        let ledger = guard.get(&hand_id)?;
-        let tip_hash = ledger.tip?;
-        let snapshot = ledger.snapshots.get(&tip_hash)?.clone();
-        Some((tip_hash, snapshot))
+        guard
+            .get(&hand_id)
+            .map(|ledger| (ledger.tip_hash, ledger.tip_snapshot.clone()))
     }
 
     pub fn snapshot(&self, hand_id: HandId, hash: StateHash) -> Option<AnyTableSnapshot<C>> {
@@ -75,19 +98,45 @@ where
     }
 
     pub fn upsert_snapshot(&self, hand_id: HandId, snapshot: AnyTableSnapshot<C>, make_tip: bool) {
-        let hash = snapshot.state_hash();
         let mut guard = self.inner.write().expect("ledger state poisoned");
-        let ledger = guard.entry(hand_id).or_insert_with(HandLedger::default);
-        ledger.snapshots.insert(hash, snapshot);
-        if make_tip || ledger.tip.is_none() {
-            ledger.tip = Some(hash);
+        match guard.entry(hand_id) {
+            Entry::Occupied(mut entry) => {
+                entry.get_mut().insert(snapshot, make_tip);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(HandLedger::new(snapshot));
+            }
         }
     }
 
     pub fn set_tip(&self, hand_id: HandId, tip: Option<StateHash>) {
         let mut guard = self.inner.write().expect("ledger state poisoned");
-        let ledger = guard.entry(hand_id).or_insert_with(HandLedger::default);
-        ledger.tip = tip;
+        match guard.entry(hand_id) {
+            Entry::Occupied(mut entry) => match tip {
+                Some(hash) => {
+                    let snapshot = entry
+                        .get()
+                        .snapshots
+                        .get(&hash)
+                        .cloned()
+                        .expect("tip snapshot must exist");
+                    let ledger = entry.get_mut();
+                    ledger.tip_hash = hash;
+                    ledger.tip_snapshot = snapshot;
+                }
+                None => {
+                    entry.remove();
+                }
+            },
+            Entry::Vacant(_) => {
+                if let Some(hash) = tip {
+                    panic!(
+                        "attempted to set tip for unknown hand {} to {:?}",
+                        hand_id, hash
+                    );
+                }
+            }
+        }
     }
 
     pub fn remove_hand(&self, hand_id: HandId) {
@@ -95,7 +144,7 @@ where
         guard.remove(&hand_id);
     }
 
-    pub fn apply_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<ApplyOutcome<C>>
+    pub fn apply_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<AnyTableSnapshot<C>>
     where
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
@@ -108,13 +157,10 @@ where
             .with_context(|| format!("no snapshot tip for hand {}", hand_id))?;
         let hasher = self.hasher();
 
-        let outcome = self.apply_message(current_snapshot.clone(), event, &hasher)?;
+        let snapshot = self.apply_message(current_snapshot.clone(), event, &hasher)?;
+        self.upsert_snapshot(hand_id, snapshot.clone(), true);
 
-        if matches!(outcome.status, ApplyStatus::Success) {
-            self.upsert_snapshot(hand_id, outcome.snapshot.clone(), true);
-        }
-
-        Ok(outcome)
+        Ok(snapshot)
     }
 
     pub fn replay<I>(&self, events: I) -> anyhow::Result<()>
@@ -126,14 +172,7 @@ where
         C::Affine: Absorb,
     {
         for event in events {
-            let outcome = self.apply_event(&event)?;
-            if !matches!(outcome.status, ApplyStatus::Success) {
-                return Err(anyhow!(
-                    "replay failed to apply event: hand_id={}, nonce={}",
-                    event.hand_id,
-                    event.nonce
-                ));
-            }
+            self.apply_event(&event)?;
         }
         Ok(())
     }
@@ -259,6 +298,7 @@ mod tests {
             stacks: Arc::new(stacks),
             previous_hash: None,
             state_hash: StateHash::default(),
+            status: SnapshotStatus::Success,
             shuffling,
             dealing: (),
             betting: (),
@@ -317,18 +357,6 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ApplyOutcome<C: CurveGroup> {
-    pub status: ApplyStatus,
-    pub snapshot: AnyTableSnapshot<C>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApplyStatus {
-    Success,
-    Failed,
-}
-
 impl<C> LedgerState<C>
 where
     C: CurveGroup,
@@ -338,7 +366,7 @@ where
         snapshot: AnyTableSnapshot<C>,
         event: &AnyMessageEnvelope<C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>>
+    ) -> anyhow::Result<AnyTableSnapshot<C>>
     where
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
@@ -379,25 +407,15 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GameShuffleMessage<C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>> {
         let table = match snapshot {
             AnyTableSnapshot::Shuffling(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("shuffle message can only be applied during shuffling phase"),
         };
 
         let actor = match event.actor {
             AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Shuffling(table),
-                })
-            }
+            _ => bail!("shuffle message must originate from a shuffler"),
         };
 
         let envelope = EnvelopedMessage {
@@ -409,12 +427,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_blinding(
@@ -423,7 +436,7 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GameBlindingDecryptionMessage<C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>>
+    ) -> anyhow::Result<AnyTableSnapshot<C>>
     where
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
@@ -432,22 +445,12 @@ where
     {
         let table = match snapshot {
             AnyTableSnapshot::Dealing(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("blinding decryption message can only be applied during dealing phase"),
         };
 
         let actor = match event.actor {
             AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Dealing(table),
-                })
-            }
+            _ => bail!("blinding decryption message must originate from a shuffler"),
         };
 
         let envelope = EnvelopedMessage {
@@ -459,12 +462,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_partial_unblinding(
@@ -473,25 +471,15 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GamePartialUnblindingShareMessage<C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>> {
         let table = match snapshot {
             AnyTableSnapshot::Dealing(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("partial unblinding message can only be applied during dealing phase"),
         };
 
         let actor = match event.actor {
             AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Dealing(table),
-                })
-            }
+            _ => bail!("partial unblinding message must originate from a shuffler"),
         };
 
         let envelope = EnvelopedMessage {
@@ -503,12 +491,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_player_preflop(
@@ -517,24 +500,20 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GamePlayerMessage<PreflopStreet, C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
         let table = match snapshot {
             AnyTableSnapshot::Preflop(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("preflop action can only be applied during preflop phase"),
         };
         let actor = match event.actor {
             AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Preflop(table),
-                })
-            }
+            _ => bail!("preflop action must originate from a player"),
         };
 
         let envelope = EnvelopedMessage {
@@ -546,12 +525,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_player_flop(
@@ -560,24 +534,14 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GamePlayerMessage<FlopStreet, C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>> {
         let table = match snapshot {
             AnyTableSnapshot::Flop(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("flop action can only be applied during flop phase"),
         };
         let actor = match event.actor {
             AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Flop(table),
-                })
-            }
+            _ => bail!("flop action must originate from a player"),
         };
 
         let envelope = EnvelopedMessage {
@@ -589,12 +553,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_player_turn(
@@ -603,24 +562,14 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GamePlayerMessage<TurnStreet, C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>> {
         let table = match snapshot {
             AnyTableSnapshot::Turn(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("turn action can only be applied during turn phase"),
         };
         let actor = match event.actor {
             AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Turn(table),
-                })
-            }
+            _ => bail!("turn action must originate from a player"),
         };
 
         let envelope = EnvelopedMessage {
@@ -632,12 +581,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_player_river(
@@ -646,24 +590,14 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GamePlayerMessage<RiverStreet, C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>> {
+    ) -> anyhow::Result<AnyTableSnapshot<C>> {
         let table = match snapshot {
             AnyTableSnapshot::River(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("river action can only be applied during river phase"),
         };
         let actor = match event.actor {
             AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::River(table),
-                })
-            }
+            _ => bail!("river action must originate from a player"),
         };
 
         let envelope = EnvelopedMessage {
@@ -675,12 +609,7 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 
     fn apply_showdown(
@@ -689,7 +618,7 @@ where
         event: &AnyMessageEnvelope<C>,
         message: GameShowdownMessage<C>,
         hasher: &SharedHasher,
-    ) -> anyhow::Result<ApplyOutcome<C>>
+    ) -> anyhow::Result<AnyTableSnapshot<C>>
     where
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
@@ -697,22 +626,12 @@ where
     {
         let table = match snapshot {
             AnyTableSnapshot::Showdown(table) => table,
-            other => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: other,
-                })
-            }
+            _ => bail!("showdown message can only be applied during showdown phase"),
         };
 
         let actor = match event.actor {
             AnyActor::Player { seat_id, player_id } => PlayerActor { seat_id, player_id },
-            _ => {
-                return Ok(ApplyOutcome {
-                    status: ApplyStatus::Failed,
-                    snapshot: AnyTableSnapshot::Showdown(table),
-                })
-            }
+            _ => bail!("showdown message must originate from a player"),
         };
 
         let envelope = EnvelopedMessage {
@@ -724,11 +643,6 @@ where
             message: remap_signature(&event.message, message),
         };
 
-        let applied = apply_transition(table, &envelope, hasher)?;
-
-        Ok(ApplyOutcome {
-            status: ApplyStatus::Success,
-            snapshot: applied,
-        })
+        apply_transition(table, &envelope, hasher)
     }
 }

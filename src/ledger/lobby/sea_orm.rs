@@ -16,18 +16,20 @@ use crate::engine::nl::types::{Chips, PlayerId, PlayerStatus, SeatId};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::{
     AnyTableSnapshot, PhaseShuffling, PlayerIdentity, PlayerRoster, PlayerStackInfo, PlayerStacks,
-    SeatingMap, ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, TableAtShuffling,
-    TableSnapshot,
+    SeatingMap, ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, SnapshotStatus,
+    TableAtShuffling, TableSnapshot,
 };
+use crate::ledger::store::snapshot::{prepare_snapshot, SeaOrmSnapshotStore, SnapshotStore};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::LedgerOperator;
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::CanonicalDeserialize;
 use async_trait::async_trait;
+use rand::{rngs::StdRng, SeedableRng};
 use sea_orm::DbErr;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
@@ -322,7 +324,6 @@ where
             model.insert(&txn).await?;
         }
 
-        txn.commit().await?;
         let state = operator.state();
         let hasher = state.hasher();
         let snapshot = build_initial_shuffling_snapshot(
@@ -332,7 +333,18 @@ where
             &prepared_shufflers,
             hasher.as_ref(),
         )?;
-        state.upsert_snapshot(hand_id, AnyTableSnapshot::Shuffling(snapshot), true);
+        let initial_snapshot = AnyTableSnapshot::Shuffling(snapshot);
+        let prepared = prepare_snapshot(&initial_snapshot, hasher.as_ref())
+            .map_err(|err| GameSetupError::Database(DbErr::Custom(err.to_string())))?;
+        let snapshot_store = SeaOrmSnapshotStore::<C>::new(self.connection.clone());
+        snapshot_store
+            .persist_snapshot_in_txn(&txn, &prepared)
+            .await
+            .map_err(|err| GameSetupError::Database(DbErr::Custom(err.to_string())))?;
+
+        txn.commit().await?;
+
+        state.upsert_snapshot(hand_id, initial_snapshot.clone(), true);
 
         let hand_record = HandRecord {
             game_id: params.game.state.id,
@@ -438,6 +450,7 @@ fn build_initial_shuffling_snapshot<C>(
 ) -> Result<TableAtShuffling<C>, GameSetupError>
 where
     C: CurveGroup,
+    C::ScalarField: UniformRand,
 {
     let mut player_roster: PlayerRoster<C> = BTreeMap::new();
     let mut seating: SeatingMap = BTreeMap::new();
@@ -488,6 +501,20 @@ where
         ));
     }
 
+    let aggregated_public_key = shufflers
+        .first()
+        .map(|shuffler| shuffler.aggregated_public_key.clone())
+        .ok_or_else(|| {
+            GameSetupError::validation("initial snapshot requires at least one shuffler")
+        })?;
+    let mut rng = StdRng::from_entropy();
+    let initial_deck = std::array::from_fn::<_, DECK_SIZE, _>(|i| {
+        let message = C::ScalarField::from(i as u64);
+        let randomness = C::ScalarField::rand(&mut rng);
+        ElGamalCiphertext::encrypt_scalar(message, randomness, aggregated_public_key.clone())
+    });
+    let final_deck = initial_deck.clone();
+
     let mut snapshot: TableSnapshot<PhaseShuffling, C> = TableSnapshot {
         game_id: params.game.state.id,
         hand_id: Some(hand_id),
@@ -499,14 +526,11 @@ where
         stacks: Arc::new(stacks),
         previous_hash: None,
         state_hash: Default::default(),
+        status: SnapshotStatus::Success,
         shuffling: ShufflingSnapshot {
-            initial_deck: std::array::from_fn::<_, DECK_SIZE, _>(|_| {
-                ElGamalCiphertext::new(C::zero(), C::zero())
-            }),
+            initial_deck,
             steps: Vec::new(),
-            final_deck: std::array::from_fn::<_, DECK_SIZE, _>(|_| {
-                ElGamalCiphertext::new(C::zero(), C::zero())
-            }),
+            final_deck,
             expected_order,
         },
         dealing: (),

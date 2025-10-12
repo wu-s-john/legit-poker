@@ -665,7 +665,8 @@ mod tests {
     use crate::ledger::messages::{GamePlayerMessage, PreflopStreet};
     use crate::ledger::snapshot::{
         build_default_card_plan, BettingSnapshot, CardPlan, DealingSnapshot, DealtCard,
-        RevealsSnapshot, ShufflerIdentity, ShufflingSnapshot, ShufflingStep, TableSnapshot,
+        RevealsSnapshot, ShufflerIdentity, ShufflingSnapshot, ShufflingStep, SnapshotStatus,
+        TableSnapshot,
     };
     use crate::ledger::types::{GameId, StateHash};
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
@@ -1036,6 +1037,7 @@ mod tests {
                 stacks: Arc::new(self.stacks.clone()),
                 previous_hash: None,
                 state_hash: StateHash::default(),
+                status: SnapshotStatus::Success,
                 shuffling: ShufflingSnapshot {
                     initial_deck: sample_deck(),
                     steps: Vec::new(),
@@ -1100,6 +1102,7 @@ mod tests {
                 stacks: Arc::new(self.stacks.clone()),
                 previous_hash: None,
                 state_hash: StateHash::default(),
+                status: SnapshotStatus::Success,
                 shuffling: ShufflingSnapshot {
                     initial_deck: sample_deck(),
                     steps: vec![ShufflingStep {
@@ -1138,6 +1141,7 @@ mod tests {
                 stacks: Arc::new(self.stacks.clone()),
                 previous_hash: None,
                 state_hash: StateHash::default(),
+                status: SnapshotStatus::Success,
                 shuffling: ShufflingSnapshot {
                     initial_deck: sample_deck(),
                     steps: vec![ShufflingStep {

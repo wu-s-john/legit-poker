@@ -196,7 +196,8 @@ mod tests {
         };
         let snapshot_store: Arc<dyn SnapshotStore<Curve>> =
             Arc::new(SeaOrmSnapshotStore::new(store.connection.clone()));
-        let event_store_trait: Arc<dyn EventStore<Curve>> = Arc::clone(&store);
+        let event_store_trait: Arc<dyn EventStore<Curve>> =
+            Arc::clone(&store) as Arc<dyn EventStore<Curve>>;
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
@@ -222,7 +223,8 @@ mod tests {
         let Some(store) = setup_event_store().await else {
             return;
         };
-        let event_store_trait: Arc<dyn EventStore<Curve>> = Arc::clone(&store);
+        let event_store_trait: Arc<dyn EventStore<Curve>> =
+            Arc::clone(&store) as Arc<dyn EventStore<Curve>>;
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),

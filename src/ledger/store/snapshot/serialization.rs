@@ -9,7 +9,9 @@ use serde_json::{json, Value as JsonValue};
 use tracing::info;
 
 use crate::curve_absorb::CurveAbsorb;
-use crate::db::entity::sea_orm_active_enums as db_enums;
+use crate::db::entity::sea_orm_active_enums::{
+    self as db_enums, ApplicationStatus as DbApplicationStatus,
+};
 use crate::db::entity::{games, hands, phases, table_snapshots};
 use crate::engine::nl::events::NormalizedAction;
 use crate::engine::nl::state::BettingState;
@@ -20,8 +22,8 @@ use crate::engine::nl::types::{
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::{
     AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, PhaseBetting, PhaseComplete,
-    PlayerStacks, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, TableAtDealing, TableAtShowdown,
-    TableAtShuffling, TableSnapshot,
+    PlayerStacks, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, SnapshotStatus, TableAtDealing,
+    TableAtShowdown, TableAtShuffling, TableSnapshot,
 };
 use crate::ledger::types::{GameId, HandId, StateHash};
 use crate::showdown::HandCategory;
@@ -37,7 +39,7 @@ pub(super) struct PreparedPhase {
     payload_hex: String,
 }
 
-pub(super) struct PreparedSnapshot {
+pub struct PreparedSnapshot {
     pub(super) game_id: GameId,
     pub(super) hand_id: HandId,
     pub(super) sequence: i32,
@@ -49,7 +51,16 @@ pub(super) struct PreparedSnapshot {
     pub(super) betting_hash: Option<StateHash>,
     pub(super) reveals_hash: Option<StateHash>,
     pub(super) phase_kind: db_enums::PhaseKind,
+    pub(super) application_status: DbApplicationStatus,
+    pub(super) failure_reason: Option<String>,
     phases: Vec<PreparedPhase>,
+}
+
+fn map_status(status: &SnapshotStatus) -> (DbApplicationStatus, Option<String>) {
+    match status {
+        SnapshotStatus::Success => (DbApplicationStatus::Success, None),
+        SnapshotStatus::Failure(reason) => (DbApplicationStatus::Failure, Some(reason.clone())),
+    }
 }
 
 pub(super) fn prepare_snapshot_data<C>(
@@ -102,6 +113,7 @@ where
     let sequence = cast_sequence(table.sequence)?;
     let stacks = serialize_player_stacks(table.stacks.as_ref());
     let (phase, hash) = build_shuffling_phase(&table.shuffling, hasher)?;
+    let (application_status, failure_reason) = map_status(&table.status);
 
     Ok(PreparedSnapshot {
         game_id: table.game_id,
@@ -115,6 +127,8 @@ where
         betting_hash: None,
         reveals_hash: None,
         phase_kind: db_enums::PhaseKind::Shuffling,
+        application_status,
+        failure_reason,
         phases: vec![phase],
     })
 }
@@ -136,6 +150,7 @@ where
     let stacks = serialize_player_stacks(table.stacks.as_ref());
     let (shuffle_phase, shuffle_hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
+    let (application_status, failure_reason) = map_status(&table.status);
 
     Ok(PreparedSnapshot {
         game_id: table.game_id,
@@ -149,6 +164,8 @@ where
         betting_hash: None,
         reveals_hash: None,
         phase_kind: db_enums::PhaseKind::Dealing,
+        application_status,
+        failure_reason,
         phases: vec![shuffle_phase, deal_phase],
     })
 }
@@ -174,6 +191,7 @@ where
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
     let (bet_phase, bet_hash) = build_betting_phase(&table.betting, hasher)?;
     let (reveals_phase, reveals_hash) = build_reveals_phase(&table.reveals, hasher)?;
+    let (application_status, failure_reason) = map_status(&table.status);
 
     Ok(PreparedSnapshot {
         game_id: table.game_id,
@@ -187,6 +205,8 @@ where
         betting_hash: Some(bet_hash),
         reveals_hash: Some(reveals_hash),
         phase_kind,
+        application_status,
+        failure_reason,
         phases: vec![shuffle_phase, deal_phase, bet_phase, reveals_phase],
     })
 }
@@ -212,6 +232,7 @@ where
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
     let (bet_phase, bet_hash) = build_betting_phase(&table.betting, hasher)?;
     let (reveals_phase, reveals_hash) = build_reveals_phase(&table.reveals, hasher)?;
+    let (application_status, failure_reason) = map_status(&table.status);
 
     Ok(PreparedSnapshot {
         game_id: table.game_id,
@@ -225,6 +246,8 @@ where
         betting_hash: Some(bet_hash),
         reveals_hash: Some(reveals_hash),
         phase_kind,
+        application_status,
+        failure_reason,
         phases: vec![shuffle_phase, deal_phase, bet_phase, reveals_phase],
     })
 }
@@ -250,6 +273,7 @@ where
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
     let (bet_phase, bet_hash) = build_betting_phase(&table.betting, hasher)?;
     let (reveals_phase, reveals_hash) = build_reveals_phase(&table.reveals, hasher)?;
+    let (application_status, failure_reason) = map_status(&table.status);
 
     Ok(PreparedSnapshot {
         game_id: table.game_id,
@@ -263,6 +287,8 @@ where
         betting_hash: Some(bet_hash),
         reveals_hash: Some(reveals_hash),
         phase_kind,
+        application_status,
+        failure_reason,
         phases: vec![shuffle_phase, deal_phase, bet_phase, reveals_phase],
     })
 }
@@ -718,6 +744,8 @@ pub(super) async fn persist_prepared_snapshot(
         dealing_hash: Set(prepared.dealing_hash.map(|hash| hash.as_bytes().to_vec())),
         betting_hash: Set(prepared.betting_hash.map(|hash| hash.as_bytes().to_vec())),
         reveals_hash: Set(prepared.reveals_hash.map(|hash| hash.as_bytes().to_vec())),
+        application_status: Set(prepared.application_status.clone()),
+        failure_reason: Set(prepared.failure_reason.clone()),
         ..Default::default()
     };
 

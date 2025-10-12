@@ -63,6 +63,12 @@ pub type ShufflerRoster<C> = BTreeMap<ShufflerId, ShufflerIdentity<C>>;
 pub type SeatingMap = BTreeMap<SeatId, Option<PlayerId>>;
 pub type PlayerStacks = BTreeMap<SeatId, PlayerStackInfo>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnapshotStatus {
+    Success,
+    Failure(String),
+}
+
 impl<C: CurveGroup> Signable for PlayerIdentity<C> {
     fn domain_kind(&self) -> &'static str {
         "ledger/player_identity_v1"
@@ -367,6 +373,7 @@ where
     pub stacks: Shared<PlayerStacks>,
     pub previous_hash: Option<StateHash>,
     pub state_hash: StateHash,
+    pub status: SnapshotStatus,
     pub shuffling: P::ShufflingS,
     pub dealing: P::DealingS,
     pub betting: P::BettingS,
@@ -391,6 +398,7 @@ where
         self.sequence = 0;
         self.previous_hash = None;
         self.state_hash = initial_snapshot_hash(self, hasher);
+        self.status = SnapshotStatus::Success;
     }
 
     pub fn advance_state_with_message<M>(
@@ -406,6 +414,7 @@ where
         self.previous_hash = Some(self.state_hash);
         self.state_hash = chained;
         self.sequence = self.sequence.saturating_add(1);
+        self.status = SnapshotStatus::Success;
     }
 }
 
@@ -447,4 +456,75 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
             AnyTableSnapshot::Complete(table) => table.previous_hash,
         }
     }
+
+    pub fn status(&self) -> &SnapshotStatus {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => &table.status,
+            AnyTableSnapshot::Dealing(table) => &table.status,
+            AnyTableSnapshot::Preflop(table) => &table.status,
+            AnyTableSnapshot::Flop(table) => &table.status,
+            AnyTableSnapshot::Turn(table) => &table.status,
+            AnyTableSnapshot::River(table) => &table.status,
+            AnyTableSnapshot::Showdown(table) => &table.status,
+            AnyTableSnapshot::Complete(table) => &table.status,
+        }
+    }
+
+    pub fn failure_reason(&self) -> Option<&str> {
+        match self.status() {
+            SnapshotStatus::Success => None,
+            SnapshotStatus::Failure(reason) => Some(reason.as_str()),
+        }
+    }
+
+    pub fn set_status(&mut self, status: SnapshotStatus) {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => table.status = status,
+            AnyTableSnapshot::Dealing(table) => table.status = status,
+            AnyTableSnapshot::Preflop(table) => table.status = status,
+            AnyTableSnapshot::Flop(table) => table.status = status,
+            AnyTableSnapshot::Turn(table) => table.status = status,
+            AnyTableSnapshot::River(table) => table.status = status,
+            AnyTableSnapshot::Showdown(table) => table.status = status,
+            AnyTableSnapshot::Complete(table) => table.status = status,
+        }
+    }
+}
+
+fn failure_chain_hash(previous: StateHash, reason: &str, hasher: &dyn LedgerHasher) -> StateHash {
+    let mut builder = TranscriptBuilder::new("ledger/state/failure");
+    builder.append_bytes(reason.as_bytes());
+    let failure_message = hasher.hash(&builder.finish());
+    chain_hash(previous, failure_message, hasher)
+}
+
+fn mark_failure<P, C>(table: &mut TableSnapshot<P, C>, reason: &str, hasher: &dyn LedgerHasher)
+where
+    P: HandPhase<C>,
+    C: CurveGroup,
+{
+    let previous = table.state_hash;
+    table.previous_hash = Some(previous);
+    table.sequence = table.sequence.saturating_add(1);
+    table.state_hash = failure_chain_hash(previous, reason, hasher);
+    table.status = SnapshotStatus::Failure(reason.to_string());
+}
+
+pub fn clone_snapshot_for_failure<C: CurveGroup>(
+    snapshot: &AnyTableSnapshot<C>,
+    hasher: &dyn LedgerHasher,
+    reason: String,
+) -> AnyTableSnapshot<C> {
+    let mut failed = snapshot.clone();
+    match &mut failed {
+        AnyTableSnapshot::Shuffling(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Dealing(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Preflop(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Flop(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Turn(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::River(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Showdown(table) => mark_failure(table, &reason, hasher),
+        AnyTableSnapshot::Complete(table) => mark_failure(table, &reason, hasher),
+    }
+    failed
 }

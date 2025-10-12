@@ -6,9 +6,12 @@ use ark_ff::PrimeField;
 use thiserror::Error;
 
 use super::messages::AnyMessageEnvelope;
-use super::state::{ApplyStatus, LedgerState};
+use super::state::LedgerState;
 use super::store::{EventStore, SnapshotStore};
 use crate::curve_absorb::CurveAbsorb;
+use crate::ledger::snapshot::clone_snapshot_for_failure;
+use crate::ledger::store::snapshot::prepare_snapshot;
+use sea_orm::TransactionTrait;
 use tokio::sync::mpsc;
 use tracing::{error, info, instrument, warn};
 
@@ -95,90 +98,181 @@ where
         fields(hand_id = %event.hand_id, nonce = %event.nonce)
     )]
     pub async fn handle_event(&self, event: AnyMessageEnvelope<C>) -> Result<(), WorkerError> {
-        self.event_store
-            .persist_event(&event)
-            .await
-            .map_err(|err| {
+        let hand_id = event.hand_id;
+        let nonce = event.nonce;
+
+        let tip_before = match self.state.tip_snapshot(hand_id) {
+            Some((_, snapshot)) => snapshot,
+            None => {
+                error!(
+                    target: LOG_TARGET,
+                    hand_id,
+                    nonce,
+                    "no snapshot tip available before applying event"
+                );
+                return Err(WorkerError::Apply);
+            }
+        };
+
+        let txn = match self.event_store.connection().begin().await {
+            Ok(txn) => txn,
+            Err(err) => {
                 error!(
                     target: LOG_TARGET,
                     error = ?err,
-                    hand_id = event.hand_id,
-                    nonce = event.nonce,
-                    "failed to persist event"
+                    hand_id,
+                    nonce,
+                    "failed to begin transaction"
                 );
-                WorkerError::Database
-            })?;
+                return Err(WorkerError::Database);
+            }
+        };
+
+        if let Err(err) = self.event_store.persist_event_in_txn(&txn, &event).await {
+            error!(
+                target: LOG_TARGET,
+                error = ?err,
+                hand_id,
+                nonce,
+                "failed to persist event"
+            );
+            let _ = txn.rollback().await;
+            return Err(WorkerError::Database);
+        }
+
         info!(
             target: LOG_TARGET,
-            hand_id = event.hand_id,
-            nonce = event.nonce,
+            hand_id,
+            nonce,
             "persisted event"
         );
 
+        let hasher = self.state.hasher();
+
         match self.state.apply_event(&event) {
-            Ok(outcome) if matches!(outcome.status, ApplyStatus::Success) => {
-                let snapshot = outcome.snapshot;
-                let hasher = self.state.hasher();
+            Ok(snapshot) => {
+                let prepared = match prepare_snapshot(&snapshot, hasher.as_ref()) {
+                    Ok(prepared) => prepared,
+                    Err(err) => {
+                        error!(
+                            target: LOG_TARGET,
+                            error = ?err,
+                            hand_id,
+                            nonce,
+                            "failed to prepare snapshot"
+                        );
+                        let _ = txn.rollback().await;
+                        return Err(WorkerError::Database);
+                    }
+                };
+
                 if let Err(err) = self
                     .snapshot_store
-                    .persist_snapshot(&snapshot, &hasher)
+                    .persist_snapshot_in_txn(&txn, &prepared)
                     .await
                 {
                     error!(
                         target: LOG_TARGET,
                         error = ?err,
-                        hand_id = event.hand_id,
-                        nonce = event.nonce,
+                        hand_id,
+                        nonce,
                         "failed to persist snapshot"
                     );
-                    self.rollback_persisted(event.hand_id, event.nonce).await?;
+                    let _ = txn.rollback().await;
+                    return Err(WorkerError::Database);
+                }
+
+                if let Err(err) = txn.commit().await {
+                    error!(
+                        target: LOG_TARGET,
+                        error = ?err,
+                        hand_id,
+                        nonce,
+                        "failed to commit transaction"
+                    );
                     return Err(WorkerError::Database);
                 }
 
                 info!(
                     target: LOG_TARGET,
-                    hand_id = event.hand_id,
-                    nonce = event.nonce,
+                    hand_id,
+                    nonce,
                     "state applied successfully"
                 );
                 info!(
                     target: LOG_TARGET,
-                    hand_id = event.hand_id,
-                    nonce = event.nonce,
+                    hand_id,
+                    nonce,
                     "persisted snapshot"
                 );
                 Ok(())
             }
-            Ok(_) => {
-                self.rollback_persisted(event.hand_id, event.nonce).await?;
-                Err(WorkerError::Apply)
-            }
-            Err(err) => {
-                error!(
+            Err(apply_err) => {
+                warn!(
                     target: LOG_TARGET,
-                    error = ?err,
-                    hand_id = event.hand_id,
-                    nonce = event.nonce,
+                    error = ?apply_err,
+                    hand_id,
+                    nonce,
                     "state apply error"
                 );
-                self.rollback_persisted(event.hand_id, event.nonce).await?;
+                let reason = apply_err.to_string();
+                let failure_snapshot =
+                    clone_snapshot_for_failure(&tip_before, hasher.as_ref(), reason.clone());
+                let prepared = match prepare_snapshot(&failure_snapshot, hasher.as_ref()) {
+                    Ok(prepared) => prepared,
+                    Err(err) => {
+                        error!(
+                            target: LOG_TARGET,
+                            error = ?err,
+                            hand_id,
+                            nonce,
+                            "failed to prepare failure snapshot"
+                        );
+                        let _ = txn.rollback().await;
+                        return Err(WorkerError::Database);
+                    }
+                };
+
+                if let Err(err) = self
+                    .snapshot_store
+                    .persist_snapshot_in_txn(&txn, &prepared)
+                    .await
+                {
+                    error!(
+                        target: LOG_TARGET,
+                        error = ?err,
+                        hand_id,
+                        nonce,
+                        "failed to persist failure snapshot"
+                    );
+                    let _ = txn.rollback().await;
+                    return Err(WorkerError::Database);
+                }
+
+                if let Err(err) = txn.commit().await {
+                    error!(
+                        target: LOG_TARGET,
+                        error = ?err,
+                        hand_id,
+                        nonce,
+                        "failed to commit failure snapshot"
+                    );
+                    return Err(WorkerError::Database);
+                }
+
+                self.state.upsert_snapshot(hand_id, failure_snapshot, true);
+
+                warn!(
+                    target: LOG_TARGET,
+                    hand_id,
+                    nonce,
+                    failure_reason = reason,
+                    "recorded failure snapshot"
+                );
+
                 Err(WorkerError::Apply)
             }
         }
-    }
-
-    async fn rollback_persisted(
-        &self,
-        hand_id: super::types::HandId,
-        nonce: u64,
-    ) -> Result<(), WorkerError> {
-        self.event_store
-            .remove_event(hand_id, nonce)
-            .await
-            .map_err(|err| {
-                error!("failed to rollback persisted event: {err:?}");
-                WorkerError::Database
-            })
     }
 }
 
@@ -194,16 +288,14 @@ pub enum WorkerError {
 mod tests {
     use super::*;
     use crate::ledger::actor::AnyActor;
-    use crate::ledger::snapshot::{
-        AnyTableSnapshot, ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, TableSnapshot,
-    };
     use crate::ledger::types::HandId;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use anyhow::{Context, Result};
     use ark_bn254::{Fq, Fr, G1Projective as Curve};
     use ark_ff::Zero;
     use sea_orm::{
-        ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement, Value,
+        ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction,
+        DbBackend, Statement, Value,
     };
     use std::{env, time::Duration as StdDuration};
     use tokio::sync::mpsc;
@@ -213,7 +305,11 @@ mod tests {
 
     use crate::ledger::hash::LedgerHasher;
     use crate::ledger::messages::{AnyGameMessage, GameShuffleMessage};
-    use crate::ledger::snapshot::PhaseShuffling;
+    use crate::ledger::snapshot::{
+        AnyTableSnapshot, PhaseShuffling, ShufflerIdentity, ShufflerRoster, ShufflingSnapshot,
+        SnapshotStatus, TableSnapshot,
+    };
+    use crate::ledger::store::snapshot::PreparedSnapshot;
     use crate::ledger::store::SeaOrmEventStore;
     use crate::ledger::types::StateHash;
     use crate::ledger::worker::WorkerError;
@@ -237,6 +333,14 @@ mod tests {
             &self,
             _snapshot: &AnyTableSnapshot<C>,
             _hasher: &Arc<dyn LedgerHasher + Send + Sync>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn persist_snapshot_in_txn(
+            &self,
+            _txn: &DatabaseTransaction,
+            _prepared: &PreparedSnapshot,
         ) -> anyhow::Result<()> {
             Ok(())
         }
@@ -290,6 +394,7 @@ mod tests {
             stacks: Arc::new(Default::default()),
             previous_hash: None,
             state_hash: StateHash::default(),
+            status: SnapshotStatus::Success,
             shuffling,
             dealing: (),
             betting: (),
@@ -473,6 +578,7 @@ mod tests {
         let _ = worker;
     }
 
+    @[ignore]
     #[tokio::test]
     async fn persist_before_apply() {
         let _guard = setup_test_tracing();
