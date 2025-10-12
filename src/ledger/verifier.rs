@@ -949,11 +949,9 @@ mod tests {
         }
 
         fn player_envelope(&self) -> AnyMessageEnvelope<Curve> {
-            let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage::<PreflopStreet, _> {
-                street: PreflopStreet,
-                action: PlayerBetAction::Check,
-                _curve: std::marker::PhantomData,
-            });
+            let message = AnyGameMessage::PlayerPreflop(
+                GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Check),
+            );
             build_envelope(
                 HAND_ID,
                 message,
@@ -967,11 +965,10 @@ mod tests {
         }
 
         fn blinding_envelope(&self) -> AnyMessageEnvelope<Curve> {
-            let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage {
-                card_in_deck_position: 0,
-                share: dummy_blinding_share(),
-                _curve: std::marker::PhantomData,
-            });
+            let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
+                0,
+                dummy_blinding_share(),
+            ));
             build_envelope(
                 HAND_ID,
                 message,
@@ -989,14 +986,14 @@ mod tests {
             member_index: usize,
             nonce: u64,
         ) -> AnyMessageEnvelope<Curve> {
-            let message = AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
-                card_in_deck_position: 0,
-                share: PartialUnblindingShare {
-                    share: Curve::zero(),
-                    member_index,
-                },
-                _curve: std::marker::PhantomData,
-            });
+            let message =
+                AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
+                    0,
+                    PartialUnblindingShare {
+                        share: Curve::zero(),
+                        member_index,
+                    },
+                ));
             build_envelope(
                 HAND_ID,
                 message,
@@ -1175,12 +1172,11 @@ mod tests {
         fn shuffle_envelope(&self, shuffler_id: ShufflerId) -> AnyMessageEnvelope<Curve> {
             let deck_in = sample_deck();
             let deck_out = deck_in.clone();
-            let message = AnyGameMessage::Shuffle(GameShuffleMessage {
+            let message = AnyGameMessage::Shuffle(GameShuffleMessage::new(
                 deck_in,
                 deck_out,
-                proof: sample_shuffle_proof(),
-                _curve: std::marker::PhantomData,
-            });
+                sample_shuffle_proof(),
+            ));
             let identity = self
                 .shufflers
                 .get(&shuffler_id)

@@ -99,6 +99,21 @@ where
     }
 }
 
+impl<R, C> GamePlayerMessage<R, C>
+where
+    R: Street + Default,
+    C: CurveGroup,
+{
+    #[inline]
+    pub fn new(action: PlayerBetAction) -> Self {
+        Self {
+            street: R::default(),
+            action,
+            _curve: PhantomData,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GameShuffleMessage<C>
 where
@@ -129,6 +144,25 @@ where
     }
 }
 
+impl<C> GameShuffleMessage<C>
+where
+    C: CurveGroup,
+{
+    #[inline]
+    pub fn new(
+        deck_in: [ElGamalCiphertext<C>; DECK_SIZE],
+        deck_out: [ElGamalCiphertext<C>; DECK_SIZE],
+        proof: ShuffleProof<C>,
+    ) -> Self {
+        Self {
+            deck_in,
+            deck_out,
+            proof,
+            _curve: PhantomData,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GameBlindingDecryptionMessage<C>
 where
@@ -153,6 +187,20 @@ where
     }
 }
 
+impl<C> GameBlindingDecryptionMessage<C>
+where
+    C: CurveGroup,
+{
+    #[inline]
+    pub fn new(card_in_deck_position: u8, share: PlayerTargetedBlindingContribution<C>) -> Self {
+        Self {
+            card_in_deck_position,
+            share,
+            _curve: PhantomData,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GamePartialUnblindingShareMessage<C>
 where
@@ -174,6 +222,20 @@ where
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
         self.share.write_transcript(builder);
+    }
+}
+
+impl<C> GamePartialUnblindingShareMessage<C>
+where
+    C: CurveGroup,
+{
+    #[inline]
+    pub fn new(card_in_deck_position: u8, share: PartialUnblindingShare<C>) -> Self {
+        Self {
+            card_in_deck_position,
+            share,
+            _curve: PhantomData,
+        }
     }
 }
 
@@ -205,6 +267,25 @@ where
         }
         for ct in &self.hole_ciphertexts {
             ct.write_transcript(builder);
+        }
+    }
+}
+
+impl<C> GameShowdownMessage<C>
+where
+    C: CurveGroup,
+{
+    #[inline]
+    pub fn new(
+        chaum_pedersen_proofs: [ChaumPedersenProof<C>; 2],
+        card_in_deck_position: [u8; 2],
+        hole_ciphertexts: [PlayerAccessibleCiphertext<C>; 2],
+    ) -> Self {
+        Self {
+            chaum_pedersen_proofs,
+            card_in_deck_position,
+            hole_ciphertexts,
+            _curve: PhantomData,
         }
     }
 }
@@ -391,51 +472,39 @@ mod tests {
 
     fn sample_ledger_messages() -> Vec<AnyGameMessage<GrumpkinProjective>> {
         vec![
-            AnyGameMessage::Shuffle(GameShuffleMessage {
-                deck_in: sample_deck(),
-                deck_out: sample_deck(),
-                proof: sample_shuffle_proof(),
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::Blinding(GameBlindingDecryptionMessage {
-                card_in_deck_position: 7,
-                share: sample_blinding_contribution(),
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
-                card_in_deck_position: 13,
-                share: sample_partial_unblinding_share(),
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::PlayerPreflop(GamePlayerMessage {
-                street: PreflopStreet,
-                action: PlayerBetAction::Call,
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::PlayerFlop(GamePlayerMessage {
-                street: FlopStreet,
-                action: PlayerBetAction::Check,
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::PlayerTurn(GamePlayerMessage {
-                street: TurnStreet,
-                action: PlayerBetAction::BetTo { to: 42 },
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::PlayerRiver(GamePlayerMessage {
-                street: RiverStreet,
-                action: PlayerBetAction::RaiseTo { to: 64 },
-                _curve: PhantomData,
-            }),
-            AnyGameMessage::Showdown(GameShowdownMessage {
-                chaum_pedersen_proofs: [sample_cp_proof(), sample_cp_proof()],
-                card_in_deck_position: [5u8, 6],
-                hole_ciphertexts: [
+            AnyGameMessage::Shuffle(GameShuffleMessage::new(
+                sample_deck(),
+                sample_deck(),
+                sample_shuffle_proof(),
+            )),
+            AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
+                7,
+                sample_blinding_contribution(),
+            )),
+            AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
+                13,
+                sample_partial_unblinding_share(),
+            )),
+            AnyGameMessage::PlayerPreflop(
+                GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(PlayerBetAction::Call),
+            ),
+            AnyGameMessage::PlayerFlop(GamePlayerMessage::<FlopStreet, GrumpkinProjective>::new(
+                PlayerBetAction::Check,
+            )),
+            AnyGameMessage::PlayerTurn(GamePlayerMessage::<TurnStreet, GrumpkinProjective>::new(
+                PlayerBetAction::BetTo { to: 42 },
+            )),
+            AnyGameMessage::PlayerRiver(GamePlayerMessage::<RiverStreet, GrumpkinProjective>::new(
+                PlayerBetAction::RaiseTo { to: 64 },
+            )),
+            AnyGameMessage::Showdown(GameShowdownMessage::new(
+                [sample_cp_proof(), sample_cp_proof()],
+                [5u8, 6],
+                [
                     sample_accessible_ciphertext(),
                     sample_accessible_ciphertext(),
                 ],
-                _curve: PhantomData,
-            }),
+            )),
         ]
     }
 
@@ -465,36 +534,32 @@ mod tests {
 
     #[test]
     fn base_messages_have_canonical_transcripts() -> Result<()> {
-        sign_and_verify(GameShuffleMessage::<GrumpkinProjective> {
-            deck_in: sample_deck(),
-            deck_out: sample_deck(),
-            proof: sample_shuffle_proof(),
-            _curve: PhantomData,
-        })?;
-        sign_and_verify(GameBlindingDecryptionMessage::<GrumpkinProjective> {
-            card_in_deck_position: 1,
-            share: sample_blinding_contribution(),
-            _curve: PhantomData,
-        })?;
-        sign_and_verify(GamePartialUnblindingShareMessage::<GrumpkinProjective> {
-            card_in_deck_position: 2,
-            share: sample_partial_unblinding_share(),
-            _curve: PhantomData,
-        })?;
-        sign_and_verify(GameShowdownMessage::<GrumpkinProjective> {
-            chaum_pedersen_proofs: [sample_cp_proof(), sample_cp_proof()],
-            card_in_deck_position: [14, 15],
-            hole_ciphertexts: [
+        sign_and_verify(GameShuffleMessage::<GrumpkinProjective>::new(
+            sample_deck(),
+            sample_deck(),
+            sample_shuffle_proof(),
+        ))?;
+        sign_and_verify(GameBlindingDecryptionMessage::<GrumpkinProjective>::new(
+            1,
+            sample_blinding_contribution(),
+        ))?;
+        sign_and_verify(
+            GamePartialUnblindingShareMessage::<GrumpkinProjective>::new(
+                2,
+                sample_partial_unblinding_share(),
+            ),
+        )?;
+        sign_and_verify(GameShowdownMessage::<GrumpkinProjective>::new(
+            [sample_cp_proof(), sample_cp_proof()],
+            [14, 15],
+            [
                 sample_accessible_ciphertext(),
                 sample_accessible_ciphertext(),
             ],
-            _curve: PhantomData,
-        })?;
-        sign_and_verify(GamePlayerMessage::<PreflopStreet, GrumpkinProjective> {
-            street: PreflopStreet,
-            action: PlayerBetAction::AllIn,
-            _curve: PhantomData,
-        })?;
+        ))?;
+        sign_and_verify(GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(
+            PlayerBetAction::AllIn,
+        ))?;
         sign_and_verify(PlayerActionBet {
             seat: 1,
             action: PlayerBetAction::Check,

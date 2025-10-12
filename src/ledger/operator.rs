@@ -98,11 +98,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
-        let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage {
-            street: PreflopStreet,
-            action: PlayerBetAction::Check,
-            _curve: std::marker::PhantomData,
-        });
+        let message = AnyGameMessage::PlayerPreflop(
+            GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Check),
+        );
 
         AnyMessageEnvelope {
             hand_id: HandId::default(),

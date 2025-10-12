@@ -405,12 +405,8 @@ mod tests {
         snapshot.initialize_hash(&*hasher);
         state.upsert_snapshot(hand_id, AnyTableSnapshot::Shuffling(snapshot), true);
 
-        let message = AnyGameMessage::Shuffle(GameShuffleMessage {
-            deck_in,
-            deck_out,
-            proof: shuffle_proof(),
-            _curve: std::marker::PhantomData,
-        });
+        let message =
+            AnyGameMessage::Shuffle(GameShuffleMessage::new(deck_in, deck_out, shuffle_proof()));
 
         AnyMessageEnvelope {
             hand_id,

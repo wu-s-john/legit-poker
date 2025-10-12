@@ -1,10 +1,8 @@
-use std::convert::TryInto;
-use std::marker::PhantomData;
-
 use anyhow::{anyhow, Context};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
+use std::convert::TryInto;
 
 use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::db::entity::events;
@@ -129,62 +127,39 @@ impl StoredGameMessage {
                 let deck_in = decode_ciphertexts::<C>(&deck_in)?;
                 let deck_out = decode_ciphertexts::<C>(&deck_out)?;
                 let proof = decode_hex::<ShuffleProof<C>>(&proof)?;
-                AnyGameMessage::Shuffle(GameShuffleMessage {
-                    deck_in,
-                    deck_out,
-                    proof,
-                    _curve: PhantomData,
-                })
+                AnyGameMessage::Shuffle(GameShuffleMessage::new(deck_in, deck_out, proof))
             }
             StoredGameMessage::Blinding {
                 card_in_deck_position,
                 share,
             } => {
                 let share = decode_hex::<PlayerTargetedBlindingContribution<C>>(&share)?;
-                AnyGameMessage::Blinding(GameBlindingDecryptionMessage {
+                AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                     card_in_deck_position,
                     share,
-                    _curve: PhantomData,
-                })
+                ))
             }
             StoredGameMessage::PartialUnblinding {
                 card_in_deck_position,
                 share,
             } => {
                 let share = decode_hex::<PartialUnblindingShare<C>>(&share)?;
-                AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage {
+                AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
                     card_in_deck_position,
                     share,
-                    _curve: PhantomData,
-                })
+                ))
             }
             StoredGameMessage::PlayerPreflop { action } => {
-                AnyGameMessage::PlayerPreflop(GamePlayerMessage::<PreflopStreet, C> {
-                    street: PreflopStreet::default(),
-                    action,
-                    _curve: PhantomData,
-                })
+                AnyGameMessage::PlayerPreflop(GamePlayerMessage::<PreflopStreet, C>::new(action))
             }
             StoredGameMessage::PlayerFlop { action } => {
-                AnyGameMessage::PlayerFlop(GamePlayerMessage::<FlopStreet, C> {
-                    street: FlopStreet::default(),
-                    action,
-                    _curve: PhantomData,
-                })
+                AnyGameMessage::PlayerFlop(GamePlayerMessage::<FlopStreet, C>::new(action))
             }
             StoredGameMessage::PlayerTurn { action } => {
-                AnyGameMessage::PlayerTurn(GamePlayerMessage::<TurnStreet, C> {
-                    street: TurnStreet::default(),
-                    action,
-                    _curve: PhantomData,
-                })
+                AnyGameMessage::PlayerTurn(GamePlayerMessage::<TurnStreet, C>::new(action))
             }
             StoredGameMessage::PlayerRiver { action } => {
-                AnyGameMessage::PlayerRiver(GamePlayerMessage::<RiverStreet, C> {
-                    street: RiverStreet::default(),
-                    action,
-                    _curve: PhantomData,
-                })
+                AnyGameMessage::PlayerRiver(GamePlayerMessage::<RiverStreet, C>::new(action))
             }
             StoredGameMessage::Showdown {
                 chaum_pedersen_proofs,
@@ -197,12 +172,11 @@ impl StoredGameMessage {
                     decode_many::<PlayerAccessibleCiphertext<C>>(&hole_ciphertexts)?;
                 let ciphertexts = vec_to_array::<_, 2>(ciphertexts_vec, "hole_ciphertexts")?;
 
-                AnyGameMessage::Showdown(GameShowdownMessage {
-                    chaum_pedersen_proofs: proofs,
+                AnyGameMessage::Showdown(GameShowdownMessage::new(
+                    proofs,
                     card_in_deck_position,
-                    hole_ciphertexts: ciphertexts,
-                    _curve: PhantomData,
-                })
+                    ciphertexts,
+                ))
             }
         })
     }

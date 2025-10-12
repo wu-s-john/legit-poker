@@ -1066,27 +1066,31 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chaum_pedersen::ChaumPedersenProof;
     use crate::engine::nl::actions::PlayerBetAction;
     use crate::engine::nl::types::{PlayerId, PlayerStatus, SeatId, Street as EngineStreet};
     use crate::ledger::actor::{PlayerActor, ShufflerActor};
     use crate::ledger::messages::Street;
     use crate::ledger::messages::{
         EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage, GamePlayerMessage,
-        GameShuffleMessage,
+        GameShowdownMessage, GameShuffleMessage,
     };
-    use crate::ledger::snapshot::{AnyPlayerActionMsg, CardDestination, TableAtDealing};
+    use crate::ledger::snapshot::{
+        AnyPlayerActionMsg, AnyTableSnapshot, CardDestination, TableAtDealing, TableAtShowdown,
+    };
     use crate::ledger::test_support::{
         active_seats, fixture_dealing_snapshot, fixture_flop_snapshot, fixture_preflop_snapshot,
-        fixture_river_snapshot, fixture_shuffling_snapshot, fixture_turn_snapshot, FixtureContext,
+        fixture_river_snapshot, fixture_showdown_snapshot, fixture_shuffling_snapshot,
+        fixture_turn_snapshot, FixtureContext,
     };
     use crate::ledger::types::ShufflerId;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use crate::shuffling::player_decryption::PlayerTargetedBlindingContribution;
     use crate::signing::WithSignature;
     use ark_bn254::G1Projective as Curve;
+    use ark_ec::PrimeGroup;
     use ark_ff::Zero;
     use ark_std::rand::{rngs::StdRng, SeedableRng};
-    use std::marker::PhantomData;
     use std::sync::Arc;
 
     fn dummy_shuffle_proof<C: CurveGroup>(
@@ -1115,12 +1119,11 @@ mod tests {
         C::BaseField: Zero,
         C::ScalarField: Zero,
     {
-        GameShuffleMessage {
-            deck_in: deck_in.clone(),
-            deck_out: deck_out.clone(),
-            proof: dummy_shuffle_proof(deck_in, deck_out),
-            _curve: PhantomData,
-        }
+        GameShuffleMessage::new(
+            deck_in.clone(),
+            deck_out.clone(),
+            dummy_shuffle_proof(deck_in, deck_out),
+        )
     }
 
     fn build_shuffle_envelope<C: CurveGroup>(
@@ -1195,7 +1198,10 @@ mod tests {
         new_deck
     }
 
-    fn player_actor_and_key(ctx: &FixtureContext<Curve>, seat: SeatId) -> (PlayerActor, Curve) {
+    fn player_actor_info(
+        ctx: &FixtureContext<Curve>,
+        seat: SeatId,
+    ) -> (PlayerActor, PlayerId, Curve) {
         let player_id = ctx
             .seating
             .get(&seat)
@@ -1207,6 +1213,7 @@ mod tests {
                 seat_id: seat,
                 player_id,
             },
+            player_id,
             identity.public_key,
         )
     }
@@ -1220,12 +1227,96 @@ mod tests {
         R: Street + Default,
         GamePlayerMessage<R, Curve>: GameMessage<Curve, Actor = PlayerActor>,
     {
-        let (actor, public_key) = player_actor_and_key(ctx, seat);
-        let message = GamePlayerMessage::<R, Curve> {
-            street: R::default(),
-            action,
-            _curve: PhantomData,
+        let (actor, _, public_key) = player_actor_info(ctx, seat);
+        let message = GamePlayerMessage::<R, Curve>::new(action);
+        let transcript = message.to_signing_bytes();
+        let with_sig = WithSignature {
+            value: message,
+            signature: Vec::new(),
+            transcript,
         };
+        EnvelopedMessage {
+            hand_id: ctx.hand_id,
+            game_id: ctx.game_id,
+            actor,
+            nonce: 0,
+            public_key,
+            message: with_sig,
+        }
+    }
+
+    fn build_showdown_message(
+        snapshot: &TableAtShowdown<Curve>,
+        seat: SeatId,
+        player_secret: <Curve as PrimeGroup>::ScalarField,
+    ) -> GameShowdownMessage<Curve> {
+        let mut positions = [0u8; 2];
+        let ciphertexts = [
+            snapshot
+                .dealing
+                .player_ciphertexts
+                .get(&(seat, 0))
+                .cloned()
+                .expect("hole 0 ciphertext present"),
+            snapshot
+                .dealing
+                .player_ciphertexts
+                .get(&(seat, 1))
+                .cloned()
+                .expect("hole 1 ciphertext present"),
+        ];
+
+        for hole_index in 0..2u8 {
+            let card_ref = snapshot
+                .dealing
+                .card_plan
+                .iter()
+                .find_map(|(&card_ref, destination)| match destination {
+                    CardDestination::Hole {
+                        seat: dest_seat,
+                        hole_index: dest_hole,
+                    } if *dest_seat == seat && *dest_hole == hole_index => Some(card_ref),
+                    _ => None,
+                })
+                .expect("card reference for showdown hole");
+
+            let deck_pos = snapshot
+                .dealing
+                .assignments
+                .get(&card_ref)
+                .and_then(|dealt| dealt.source_index)
+                .expect("deck position for showdown card");
+            positions[hole_index as usize] = deck_pos;
+        }
+
+        let poseidon_params = poseidon_config::<<Curve as CurveGroup>::BaseField>();
+        let proofs = std::array::from_fn(|idx| {
+            let mut sponge = PoseidonSponge::new(&poseidon_params);
+            let mut rng = StdRng::seed_from_u64(0xC0DEC0DEu64 ^ idx as u64);
+            ChaumPedersenProof::prove(
+                &mut sponge,
+                player_secret,
+                Curve::generator(),
+                ciphertexts[idx].player_unblinding_helper,
+                &mut rng,
+            )
+        });
+
+        GameShowdownMessage::new(proofs, positions, ciphertexts)
+    }
+
+    fn build_showdown_envelope(
+        ctx: &FixtureContext<Curve>,
+        snapshot: &TableAtShowdown<Curve>,
+        seat: SeatId,
+    ) -> EnvelopedMessage<Curve, GameShowdownMessage<Curve>> {
+        let (actor, player_id, public_key) = player_actor_info(ctx, seat);
+        let player_secret = ctx
+            .player_secrets
+            .get(&player_id)
+            .cloned()
+            .expect("player secret available");
+        let message = build_showdown_message(snapshot, seat, player_secret);
         let transcript = message.to_signing_bytes();
         let with_sig = WithSignature {
             value: message,
@@ -1370,11 +1461,7 @@ mod tests {
 
         let card_pos = card_position_for(&snapshot, seat, 0);
         let share = generate_blinding_contribution(&ctx, 10, player_pk, 0);
-        let message = GameBlindingDecryptionMessage {
-            card_in_deck_position: card_pos,
-            share: share.clone(),
-            _curve: PhantomData,
-        };
+        let message = GameBlindingDecryptionMessage::new(card_pos, share.clone());
         let envelope = build_blinding_envelope(&ctx, 10, message);
 
         let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
@@ -1440,11 +1527,7 @@ mod tests {
                     player_pk,
                     (hole_index as u64) * 10 + order as u64,
                 );
-                let message = GameBlindingDecryptionMessage {
-                    card_in_deck_position: card_pos,
-                    share,
-                    _curve: PhantomData,
-                };
+                let message = GameBlindingDecryptionMessage::new(card_pos, share);
                 let envelope = build_blinding_envelope(&ctx, *shuffler_id, message);
                 let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
                     dealing_snapshot,
@@ -2066,5 +2149,61 @@ mod tests {
             }
             other => panic!("expected showdown snapshot, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn showdown_reveal_stays_in_showdown() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let snapshot = fixture_showdown_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+
+        let envelope = build_showdown_envelope(&ctx, &snapshot, seat);
+        let result =
+            GameShowdownMessage::<Curve>::apply_transition(snapshot, &envelope, &ctx.hasher)
+                .expect("showdown reveal should succeed");
+
+        match result {
+            AnyTableSnapshot::Showdown(next) => {
+                assert!(next.reveals.revealed_holes.contains_key(&seat));
+                assert_eq!(next.reveals.revealed_holes.len(), 1);
+            }
+            other => panic!("expected showdown snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn showdown_reveals_all_players_completes_hand() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let seats = active_seats(&ctx);
+        let mut current = AnyTableSnapshot::Showdown(fixture_showdown_snapshot(&ctx));
+
+        for (index, seat) in seats.iter().enumerate() {
+            let showdown_snapshot = match &current {
+                AnyTableSnapshot::Showdown(snapshot) => snapshot.clone(),
+                other => panic!("unexpected snapshot variant before completion: {:?}", other),
+            };
+            let envelope = build_showdown_envelope(&ctx, &showdown_snapshot, *seat);
+            let result = GameShowdownMessage::<Curve>::apply_transition(
+                showdown_snapshot,
+                &envelope,
+                &ctx.hasher,
+            )
+            .expect("showdown reveal should succeed");
+
+            if index + 1 == seats.len() {
+                match result {
+                    AnyTableSnapshot::Complete(next) => {
+                        assert_eq!(next.reveals.revealed_holes.len(), seats.len());
+                        return;
+                    }
+                    other => panic!("expected complete snapshot, got {:?}", other),
+                }
+            } else {
+                current = result;
+            }
+        }
+
+        panic!("showdown did not complete after revealing all seats");
     }
 }

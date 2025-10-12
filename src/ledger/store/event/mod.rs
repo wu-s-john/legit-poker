@@ -504,12 +504,8 @@ mod tests {
         nonce: u64,
     ) -> AnyMessageEnvelope<Curve> {
         let deck = std::array::from_fn(|_| ElGamalCiphertext::new(Curve::zero(), Curve::zero()));
-        let message = AnyGameMessage::Shuffle(GameShuffleMessage {
-            deck_in: deck.clone(),
-            deck_out: deck,
-            proof: shuffle_proof(),
-            _curve: std::marker::PhantomData,
-        });
+        let message =
+            AnyGameMessage::Shuffle(GameShuffleMessage::new(deck.clone(), deck, shuffle_proof()));
 
         AnyMessageEnvelope {
             hand_id,
@@ -527,11 +523,9 @@ mod tests {
 
     #[tokio::test]
     async fn stored_message_roundtrip_player_action() {
-        let message = AnyGameMessage::PlayerPreflop(GamePlayerMessage::<PreflopStreet, Curve> {
-            street: PreflopStreet,
-            action: PlayerBetAction::Call,
-            _curve: std::marker::PhantomData,
-        });
+        let message = AnyGameMessage::PlayerPreflop(
+            GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Call),
+        );
 
         let stored = StoredGameMessage::from_any(&message).unwrap();
         let restored: AnyGameMessage<Curve> = stored.into_any().unwrap();
