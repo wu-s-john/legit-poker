@@ -1062,3 +1062,1009 @@ where
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::nl::actions::PlayerBetAction;
+    use crate::engine::nl::types::{PlayerId, PlayerStatus, SeatId, Street as EngineStreet};
+    use crate::ledger::actor::{PlayerActor, ShufflerActor};
+    use crate::ledger::messages::Street;
+    use crate::ledger::messages::{
+        EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage, GamePlayerMessage,
+        GameShuffleMessage,
+    };
+    use crate::ledger::snapshot::{AnyPlayerActionMsg, CardDestination, TableAtDealing};
+    use crate::ledger::test_support::{
+        active_seats, fixture_dealing_snapshot, fixture_flop_snapshot, fixture_preflop_snapshot,
+        fixture_river_snapshot, fixture_shuffling_snapshot, fixture_turn_snapshot, FixtureContext,
+    };
+    use crate::ledger::types::ShufflerId;
+    use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
+    use crate::shuffling::player_decryption::PlayerTargetedBlindingContribution;
+    use crate::signing::WithSignature;
+    use ark_bn254::G1Projective as Curve;
+    use ark_ff::Zero;
+    use ark_std::rand::{rngs::StdRng, SeedableRng};
+    use std::marker::PhantomData;
+    use std::sync::Arc;
+
+    fn dummy_shuffle_proof<C: CurveGroup>(
+        deck_in: &[ElGamalCiphertext<C>; DECK_SIZE],
+        deck_out: &[ElGamalCiphertext<C>; DECK_SIZE],
+    ) -> ShuffleProof<C>
+    where
+        C::BaseField: Zero,
+        C::ScalarField: Zero,
+    {
+        let input = deck_in.iter().cloned().collect::<Vec<_>>();
+        let sorted = deck_out
+            .iter()
+            .cloned()
+            .map(|cipher| (cipher, C::BaseField::zero()))
+            .collect::<Vec<_>>();
+        let rerand = vec![C::ScalarField::zero(); DECK_SIZE];
+        ShuffleProof::new(input, sorted, rerand).expect("dummy proof to have valid lengths")
+    }
+
+    fn build_shuffle_message<C: CurveGroup>(
+        deck_in: &[ElGamalCiphertext<C>; DECK_SIZE],
+        deck_out: &[ElGamalCiphertext<C>; DECK_SIZE],
+    ) -> GameShuffleMessage<C>
+    where
+        C::BaseField: Zero,
+        C::ScalarField: Zero,
+    {
+        GameShuffleMessage {
+            deck_in: deck_in.clone(),
+            deck_out: deck_out.clone(),
+            proof: dummy_shuffle_proof(deck_in, deck_out),
+            _curve: PhantomData,
+        }
+    }
+
+    fn build_shuffle_envelope<C: CurveGroup>(
+        ctx: &FixtureContext<C>,
+        shuffler_id: ShufflerId,
+        message: GameShuffleMessage<C>,
+    ) -> EnvelopedMessage<C, GameShuffleMessage<C>>
+    where
+        C::BaseField: Zero,
+        C::ScalarField: Zero,
+    {
+        let transcript = message.to_signing_bytes();
+        let with_sig = WithSignature {
+            value: message,
+            signature: Vec::new(),
+            transcript,
+        };
+
+        let public_key = ctx
+            .shufflers
+            .get(&shuffler_id)
+            .expect("shuffler identity")
+            .public_key
+            .clone();
+
+        EnvelopedMessage {
+            hand_id: ctx.hand_id,
+            game_id: ctx.game_id,
+            actor: ShufflerActor { shuffler_id },
+            nonce: 0,
+            public_key,
+            message: with_sig,
+        }
+    }
+
+    fn build_blinding_envelope<C: CurveGroup>(
+        ctx: &FixtureContext<C>,
+        shuffler_id: ShufflerId,
+        message: GameBlindingDecryptionMessage<C>,
+    ) -> EnvelopedMessage<C, GameBlindingDecryptionMessage<C>> {
+        let transcript = message.to_signing_bytes();
+        let with_sig = WithSignature {
+            value: message,
+            signature: Vec::new(),
+            transcript,
+        };
+
+        let public_key = ctx
+            .shufflers
+            .get(&shuffler_id)
+            .expect("shuffler identity")
+            .public_key
+            .clone();
+
+        EnvelopedMessage {
+            hand_id: ctx.hand_id,
+            game_id: ctx.game_id,
+            actor: ShufflerActor { shuffler_id },
+            nonce: 0,
+            public_key,
+            message: with_sig,
+        }
+    }
+
+    fn swap_deck_entries<C: CurveGroup>(
+        deck: &[ElGamalCiphertext<C>; DECK_SIZE],
+        i: usize,
+        j: usize,
+    ) -> [ElGamalCiphertext<C>; DECK_SIZE] {
+        let mut new_deck = deck.clone();
+        new_deck.swap(i, j);
+        new_deck
+    }
+
+    fn player_actor_and_key(ctx: &FixtureContext<Curve>, seat: SeatId) -> (PlayerActor, Curve) {
+        let player_id = ctx
+            .seating
+            .get(&seat)
+            .and_then(|id| *id)
+            .expect("player id for seat");
+        let identity = ctx.players.get(&player_id).expect("player identity");
+        (
+            PlayerActor {
+                seat_id: seat,
+                player_id,
+            },
+            identity.public_key,
+        )
+    }
+
+    fn build_player_envelope<R>(
+        ctx: &FixtureContext<Curve>,
+        seat: SeatId,
+        action: PlayerBetAction,
+    ) -> EnvelopedMessage<Curve, GamePlayerMessage<R, Curve>>
+    where
+        R: Street + Default,
+        GamePlayerMessage<R, Curve>: GameMessage<Curve, Actor = PlayerActor>,
+    {
+        let (actor, public_key) = player_actor_and_key(ctx, seat);
+        let message = GamePlayerMessage::<R, Curve> {
+            street: R::default(),
+            action,
+            _curve: PhantomData,
+        };
+        let transcript = message.to_signing_bytes();
+        let with_sig = WithSignature {
+            value: message,
+            signature: Vec::new(),
+            transcript,
+        };
+        EnvelopedMessage {
+            hand_id: ctx.hand_id,
+            game_id: ctx.game_id,
+            actor,
+            nonce: 0,
+            public_key,
+            message: with_sig,
+        }
+    }
+
+    #[test]
+    fn shuffle_stays_in_phase_until_final_step() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let snapshot = fixture_shuffling_snapshot(&ctx);
+
+        let deck_out = swap_deck_entries(&snapshot.shuffling.final_deck, 0, 1);
+        let message = build_shuffle_message(&snapshot.shuffling.final_deck, &deck_out);
+        let envelope = build_shuffle_envelope(&ctx, 10, message);
+
+        let result =
+            GameShuffleMessage::<Curve>::apply_transition(snapshot, &envelope, &ctx.hasher)
+                .expect("shuffle transition should succeed");
+
+        match result {
+            AnyTableSnapshot::Shuffling(next) => {
+                assert_eq!(next.shuffling.steps.len(), 1);
+                assert_eq!(next.shuffling.final_deck, deck_out);
+            }
+            other => panic!("expected shuffling snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn shuffle_promotes_to_dealing_after_last_shuffler() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_shuffling_snapshot(&ctx);
+
+        // Simulate first shuffler already acted.
+        let prefinal_deck = swap_deck_entries(&snapshot.shuffling.final_deck, 0, 1);
+        let identity = ctx
+            .shufflers
+            .get(&10)
+            .expect("first shuffler identity should exist");
+        snapshot.shuffling.steps.push(ShufflingStep {
+            shuffler_public_key: identity.public_key.clone(),
+            proof: dummy_shuffle_proof(&snapshot.shuffling.final_deck, &prefinal_deck),
+        });
+        snapshot.shuffling.final_deck = prefinal_deck.clone();
+
+        let final_deck = swap_deck_entries(&prefinal_deck, 2, 3);
+        let message = build_shuffle_message(&prefinal_deck, &final_deck);
+        let envelope = build_shuffle_envelope(&ctx, 11, message);
+
+        let result =
+            GameShuffleMessage::<Curve>::apply_transition(snapshot, &envelope, &ctx.hasher)
+                .expect("shuffle transition should succeed");
+
+        match result {
+            AnyTableSnapshot::Dealing(next) => {
+                assert_eq!(next.dealing.card_plan.len(), DECK_SIZE);
+                assert_eq!(next.shuffling.final_deck, final_deck);
+                assert_eq!(
+                    next.shuffling.steps.len(),
+                    ctx.expected_shuffler_order.len()
+                );
+            }
+            other => panic!("expected dealing snapshot, got {:?}", other),
+        }
+    }
+
+    fn first_player<C: CurveGroup>(ctx: &FixtureContext<C>) -> (SeatId, PlayerId, C) {
+        ctx.seating
+            .iter()
+            .find_map(|(&seat, player)| player.map(|id| (seat, id)))
+            .and_then(|(seat, id)| {
+                ctx.players
+                    .get(&id)
+                    .map(|identity| (seat, id, identity.public_key))
+            })
+            .expect("fixture to contain at least one player")
+    }
+
+    fn card_position_for(snapshot: &TableAtDealing<Curve>, seat: u8, hole_index: u8) -> u8 {
+        let card_ref = snapshot
+            .dealing
+            .card_plan
+            .iter()
+            .find_map(|(&card_ref, dest)| match dest {
+                CardDestination::Hole {
+                    seat: dest_seat,
+                    hole_index: dest_hole,
+                } if *dest_seat == seat && *dest_hole == hole_index => Some(card_ref),
+                _ => None,
+            })
+            .expect("card reference for seat/hole");
+        snapshot
+            .dealing
+            .assignments
+            .get(&card_ref)
+            .and_then(|dealt| dealt.source_index)
+            .expect("deck position for card reference")
+    }
+
+    fn generate_blinding_contribution(
+        ctx: &FixtureContext<Curve>,
+        shuffler_id: ShufflerId,
+        player_public_key: Curve,
+        seed_offset: u64,
+    ) -> PlayerTargetedBlindingContribution<Curve> {
+        let secret = ctx
+            .shuffler_secrets
+            .get(&shuffler_id)
+            .expect("shuffler secret")
+            .clone();
+        let aggregated = ctx.aggregated_shuffler_pk;
+        let seed = 0xB1D1_D00Du64
+            .wrapping_add(shuffler_id as u64 * 97)
+            .wrapping_add(seed_offset);
+        let mut rng = StdRng::seed_from_u64(seed);
+        PlayerTargetedBlindingContribution::generate(
+            secret,
+            aggregated,
+            player_public_key,
+            &mut rng,
+        )
+    }
+
+    #[test]
+    fn blinding_contribution_stays_in_dealing_until_hole_complete() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_dealing_snapshot(&ctx);
+        let (seat, _player_id, player_pk) = first_player(&ctx);
+
+        snapshot.dealing.player_ciphertexts.clear();
+        snapshot.dealing.player_unblinding_combined.clear();
+
+        let card_pos = card_position_for(&snapshot, seat, 0);
+        let share = generate_blinding_contribution(&ctx, 10, player_pk, 0);
+        let message = GameBlindingDecryptionMessage {
+            card_in_deck_position: card_pos,
+            share: share.clone(),
+            _curve: PhantomData,
+        };
+        let envelope = build_blinding_envelope(&ctx, 10, message);
+
+        let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("blinding transition should succeed");
+
+        match result {
+            AnyTableSnapshot::Dealing(next) => {
+                assert!(
+                    next.dealing
+                        .player_blinding_contribs
+                        .contains_key(&(10, seat, 0)),
+                    "contribution recorded in snapshot"
+                );
+                assert!(
+                    !next.dealing.player_ciphertexts.contains_key(&(seat, 1)),
+                    "second hole card still pending"
+                );
+                assert!(
+                    !next.dealing.player_ciphertexts.contains_key(&(seat, 0)),
+                    "current hole ciphertext remains pending until all shares arrive"
+                );
+            }
+            other => panic!("expected dealing snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn blinding_contributions_promote_to_preflop_when_all_ready() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_dealing_snapshot(&ctx);
+        let (seat, _player_id, player_pk) = first_player(&ctx);
+        let hole_positions: Vec<u8> = (0..=1)
+            .map(|hole| card_position_for(&snapshot, seat, hole))
+            .collect();
+
+        snapshot.dealing.player_ciphertexts.remove(&(seat, 0));
+        snapshot.dealing.player_ciphertexts.clear();
+        snapshot.dealing.player_unblinding_combined.clear();
+
+        {
+            let stacks = Arc::make_mut(&mut snapshot.stacks);
+            for (&stack_seat, info) in stacks.iter_mut() {
+                if stack_seat != seat {
+                    info.status = PlayerStatus::SittingOut;
+                }
+            }
+        }
+
+        let mut current_snapshot = AnyTableSnapshot::Dealing(snapshot);
+        for (hole_index, &card_pos) in hole_positions.iter().enumerate() {
+            for (order, shuffler_id) in ctx.expected_shuffler_order.iter().enumerate() {
+                let dealing_snapshot = match current_snapshot {
+                    AnyTableSnapshot::Dealing(ref dealing) => dealing.clone(),
+                    _ => panic!("unexpected snapshot state during blinding sequence"),
+                };
+                let share = generate_blinding_contribution(
+                    &ctx,
+                    *shuffler_id,
+                    player_pk,
+                    (hole_index as u64) * 10 + order as u64,
+                );
+                let message = GameBlindingDecryptionMessage {
+                    card_in_deck_position: card_pos,
+                    share,
+                    _curve: PhantomData,
+                };
+                let envelope = build_blinding_envelope(&ctx, *shuffler_id, message);
+                let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
+                    dealing_snapshot,
+                    &envelope,
+                    &ctx.hasher,
+                )
+                .expect("blinding transition should succeed");
+
+                match result {
+                    AnyTableSnapshot::Preflop(next) => {
+                        assert_eq!(
+                            next.betting.state.street,
+                            EngineStreet::Preflop,
+                            "betting state advanced to preflop street"
+                        );
+                        return;
+                    }
+                    AnyTableSnapshot::Dealing(next) => {
+                        current_snapshot = AnyTableSnapshot::Dealing(next);
+                    }
+                    other => panic!("unexpected snapshot variant during blinding: {:?}", other),
+                }
+            }
+        }
+
+        panic!("final share did not produce preflop snapshot");
+    }
+
+    #[test]
+    fn preflop_check_continues_phase() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_preflop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Preflop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![opponent];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<PreflopStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<PreflopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("preflop action should succeed");
+
+        match result {
+            AnyTableSnapshot::Preflop(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::Preflop);
+                assert_eq!(next.betting.state.to_act, opponent);
+                assert_eq!(next.betting.last_events.len(), 1);
+                assert!(
+                    matches!(
+                        next.betting.last_events.last(),
+                        Some(AnyPlayerActionMsg::Preflop(_))
+                    ),
+                    "last event recorded as preflop action"
+                );
+            }
+            other => panic!("expected preflop snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn preflop_check_advances_to_flop_when_round_complete() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_preflop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[1];
+        let opponent = seats[0];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Preflop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match.clear();
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<PreflopStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<PreflopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("preflop action should succeed");
+
+        match result {
+            AnyTableSnapshot::Flop(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::Flop);
+                assert_eq!(next.reveals.board.len(), 3);
+                assert!(
+                    matches!(
+                        next.betting.last_events.last(),
+                        Some(AnyPlayerActionMsg::Preflop(_))
+                    ),
+                    "last event recorded as preflop action"
+                );
+            }
+            other => panic!("expected flop snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn preflop_fold_ends_hand() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_preflop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Preflop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![seat];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<PreflopStreet>(&ctx, seat, PlayerBetAction::Fold);
+        let result = GamePlayerMessage::<PreflopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("preflop fold should succeed");
+
+        match result {
+            AnyTableSnapshot::Showdown(next) => {
+                assert!(
+                    matches!(
+                        next.betting.last_events.last(),
+                        Some(AnyPlayerActionMsg::Preflop(_))
+                    ),
+                    "last event recorded as preflop action"
+                );
+                let still_active: Vec<_> = next
+                    .betting
+                    .state
+                    .players
+                    .iter()
+                    .filter(|p| p.status == PlayerStatus::Active)
+                    .map(|p| p.seat)
+                    .collect();
+                assert_eq!(still_active, vec![opponent]);
+            }
+            other => panic!("expected showdown snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn flop_check_continues_phase() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_flop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Flop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![opponent];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<FlopStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<FlopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("flop action should succeed");
+
+        match result {
+            AnyTableSnapshot::Flop(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::Flop);
+                assert_eq!(next.betting.state.to_act, opponent);
+                assert!(matches!(
+                    next.betting.last_events.last(),
+                    Some(AnyPlayerActionMsg::Flop(_))
+                ));
+            }
+            other => panic!("expected flop snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn flop_check_advances_to_turn_when_round_complete() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_flop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[1];
+        let opponent = seats[0];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Flop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match.clear();
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<FlopStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<FlopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("flop action should succeed");
+
+        match result {
+            AnyTableSnapshot::Turn(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::Turn);
+                assert_eq!(next.reveals.board.len(), 4);
+            }
+            other => panic!("expected turn snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn flop_fold_ends_hand() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_flop_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Flop;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![seat];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<FlopStreet>(&ctx, seat, PlayerBetAction::Fold);
+        let result = GamePlayerMessage::<FlopStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("flop fold should succeed");
+
+        match result {
+            AnyTableSnapshot::Showdown(next) => {
+                let still_active: Vec<_> = next
+                    .betting
+                    .state
+                    .players
+                    .iter()
+                    .filter(|p| p.status == PlayerStatus::Active)
+                    .map(|p| p.seat)
+                    .collect();
+                assert_eq!(still_active, vec![opponent]);
+            }
+            other => panic!("expected showdown snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn turn_check_continues_phase() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_turn_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Turn;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![opponent];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<TurnStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<TurnStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("turn action should succeed");
+
+        match result {
+            AnyTableSnapshot::Turn(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::Turn);
+                assert_eq!(next.betting.state.to_act, opponent);
+            }
+            other => panic!("expected turn snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn turn_check_advances_to_river_when_round_complete() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_turn_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[1];
+        let opponent = seats[0];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Turn;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match.clear();
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<TurnStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<TurnStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("turn action should succeed");
+
+        match result {
+            AnyTableSnapshot::River(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::River);
+            }
+            other => panic!("expected river snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn turn_fold_ends_hand() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_turn_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::Turn;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![seat];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<TurnStreet>(&ctx, seat, PlayerBetAction::Fold);
+        let result = GamePlayerMessage::<TurnStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("turn fold should succeed");
+
+        match result {
+            AnyTableSnapshot::Showdown(next) => {
+                let still_active: Vec<_> = next
+                    .betting
+                    .state
+                    .players
+                    .iter()
+                    .filter(|p| p.status == PlayerStatus::Active)
+                    .map(|p| p.seat)
+                    .collect();
+                assert_eq!(still_active, vec![opponent]);
+            }
+            other => panic!("expected showdown snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn river_check_continues_phase() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_river_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::River;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![opponent];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.last_full_raise_amount = 0;
+            state.last_aggressor = None;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<RiverStreet>(&ctx, seat, PlayerBetAction::Check);
+        let result = GamePlayerMessage::<RiverStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("river action should succeed");
+
+        match result {
+            AnyTableSnapshot::River(next) => {
+                assert_eq!(next.betting.state.street, EngineStreet::River);
+                assert_eq!(next.betting.state.to_act, opponent);
+            }
+            other => panic!("expected river snapshot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn river_fold_moves_to_showdown() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_river_snapshot(&ctx);
+        let seats = active_seats(&ctx);
+        let seat = seats[0];
+        let opponent = seats[1];
+
+        {
+            let state = &mut snapshot.betting.state;
+            state.street = EngineStreet::River;
+            state.first_to_act = seat;
+            state.to_act = seat;
+            state.pending_to_match = vec![seat];
+            state.voluntary_bet_opened = false;
+            state.current_bet_to_match = 0;
+            state.betting_locked_all_in = false;
+            for player in state.players.iter_mut() {
+                if player.seat == seat {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = false;
+                } else if player.seat == opponent {
+                    player.status = PlayerStatus::Active;
+                    player.has_acted_this_round = true;
+                } else {
+                    player.status = PlayerStatus::Folded;
+                }
+                player.committed_this_round = 0;
+            }
+        }
+
+        let envelope = build_player_envelope::<RiverStreet>(&ctx, seat, PlayerBetAction::Fold);
+        let result = GamePlayerMessage::<RiverStreet, Curve>::apply_transition(
+            snapshot,
+            &envelope,
+            &ctx.hasher,
+        )
+        .expect("river fold should succeed");
+
+        match result {
+            AnyTableSnapshot::Showdown(next) => {
+                let still_active: Vec<_> = next
+                    .betting
+                    .state
+                    .players
+                    .iter()
+                    .filter(|p| p.status == PlayerStatus::Active)
+                    .map(|p| p.seat)
+                    .collect();
+                assert_eq!(still_active, vec![opponent]);
+            }
+            other => panic!("expected showdown snapshot, got {:?}", other),
+        }
+    }
+}

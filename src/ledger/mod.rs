@@ -12,6 +12,9 @@ pub mod typestate;
 pub mod verifier;
 pub mod worker;
 
+#[cfg(test)]
+pub mod test_support;
+
 pub use actor::{GameActor, PlayerActor, ShufflerActor};
 pub use lobby::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, GameSetupError,

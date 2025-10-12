@@ -104,7 +104,7 @@ where
         let tip_before = match self.state.tip_snapshot(hand_id) {
             Some((_, snapshot)) => snapshot,
             None => {
-                error!(
+                warn!(
                     target: LOG_TARGET,
                     hand_id,
                     nonce,
@@ -578,7 +578,7 @@ mod tests {
         let _ = worker;
     }
 
-    @[ignore]
+    #[ignore]
     #[tokio::test]
     async fn persist_before_apply() {
         let _guard = setup_test_tracing();
