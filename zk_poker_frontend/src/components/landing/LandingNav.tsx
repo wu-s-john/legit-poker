@@ -77,7 +77,7 @@ export function LandingNav() {
 
           <Link
             href="/demo"
-            className="inline-flex items-center rounded-lg bg-danger px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-danger/90"
+            className="hidden items-center rounded-lg bg-danger px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-danger/90 sm:inline-flex"
           >
             Play Demo
           </Link>
