@@ -16,7 +16,16 @@
   --color-primary-800: #2f2f8f;
   --color-primary-900: #1a1a4f;
   --color-primary-950: #0a0a2f;
-  
+
+  /* House Style Tokens */
+  --color-ink: #0a0a2f;
+  --color-paper: #ffffff;
+  --color-felt: #006B58;
+  --color-felt-soft: #e8f5f1;
+  --color-accent: #7c91ff;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+
   /* Table Colors */
   --color-table: #0f1a2a;
   --color-table-border: #1e3a5f;

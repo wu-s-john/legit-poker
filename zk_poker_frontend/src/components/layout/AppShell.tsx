@@ -2,6 +2,7 @@
 
 import { TopBar } from '~/components/layout/TopBar';
 import { ToastHost } from '~/components/common/ToastHost';
+import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 interface AppShellProps {
@@ -9,9 +10,12 @@ interface AppShellProps {
 }
 
 export function AppShell({ children }: AppShellProps) {
+  const pathname = usePathname();
+  const isLandingPage = pathname === '/';
+
   return (
     <div className="min-h-screen bg-primary-950">
-      <TopBar />
+      {!isLandingPage && <TopBar />}
       <main className="flex-1">
         {children}
       </main>

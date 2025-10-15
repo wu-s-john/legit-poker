@@ -7,14 +7,16 @@ import { AppShell } from '~/components/layout/AppShell';
 import { Providers } from '~/components/Providers';
 
 export const metadata: Metadata = {
-  title: "ProofPlay - ZK Poker",
-  description: "Real-time zero-knowledge poker client",
+  title: "Legit Poker - Cryptographically Fair Poker",
+  description: "Trustless poker with zero-knowledge proofs. 2.5% rake, 1.5s shuffles, instant settlements.",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-geist-sans",
+  display: "swap", // Optimize font loading - show fallback immediately
+  preload: true,
 });
 
 export default function RootLayout({
