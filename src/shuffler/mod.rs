@@ -442,7 +442,6 @@ where
                 &secret,
                 &submit,
                 &runtime,
-                history_cap,
                 &public_key,
                 actor,
             )
@@ -567,10 +566,11 @@ where
                                     &secret,
                                     &submit,
                                     &runtime,
-                                    history_cap,
                                     &public_key,
                                     actor,
-                                ).await {
+                                )
+                                .await
+                                {
                                     error!(
                                         target = LOG_TARGET,
                                         game_id = runtime.game_id,
@@ -667,7 +667,6 @@ where
         secret: &Arc<S::SecretKey>,
         submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: &Arc<HandRuntime<C>>,
-        history_cap: usize,
         public_key: &C,
         actor: ShufflerActor,
     ) -> Result<()>
@@ -737,13 +736,8 @@ where
             let mut state = runtime.state.lock();
             state.next_nonce = nonce_for_update.saturating_add(1);
             state.latest_deck = deck_out_state;
-            state.buffered.push(envelope_for_state.clone());
-            if state.buffered.len() > history_cap {
-                let drop_count = state.buffered.len() - history_cap;
-                state.buffered.drain(0..drop_count);
-            }
+            // History is updated via record_incoming when the broadcasted envelope arrives.
             state.acted = true;
-            state.completed = state.buffered.len() >= state.expected_order.len();
         }
 
         info!(
