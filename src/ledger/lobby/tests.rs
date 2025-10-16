@@ -762,7 +762,7 @@ async fn commence_game_curve(
     lobby: &SeaOrmLobby,
     operator: &LedgerOperator<TestCurve>,
     params: CommenceGameParams<TestCurve>,
-) -> Result<CommenceGameOutcome, GameSetupError> {
+) -> Result<CommenceGameOutcome<TestCurve>, GameSetupError> {
     <SeaOrmLobby as super::LedgerLobby<TestCurve>>::commence_game(lobby, operator, params).await
 }
 

@@ -277,7 +277,7 @@ where
         &self,
         operator: &LedgerOperator<C>,
         params: CommenceGameParams<C>,
-    ) -> Result<CommenceGameOutcome, GameSetupError> {
+    ) -> Result<CommenceGameOutcome<C>, GameSetupError> {
         ensure_unique_seats(&params.players)?;
         ensure_min_players(params.min_players, &params.players)?;
         ensure_shuffler_sequence(&params.shufflers)?;
@@ -333,7 +333,7 @@ where
             &prepared_shufflers,
             hasher.as_ref(),
         )?;
-        let initial_snapshot = AnyTableSnapshot::Shuffling(snapshot);
+        let initial_snapshot = AnyTableSnapshot::Shuffling(snapshot.clone());
         let prepared = prepare_snapshot(&initial_snapshot, hasher.as_ref())
             .map_err(|err| GameSetupError::Database(DbErr::Custom(err.to_string())))?;
         let snapshot_store = SeaOrmSnapshotStore::<C>::new(self.connection.clone());
@@ -356,6 +356,7 @@ where
         Ok(CommenceGameOutcome {
             hand: hand_record,
             nonce_seed: 0,
+            initial_snapshot: snapshot,
         })
     }
 }

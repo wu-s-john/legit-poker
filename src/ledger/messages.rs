@@ -1,4 +1,7 @@
+use anyhow::Result;
+use ark_crypto_primitives::signature::{schnorr::Signature as SchnorrSignature, SignatureScheme};
 use ark_ec::CurveGroup;
+use ark_serialize::CanonicalSerialize;
 use serde::Serialize;
 use std::marker::PhantomData;
 
@@ -14,6 +17,7 @@ use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
 use crate::signing::{Signable, TranscriptBuilder, WithSignature};
+use rand::Rng;
 
 use super::snapshot::phases::{
     HandPhase, PhaseBetting, PhaseDealing, PhaseShowdown, PhaseShuffling,
@@ -400,12 +404,82 @@ where
     pub message: WithSignature<SignatureBytes, AnyGameMessage<C>>,
 }
 
+pub trait SignatureEncoder {
+    fn to_bytes(&self) -> Result<Vec<u8>>;
+}
+
+impl<C> SignatureEncoder for SchnorrSignature<C>
+where
+    C: CurveGroup,
+    C::ScalarField: CanonicalSerialize,
+{
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.prover_response
+            .serialize_compressed(&mut bytes)
+            .map_err(|err| anyhow::anyhow!("signature serialization error: {err}"))?;
+        self.verifier_challenge
+            .serialize_compressed(&mut bytes)
+            .map_err(|err| anyhow::anyhow!("signature serialization error: {err}"))?;
+        Ok(bytes)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MetadataEnvelope<C, A>
+where
+    C: CurveGroup,
+    A: GameActor + Clone,
+{
+    pub hand_id: HandId,
+    pub game_id: GameId,
+    pub actor: A,
+    pub nonce: u64,
+    pub public_key: C,
+}
+
+pub fn sign_enveloped_action<S, C, M, R>(
+    meta: MetadataEnvelope<C, M::Actor>,
+    message: M,
+    params: &S::Parameters,
+    secret: &S::SecretKey,
+    rng: &mut R,
+) -> Result<EnvelopedMessage<C, M>>
+where
+    S: SignatureScheme,
+    S::Signature: SignatureEncoder,
+    C: CurveGroup,
+    M: GameMessage<C> + Signable,
+    R: Rng,
+{
+    let signed = WithSignature::<S::Signature, M>::new::<S, _>(message, params, secret, rng)?;
+    let WithSignature {
+        value,
+        signature,
+        transcript,
+    } = signed;
+    let signature = signature.to_bytes()?;
+
+    Ok(EnvelopedMessage {
+        hand_id: meta.hand_id,
+        game_id: meta.game_id,
+        actor: meta.actor,
+        nonce: meta.nonce,
+        public_key: meta.public_key,
+        message: WithSignature {
+            value,
+            signature,
+            transcript,
+        },
+    })
+}
+
 pub trait GameMessage<C>
 where
     C: CurveGroup,
 {
     type Phase: HandPhase<C>;
-    type Actor: GameActor;
+    type Actor: GameActor + Clone;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GameShuffleMessage<C> {

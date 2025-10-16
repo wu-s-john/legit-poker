@@ -62,5 +62,5 @@ where
         &self,
         operator: &LedgerOperator<C>,
         params: CommenceGameParams<C>,
-    ) -> Result<CommenceGameOutcome, GameSetupError>;
+    ) -> Result<CommenceGameOutcome<C>, GameSetupError>;
 }

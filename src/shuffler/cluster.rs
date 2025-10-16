@@ -3,12 +3,12 @@ use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_std::rand::Rng;
 
-use crate::shuffler::Shuffler;
+use crate::shuffler::ShufflerKeypair;
 use crate::shuffling::make_global_public_keys;
 
 #[derive(Clone, Debug)]
 pub struct ShufflerCluster<C: CurveGroup> {
-    pub shufflers: Vec<Shuffler<C>>,
+    pub shufflers: Vec<ShufflerKeypair<C>>,
     pub aggregated_public_key: C,
 }
 
@@ -26,7 +26,7 @@ where
             .into_iter()
             .zip(public_keys.into_iter())
             .enumerate()
-            .map(|(i, (sk, pk))| Shuffler::new(i, sk, pk, aggregated_public_key))
+            .map(|(i, (sk, pk))| ShufflerKeypair::new(i, sk, pk, aggregated_public_key))
             .collect();
 
         Ok(Self {

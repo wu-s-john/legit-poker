@@ -1,6 +1,8 @@
 use crate::engine::nl::types::{Chips, HandConfig, PlayerId, SeatId, TableStakes};
+use crate::ledger::snapshot::TableAtShuffling;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{DbRowStatus, MaybeSaved, NotSaved, Saved};
+use ark_ec::CurveGroup;
 use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
@@ -223,7 +225,8 @@ pub struct CommenceGameParams<C> {
 }
 
 #[derive(Debug)]
-pub struct CommenceGameOutcome {
+pub struct CommenceGameOutcome<C: CurveGroup> {
     pub hand: HandRecord<Saved<HandId>>,
     pub nonce_seed: u64,
+    pub initial_snapshot: TableAtShuffling<C>,
 }
