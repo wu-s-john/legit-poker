@@ -16,9 +16,10 @@ use crate::db::entity::events;
 use crate::ledger::messages::AnyMessageEnvelope;
 use crate::ledger::types::HandId;
 
+pub use self::serialization::model_to_envelope;
+
 use self::serialization::{
-    encode_actor, model_to_envelope, serialize_curve, to_db_hand_status, StoredEnvelopePayload,
-    StoredGameMessage,
+    encode_actor, serialize_curve, to_db_hand_status, StoredEnvelopePayload, StoredGameMessage,
 };
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;

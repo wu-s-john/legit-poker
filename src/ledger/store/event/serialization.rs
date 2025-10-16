@@ -187,7 +187,7 @@ impl StoredGameMessage {
     }
 }
 
-pub(super) fn model_to_envelope<C>(row: events::Model) -> anyhow::Result<AnyMessageEnvelope<C>>
+pub fn model_to_envelope<C>(row: events::Model) -> anyhow::Result<AnyMessageEnvelope<C>>
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
 {
