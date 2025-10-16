@@ -164,7 +164,13 @@ where
             .get(&shuffler_id)
             .context("unknown shuffler for shuffle message")?;
 
+        let expected_index = snapshot.shuffling.steps.len();
         let message = &envelope.message.value;
+        ensure!(
+            usize::from(message.turn_index) == expected_index,
+            "shuffle turn index mismatch: expected {expected_index}, got {}",
+            message.turn_index
+        );
 
         if snapshot.shuffling.steps.is_empty() {
             snapshot.shuffling.initial_deck = message.deck_in.clone();
@@ -1114,6 +1120,7 @@ mod tests {
     fn build_shuffle_message<C: CurveGroup>(
         deck_in: &[ElGamalCiphertext<C>; DECK_SIZE],
         deck_out: &[ElGamalCiphertext<C>; DECK_SIZE],
+        turn_index: u16,
     ) -> GameShuffleMessage<C>
     where
         C::BaseField: Zero,
@@ -1123,6 +1130,7 @@ mod tests {
             deck_in.clone(),
             deck_out.clone(),
             dummy_shuffle_proof(deck_in, deck_out),
+            turn_index,
         )
     }
 
@@ -1339,7 +1347,7 @@ mod tests {
         let snapshot = fixture_shuffling_snapshot(&ctx);
 
         let deck_out = swap_deck_entries(&snapshot.shuffling.final_deck, 0, 1);
-        let message = build_shuffle_message(&snapshot.shuffling.final_deck, &deck_out);
+        let message = build_shuffle_message(&snapshot.shuffling.final_deck, &deck_out, 0);
         let envelope = build_shuffle_envelope(&ctx, 10, message);
 
         let result =
@@ -1353,6 +1361,20 @@ mod tests {
             }
             other => panic!("expected shuffling snapshot, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn shuffle_rejects_mismatched_turn_index() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let snapshot = fixture_shuffling_snapshot(&ctx);
+
+        let deck_out = swap_deck_entries(&snapshot.shuffling.final_deck, 0, 1);
+        let message = build_shuffle_message(&snapshot.shuffling.final_deck, &deck_out, 1);
+        let envelope = build_shuffle_envelope(&ctx, 10, message);
+
+        let result =
+            GameShuffleMessage::<Curve>::apply_transition(snapshot, &envelope, &ctx.hasher);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1373,7 +1395,7 @@ mod tests {
         snapshot.shuffling.final_deck = prefinal_deck.clone();
 
         let final_deck = swap_deck_entries(&prefinal_deck, 2, 3);
-        let message = build_shuffle_message(&prefinal_deck, &final_deck);
+        let message = build_shuffle_message(&prefinal_deck, &final_deck, 1);
         let envelope = build_shuffle_envelope(&ctx, 11, message);
 
         let result =

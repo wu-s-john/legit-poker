@@ -119,6 +119,7 @@ pub struct GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
+    pub turn_index: u16,
     pub deck_in: [ElGamalCiphertext<C>; DECK_SIZE],
     pub deck_out: [ElGamalCiphertext<C>; DECK_SIZE],
     pub proof: ShuffleProof<C>,
@@ -134,6 +135,7 @@ where
     }
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_u64(u64::from(self.turn_index));
         for cipher in &self.deck_in {
             append_ciphertext(builder, cipher);
         }
@@ -153,8 +155,10 @@ where
         deck_in: [ElGamalCiphertext<C>; DECK_SIZE],
         deck_out: [ElGamalCiphertext<C>; DECK_SIZE],
         proof: ShuffleProof<C>,
+        turn_index: u16,
     ) -> Self {
         Self {
+            turn_index,
             deck_in,
             deck_out,
             proof,
@@ -476,6 +480,7 @@ mod tests {
                 sample_deck(),
                 sample_deck(),
                 sample_shuffle_proof(),
+                0,
             )),
             AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                 7,
@@ -538,6 +543,7 @@ mod tests {
             sample_deck(),
             sample_deck(),
             sample_shuffle_proof(),
+            0,
         ))?;
         sign_and_verify(GameBlindingDecryptionMessage::<GrumpkinProjective>::new(
             1,

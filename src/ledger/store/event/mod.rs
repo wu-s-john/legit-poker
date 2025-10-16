@@ -504,8 +504,12 @@ mod tests {
         nonce: u64,
     ) -> AnyMessageEnvelope<Curve> {
         let deck = std::array::from_fn(|_| ElGamalCiphertext::new(Curve::zero(), Curve::zero()));
-        let message =
-            AnyGameMessage::Shuffle(GameShuffleMessage::new(deck.clone(), deck, shuffle_proof()));
+        let message = AnyGameMessage::Shuffle(GameShuffleMessage::new(
+            deck.clone(),
+            deck,
+            shuffle_proof(),
+            0,
+        ));
 
         AnyMessageEnvelope {
             hand_id,

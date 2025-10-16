@@ -31,6 +31,7 @@ pub(super) struct StoredEnvelopePayload {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum StoredGameMessage {
     Shuffle {
+        turn_index: u16,
         deck_in: Vec<String>,
         deck_out: Vec<String>,
         proof: String,
@@ -82,6 +83,7 @@ impl StoredGameMessage {
     {
         match message {
             AnyGameMessage::Shuffle(inner) => Ok(StoredGameMessage::Shuffle {
+                turn_index: inner.turn_index,
                 deck_in: encode_ciphertexts(&inner.deck_in)?,
                 deck_out: encode_ciphertexts(&inner.deck_out)?,
                 proof: encode_hex(&inner.proof)?,
@@ -120,6 +122,7 @@ impl StoredGameMessage {
     {
         Ok(match self {
             StoredGameMessage::Shuffle {
+                turn_index,
                 deck_in,
                 deck_out,
                 proof,
@@ -127,7 +130,9 @@ impl StoredGameMessage {
                 let deck_in = decode_ciphertexts::<C>(&deck_in)?;
                 let deck_out = decode_ciphertexts::<C>(&deck_out)?;
                 let proof = decode_hex::<ShuffleProof<C>>(&proof)?;
-                AnyGameMessage::Shuffle(GameShuffleMessage::new(deck_in, deck_out, proof))
+                AnyGameMessage::Shuffle(GameShuffleMessage::new(
+                    deck_in, deck_out, proof, turn_index,
+                ))
             }
             StoredGameMessage::Blinding {
                 card_in_deck_position,

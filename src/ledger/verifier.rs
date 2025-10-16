@@ -431,6 +431,9 @@ fn validate_shuffle<C: CurveGroup>(
     if next_index >= expected_order.len() {
         return Err(VerifyError::InvalidMessage);
     }
+    if usize::from(message.turn_index) != next_index {
+        return Err(VerifyError::InvalidMessage);
+    }
     if expected_order[next_index] != actor.shuffler_id {
         return Err(VerifyError::InvalidMessage);
     }
@@ -851,6 +854,38 @@ mod tests {
         assert!(matches!(result, Err(VerifyError::InvalidMessage)));
     }
 
+    #[test]
+    fn rejects_shuffle_with_wrong_turn_index() {
+        let mut harness = TestHarness::base(TestPhase::Shuffling);
+        harness.push_snapshot();
+        let shuffler_identity = harness
+            .shufflers
+            .get(&SHUFFLER_ID)
+            .expect("primary shuffler identity to exist")
+            .public_key
+            .clone();
+        let deck_in = sample_deck();
+        let deck_out = deck_in.clone();
+        let message = AnyGameMessage::Shuffle(GameShuffleMessage::new(
+            deck_in,
+            deck_out,
+            sample_shuffle_proof(),
+            1,
+        ));
+        let envelope = build_envelope(
+            HAND_ID,
+            message,
+            AnyActor::Shuffler {
+                shuffler_id: SHUFFLER_ID,
+            },
+            shuffler_identity,
+            0,
+        );
+        let verifier = harness.verifier();
+        let result = verifier.verify(HAND_ID, envelope);
+        assert!(matches!(result, Err(VerifyError::InvalidMessage)));
+    }
+
     // --- Test harness ----------------------------------------------------------------------
 
     struct TestHarness {
@@ -1172,10 +1207,16 @@ mod tests {
         fn shuffle_envelope(&self, shuffler_id: ShufflerId) -> AnyMessageEnvelope<Curve> {
             let deck_in = sample_deck();
             let deck_out = deck_in.clone();
+            let turn_index = self
+                .expected_shuffler_order()
+                .iter()
+                .position(|&id| id == shuffler_id)
+                .unwrap_or(0) as u16;
             let message = AnyGameMessage::Shuffle(GameShuffleMessage::new(
                 deck_in,
                 deck_out,
                 sample_shuffle_proof(),
+                turn_index,
             ));
             let identity = self
                 .shufflers

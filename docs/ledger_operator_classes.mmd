@@ -107,6 +107,7 @@ classDiagram
     }
 
     class GameShuffleMessage {
+        + turn_index: u16
         + deck_in: Vec<u8>
         + deck_out: Vec<u8>
         + proof: Vec<u8>
