@@ -74,6 +74,10 @@ impl<C> SupabaseRealtimeClient<C>
 where
     C: CurveGroup + Send + Sync + 'static,
 {
+    pub fn broadcaster(&self) -> broadcast::Sender<EnvelopedMessage<C, GameShuffleMessage<C>>> {
+        self.tx.clone()
+    }
+
     pub fn new(
         cfg: SupabaseRealtimeClientConfig,
         stop: CancellationToken,

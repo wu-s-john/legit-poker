@@ -10,8 +10,10 @@ use super::store::EventStore;
 use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
 use super::worker::LedgerWorker;
+use super::worker::WorkerError;
 use crate::curve_absorb::CurveAbsorb;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tracing::error;
 
 /// Facade that wires together verifier, queue, worker, event store, and state.
@@ -50,15 +52,20 @@ where
     }
 
     /// Called on startup to replay state and spawn the worker loop.
-    pub async fn start(&self, worker: LedgerWorker<C>) -> anyhow::Result<()> {
+    pub async fn start(
+        &self,
+        worker: LedgerWorker<C>,
+    ) -> anyhow::Result<JoinHandle<Result<(), WorkerError>>> {
         let events = self.event_store.load_all_events().await?;
         self.state.replay(events)?;
-        tokio::spawn(async move {
-            if let Err(err) = worker.run().await {
+        let handle = tokio::spawn(async move {
+            let result = worker.run().await;
+            if let Err(err) = &result {
                 error!("ledger worker exited with error: {err}");
             }
+            result
         });
-        Ok(())
+        Ok(handle)
     }
 
     /// Entry point for API submissions: verify and enqueue an action envelope.
@@ -212,7 +219,8 @@ mod tests {
             Arc::clone(&snapshot_store),
             Arc::clone(&state),
         );
-        operator.start(worker).await.unwrap();
+        let handle = operator.start(worker).await.unwrap();
+        handle.abort();
     }
 
     #[tokio::test]

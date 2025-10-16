@@ -257,7 +257,6 @@ where
     index: usize,
     shuffler_id: ShufflerId,
     public_key: C,
-    _aggregated_public_key: C,
     params: Arc<S::Parameters>,
     secret_key: Arc<S::SecretKey>,
     api: Arc<ShufflerKeypair<C>>,
@@ -270,7 +269,7 @@ where
 impl<C, S> Shuffler<C, S>
 where
     C: CurveGroup,
-    S: SignatureScheme<PublicKey = C>,
+    S: SignatureScheme<PublicKey = C::Affine>,
 {
     pub fn new(
         index: usize,
@@ -294,7 +293,6 @@ where
             index,
             shuffler_id,
             public_key,
-            _aggregated_public_key: aggregated_public_key,
             params: Arc::new(params),
             secret_key: Arc::new(secret_key),
             api,
@@ -311,6 +309,17 @@ where
 
     pub fn index(&self) -> usize {
         self.index
+    }
+
+    pub fn cancel_all(&self) {
+        let mut keys = Vec::new();
+        for entry in self.states.iter() {
+            entry.value().cancel.cancel();
+            keys.push(*entry.key());
+        }
+        for key in keys {
+            self.states.remove(&key);
+        }
     }
 
     pub async fn subscribe_per_hand(
@@ -805,14 +814,12 @@ impl<C: CurveGroup> Drop for HandSubscription<C> {
     }
 }
 
-pub mod cluster;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::shuffling::{
         combine_blinding_contributions_for_player, decrypt_community_card,
-        generate_random_ciphertexts, recover_card_value,
+        generate_random_ciphertexts, make_global_public_keys, recover_card_value,
     };
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
@@ -825,20 +832,33 @@ mod tests {
     fn test_shuffle_and_player_targeted_recovery() {
         let mut rng = test_rng();
 
-        // Build a cluster of shufflers
-        let cluster = crate::shuffler::cluster::ShufflerCluster::<GrumpkinProjective>::generate(
-            N_SHUFFLERS,
-            &mut rng,
-        )
-        .expect("cluster generation");
-        let agg_pk = cluster.aggregated_public_key;
+        // Build shufflers from random secrets
+        let mut secrets = Vec::with_capacity(N_SHUFFLERS);
+        let mut public_keys = Vec::with_capacity(N_SHUFFLERS);
+        for _ in 0..N_SHUFFLERS {
+            let secret = <GrumpkinProjective as PrimeGroup>::ScalarField::rand(&mut rng);
+            let public_key = GrumpkinProjective::generator() * secret;
+            secrets.push(secret);
+            public_keys.push(public_key);
+        }
+        let aggregated_public_key = make_global_public_keys(public_keys.clone());
+        let shufflers: Vec<_> = secrets
+            .into_iter()
+            .zip(public_keys.into_iter())
+            .enumerate()
+            .map(|(idx, (secret, public_key))| {
+                ShufflerKeypair::new(idx, secret, public_key, aggregated_public_key.clone())
+            })
+            .collect();
+
+        let agg_pk = aggregated_public_key.clone();
 
         // Generate an initial encrypted deck using the aggregated public key
         let (mut deck, _r) =
             generate_random_ciphertexts::<GrumpkinProjective, DECK_N>(&agg_pk, &mut rng);
 
         // Sequentially shuffle across all shufflers
-        for s in &cluster.shufflers {
+        for s in &shufflers {
             let (next_deck, _proof) = s.shuffle(&deck, &mut rng).expect("shuffle");
             deck = next_deck;
         }
@@ -853,7 +873,7 @@ mod tests {
 
         // Each shuffler provides a blinding contribution for this player
         let mut contributions = Vec::with_capacity(N_SHUFFLERS);
-        for s in &cluster.shufflers {
+        for s in &shufflers {
             let c = s
                 .provide_blinding_player_decryption_share(player_pk, &mut rng)
                 .expect("blinding share");
@@ -867,7 +887,7 @@ mod tests {
 
         // Each shuffler provides partial unblinding
         let mut unblinding_shares = Vec::with_capacity(N_SHUFFLERS);
-        for s in &cluster.shufflers {
+        for s in &shufflers {
             let u = s
                 .provide_unblinding_decryption_share(&player_ciphertext)
                 .expect("unblinding share");
@@ -885,7 +905,7 @@ mod tests {
 
         // Also derive expected value via community decryption of the same post-shuffle ciphertext
         let mut comm_shares = Vec::with_capacity(N_SHUFFLERS);
-        for s in &cluster.shufflers {
+        for s in &shufflers {
             comm_shares.push(
                 s.provide_community_decryption_share(&card_ct, &mut rng)
                     .expect("community share"),
@@ -903,13 +923,24 @@ mod tests {
     fn test_community_decryption_flow() {
         let mut rng = test_rng();
 
-        // Build a cluster of shufflers
-        let cluster = crate::shuffler::cluster::ShufflerCluster::<GrumpkinProjective>::generate(
-            N_SHUFFLERS,
-            &mut rng,
-        )
-        .expect("cluster generation");
-        let agg_pk = cluster.aggregated_public_key;
+        let mut secrets = Vec::with_capacity(N_SHUFFLERS);
+        let mut public_keys = Vec::with_capacity(N_SHUFFLERS);
+        for _ in 0..N_SHUFFLERS {
+            let secret = <GrumpkinProjective as PrimeGroup>::ScalarField::rand(&mut rng);
+            let public_key = GrumpkinProjective::generator() * secret;
+            secrets.push(secret);
+            public_keys.push(public_key);
+        }
+        let aggregated_public_key = make_global_public_keys(public_keys.clone());
+        let shufflers: Vec<_> = secrets
+            .into_iter()
+            .zip(public_keys.into_iter())
+            .enumerate()
+            .map(|(idx, (secret, public_key))| {
+                ShufflerKeypair::new(idx, secret, public_key, aggregated_public_key.clone())
+            })
+            .collect();
+        let agg_pk = aggregated_public_key;
 
         // Encrypt a community card with known value in [0..51]
         let card_value: u8 = 25;
@@ -920,7 +951,7 @@ mod tests {
 
         // Collect community decryption shares from all shufflers
         let mut shares = Vec::with_capacity(N_SHUFFLERS);
-        for s in &cluster.shufflers {
+        for s in &shufflers {
             let share = s
                 .provide_community_decryption_share(&ciphertext, &mut rng)
                 .expect("community share");
