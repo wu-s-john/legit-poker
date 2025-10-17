@@ -25,6 +25,7 @@
 ## Database Access (Rust)
 - Prefer the "seaborn" DSL libraries (SeaORM/SeaQuery) for queries rather than raw SQL strings to maintain type safety.
 - Avoid constructing SQL with `format!`/string concatenation; use the ORM/query builder APIs and compile-time checked macros when available.
+- To review the current database schema, run `just dump-schema` (uses the Postgres client container via Docker).
 
 ## Testing Guidelines
 - Rust: Unit tests are colocated (e.g., `mod tests {}`) and in files like `src/vrf/tests.rs`; E2E in `src/showdown/e2e.rs`. Make tests deterministic (fixed RNG seeds), prefer small fixtures. Run: `RUST_LOG=info cargo test -- --nocapture` and avoid `--release` to keep iteration fast.

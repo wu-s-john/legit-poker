@@ -208,7 +208,7 @@ mod tests {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_span_events(FmtSpan::ENTER)
-                    .with_test_writer()
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default())
                     .with_file(true)
                     .with_timer(timer)
                     .with_line_number(true), // This ensures output goes to test stdout

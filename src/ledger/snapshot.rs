@@ -255,8 +255,8 @@ mod tests {
     use super::*;
     use crate::engine::nl::types::Street;
 
-    #[test]
     #[ignore]
+    #[test]
     fn build_initial_betting_state_uses_stack_info() {
         let cfg = HandConfig {
             stakes: crate::engine::nl::types::TableStakes {

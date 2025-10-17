@@ -242,6 +242,23 @@ where
             subscriptions.push(subscription);
         }
 
+        if let Some(first_shuffler_id) = expected_order.first() {
+            let first = self
+                .shufflers
+                .get(first_shuffler_id)
+                .ok_or_else(|| anyhow!("no shuffler configured for id {}", first_shuffler_id))?
+                .clone();
+            first
+                .kick_start_hand(game_id, hand_id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to kick start hand {} for shuffler {}",
+                        hand_id, first_shuffler_id
+                    )
+                })?;
+        }
+
         if let Some(previous) = self.active_hands.insert((game_id, hand_id), subscriptions) {
             for sub in previous {
                 sub.cancel();

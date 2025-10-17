@@ -15,7 +15,8 @@ use ark_std::rand::{rngs::StdRng, SeedableRng};
 use clap::{Parser, ValueEnum};
 use std::time::{Duration, Instant};
 use tracing_subscriber::{
-    filter, fmt::format::FmtSpan, layer::SubscriberExt, util::SubscriberInitExt,
+    filter, fmt::format::FmtSpan, fmt::writer::TestWriter, layer::SubscriberExt,
+    util::SubscriberInitExt,
 };
 use zk_poker::shuffling::{
     data_structures::{scalar_to_base_field, ElGamalCiphertext},
@@ -822,7 +823,7 @@ fn setup_test_tracing() -> tracing::subscriber::DefaultGuard {
         .with(
             tracing_subscriber::fmt::layer()
                 .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                .with_test_writer(), // This ensures output goes to test stdout
+                .with_writer(TestWriter::default()), // This ensures output goes to test stdout
         )
         .with(filter)
         .set_default()

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,7 @@ use rand::{rngs::StdRng, SeedableRng};
 use tokio::time::{interval, MissedTickBehavior};
 use tokio::{pin, signal};
 use tracing::{debug, info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{fmt::time::Uptime, EnvFilter};
 use url::Url;
 
 use zk_poker::engine::nl::types::{Chips, HandConfig, SeatId, TableStakes};
@@ -45,15 +46,15 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[command(about = "Seed a lobby and run the coordinator shuffle demo", long_about = None)]
 struct Args {
     /// Base Supabase HTTPS endpoint (e.g. https://xyz.supabase.co)
-    #[arg(long)]
+    #[arg(long, env = "SUPABASE_URL")]
     supabase_url: Option<String>,
 
     /// Supabase anon key for realtime websocket auth
-    #[arg(long)]
+    #[arg(long, env = "SUPABASE_ANON_KEY")]
     supabase_anon_key: Option<String>,
 
     /// Postgres connection string used by SeaORM
-    #[arg(long)]
+    #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
     /// Comma-separated or JSON array of shuffler secret scalars (hex, optional 0x prefix)
@@ -91,6 +92,9 @@ struct ShufflerMaterial {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let manifest_env = env!("CARGO_MANIFEST_DIR");
+    let manifest_env_path = PathBuf::from(manifest_env).join(".env");
+    dotenv::from_filename(manifest_env_path).ok();
     dotenv::dotenv().ok();
     let args = Args::parse();
     init_tracing(args.json)?;
@@ -472,6 +476,7 @@ fn init_tracing(json: bool) -> Result<()> {
             .with_env_filter(filter)
             .with_target(true)
             .with_level(true)
+            .with_timer(Uptime::default())
             .with_ansi(false)
             .json()
             .try_init()
@@ -483,6 +488,7 @@ fn init_tracing(json: bool) -> Result<()> {
             .with_env_filter(filter)
             .with_target(true)
             .with_level(true)
+            .with_timer(Uptime::default())
             .try_init()
             .map_err(|err| anyhow!("failed to initialize tracing subscriber: {err}"))?;
     }
@@ -492,12 +498,15 @@ fn init_tracing(json: bool) -> Result<()> {
 fn build_config(args: Args) -> Result<Config> {
     let supabase_url = args
         .supabase_url
+        .or_else(|| std::env::var("SUPABASE_URL").ok())
         .unwrap_or_else(|| DEFAULT_SUPABASE_URL.to_string());
     let supabase_key = args
         .supabase_anon_key
+        .or_else(|| std::env::var("SUPABASE_ANON_KEY").ok())
         .ok_or_else(|| anyhow!("Supabase anon key is required (set SUPABASE_ANON_KEY)"))?;
     let database_url = args
         .database_url
+        .or_else(|| std::env::var("DATABASE_URL").ok())
         .unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
 
     let shuffler_secrets = match args.shuffler_keys {

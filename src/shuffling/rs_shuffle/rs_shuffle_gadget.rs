@@ -688,7 +688,7 @@ mod tests {
                 tracing_subscriber::fmt::layer()
                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
                     .with_line_number(true) // Add line numbers to trace output
-                    .with_test_writer(), // This ensures output goes to test stdout
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default()), // This ensures output goes to test stdout
             )
             .with(filter)
             .set_default()

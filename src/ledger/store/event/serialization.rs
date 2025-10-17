@@ -191,6 +191,15 @@ pub fn model_to_envelope<C>(row: events::Model) -> anyhow::Result<AnyMessageEnve
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
 {
+    tracing::debug!(
+        target: "ledger::store::event",
+        hand_id = row.hand_id,
+        entity_kind = row.entity_kind,
+        actor_kind = row.actor_kind,
+        message_type = %row.message_type,
+        nonce = row.nonce,
+        "attempting to decode ledger event row"
+    );
     let actor = decode_actor(&row)?;
     let public_key = deserialize_curve::<C>(&row.public_key)?;
     let nonce =
@@ -198,7 +207,25 @@ where
 
     let payload: StoredEnvelopePayload =
         serde_json::from_value(row.payload).context("failed to deserialize event payload")?;
-    let message = payload.message.into_any::<C>()?;
+    tracing::trace!(
+        target: "ledger::store::event",
+        hand_id = row.hand_id,
+        game_id = payload.game_id,
+        "decoded event payload"
+    );
+    let message = match payload.message.into_any::<C>() {
+        Ok(msg) => msg,
+        Err(err) => {
+            tracing::error!(
+                target: "ledger::store::event",
+                hand_id = row.hand_id,
+                message_type = %row.message_type,
+                error = %err,
+                "failed to deserialize stored message"
+            );
+            return Err(err);
+        }
+    };
 
     let with_signature = WithSignature {
         value: message.clone(),
@@ -321,17 +348,92 @@ fn decode_hex<T>(value: &str) -> anyhow::Result<T>
 where
     T: CanonicalDeserialize,
 {
-    let bytes = hex::decode(value).context("failed to decode hex payload stored in event")?;
-    T::deserialize_compressed(&mut &bytes[..])
-        .map_err(|err| anyhow!("canonical deserialize failed: {err}"))
+    let trimmed = value.trim();
+    let mut owned = String::new();
+    let input = if trimmed.len() % 2 == 1 {
+        owned.reserve(trimmed.len() + 1);
+        owned.push('0');
+        owned.push_str(trimmed);
+        tracing::warn!(
+            target: "ledger::store::event",
+            len = trimmed.len(),
+            "hex payload had odd length; prefixed leading zero"
+        );
+        owned.as_str()
+    } else {
+        trimmed
+    };
+    let bytes = hex::decode(input).context("failed to decode hex payload stored in event")?;
+    match T::deserialize_compressed(&mut &bytes[..]) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            tracing::error!(
+                target: "ledger::store::event",
+                error = %err,
+                byte_len = bytes.len(),
+                first_byte = bytes.first().copied(),
+                "canonical deserialize failed for hex payload"
+            );
+            Err(anyhow!("canonical deserialize failed: {err}"))
+        }
+    }
 }
 
 fn deserialize_curve<C>(bytes: &[u8]) -> anyhow::Result<C>
 where
     C: CanonicalDeserialize,
 {
-    C::deserialize_compressed(&mut &bytes[..])
-        .map_err(|err| anyhow!("curve deserialization failed: {err}"))
+    tracing::trace!(
+        target: "ledger::store::event",
+        byte_len = bytes.len(),
+        tail = bytes.last().copied().unwrap_or_default(),
+        "deserializing curve point"
+    );
+    match C::deserialize_compressed(&mut &bytes[..]) {
+        Ok(curve) => Ok(curve),
+        Err(ark_serialize::SerializationError::UnexpectedFlags) => {
+            if let Some(normalized) = normalize_sw_compressed(bytes) {
+                match C::deserialize_compressed(&mut &normalized[..]) {
+                    Ok(curve) => {
+                        tracing::warn!(
+                            target: "ledger::store::event",
+                            "normalized unexpected short Weierstrass flags in compressed point"
+                        );
+                        Ok(curve)
+                    }
+                    Err(err) => Err(anyhow!(
+                        "curve deserialization failed after normalization: {err}"
+                    )),
+                }
+            } else {
+                tracing::error!(
+                    target: "ledger::store::event",
+                    byte_len = bytes.len(),
+                    tail = bytes.last().copied().unwrap_or_default(),
+                    "cannot normalize compressed point with unexpected flags"
+                );
+                Err(anyhow!(
+                    "curve deserialization failed: unexpected compression flags"
+                ))
+            }
+        }
+        Err(err) => Err(anyhow!("curve deserialization failed: {err}")),
+    }
+}
+
+fn normalize_sw_compressed(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut normalized = bytes.to_vec();
+    let last = normalized.last_mut().expect("vec not empty");
+    const SW_NEGATIVE: u8 = 1 << 7;
+    const SW_INFINITY: u8 = 1 << 6;
+    if (*last & (SW_NEGATIVE | SW_INFINITY)) == (SW_NEGATIVE | SW_INFINITY) {
+        *last &= !SW_INFINITY;
+        return Some(normalized);
+    }
+    None
 }
 
 fn vec_to_array<T, const N: usize>(vec: Vec<T>, label: &str) -> anyhow::Result<[T; N]> {
@@ -377,6 +479,35 @@ fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
             Ok(AnyActor::Shuffler { shuffler_id: id })
         }
         other => Err(anyhow!("unknown actor_kind value {}", other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ark_bn254::G1Projective as Curve;
+    use ark_ec::PrimeGroup;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
+
+    #[test]
+    fn deserialize_curve_handles_negative_infinity_flags() {
+        let point = -Curve::generator();
+        let mut bytes = Vec::new();
+        point
+            .into_affine()
+            .serialize_compressed(&mut bytes)
+            .expect("compress curve point");
+        assert_eq!(bytes.last().unwrap() & 0x80, 0x80);
+
+        let mut invalid = bytes.clone();
+        *invalid.last_mut().unwrap() |= 0x40;
+
+        let err = Curve::deserialize_compressed(&mut &invalid[..])
+            .expect_err("invalid flags should fail");
+        assert!(matches!(err, SerializationError::UnexpectedFlags));
+
+        let recovered = deserialize_curve::<Curve>(&invalid).expect("fallback normalizes flags");
+        assert_eq!(recovered.into_affine(), point.into_affine());
     }
 }
 

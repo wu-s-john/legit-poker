@@ -380,7 +380,7 @@ mod tests {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(),
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default()),
             )
             .with(filter)
             .set_default()

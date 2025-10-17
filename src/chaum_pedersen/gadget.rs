@@ -236,7 +236,7 @@ mod tests {
             .with_target(TEST_TARGET, tracing::Level::DEBUG);
 
         let _ = tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_test_writer())
+            .with(tracing_subscriber::fmt::layer())
             .with(filter)
             .try_init();
     }

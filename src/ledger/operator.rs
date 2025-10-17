@@ -14,7 +14,9 @@ use super::worker::WorkerError;
 use crate::curve_absorb::CurveAbsorb;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::error;
+use tracing::{error, info, instrument, Span};
+
+const LOG_TARGET: &str = "legit_poker::ledger::operator";
 
 /// Facade that wires together verifier, queue, worker, event store, and state.
 pub struct LedgerOperator<C>
@@ -69,16 +71,27 @@ where
     }
 
     /// Entry point for API submissions: verify and enqueue an action envelope.
+    #[instrument(
+        skip(self, envelope),
+        level = "info",
+        target = LOG_TARGET,
+        fields(hand_id = %hand_id, nonce = tracing::field::Empty)
+    )]
     pub async fn submit(
         &self,
         hand_id: HandId,
         envelope: AnyMessageEnvelope<C>,
     ) -> Result<(), VerifyError> {
+        let nonce = envelope.nonce;
+        Span::current().record("nonce", &nonce);
+        info!(target: LOG_TARGET, "verifying envelope");
         let verified = self.verifier.verify(hand_id, envelope)?;
-        self.sender
-            .send(verified)
-            .await
-            .map_err(|_| VerifyError::InvalidMessage)?;
+        info!(target: LOG_TARGET, "enqueueing verified envelope");
+        self.sender.send(verified).await.map_err(|_| {
+            error!(target: LOG_TARGET, "failed to enqueue verified envelope");
+            VerifyError::InvalidMessage
+        })?;
+        info!(target: LOG_TARGET, "enqueued verified envelope");
         Ok(())
     }
 

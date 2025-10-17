@@ -593,7 +593,7 @@ mod tests {
                 )
                 .with_target("player_test", tracing::Level::TRACE);
             tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().with_test_writer())
+                .with(tracing_subscriber::fmt::layer())
                 .with(filter)
                 .set_default()
         };

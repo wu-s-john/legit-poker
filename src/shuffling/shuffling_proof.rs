@@ -442,7 +442,7 @@ mod tests {
                     .with_file(true)
                     .with_timer(timer)
                     .with_line_number(true) // This ensures output goes to test stdout
-                    .with_test_writer(), // This ensures output goes to test stdout
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default()), // This ensures output goes to test stdout
             )
             .with(filter)
             .set_default()

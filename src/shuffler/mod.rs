@@ -435,39 +435,56 @@ where
             actor,
         );
 
-        if turn_index == 0 {
-            if let Err(err) = Self::emit_shuffle(
-                &api,
-                &params,
-                &secret,
-                &submit,
-                &runtime,
-                &public_key,
-                actor,
-            )
-            .await
-            {
-                warn!(
-                    target = LOG_TARGET,
-                    game_id,
-                    hand_id,
-                    shuffler_id = self.shuffler_id,
-                    error = %err,
-                    "initial shuffle emission failed; cancelling subscription"
-                );
-                cancel.cancel();
-                handle.abort();
-                self.states.remove(&key);
-                return Err(err);
-            }
-        }
-
         Ok(HandSubscription::new(
             key,
             Arc::clone(&self.states),
             cancel,
             handle,
         ))
+    }
+
+    pub async fn kick_start_hand(&self, game_id: GameId, hand_id: HandId) -> Result<()>
+    where
+        C::Config: CurveConfig<ScalarField = C::ScalarField>,
+        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
+        C::BaseField: PrimeField,
+        S::Signature: SignatureEncoder,
+    {
+        let key = (game_id, hand_id);
+        let runtime_arc = {
+            let entry = self
+                .states
+                .get(&key)
+                .ok_or_else(|| anyhow!("hand {} for game {} not registered", hand_id, game_id))?;
+            let runtime = Arc::clone(entry.value());
+            drop(entry);
+            runtime
+        };
+
+        {
+            let state = runtime_arc.state.lock();
+            if state.turn_index != 0 {
+                return Err(anyhow!(
+                    "shuffler {} cannot kick start hand {} turn index {}",
+                    self.shuffler_id,
+                    hand_id,
+                    state.turn_index
+                ));
+            }
+        }
+
+        Self::emit_shuffle(
+            &self.api,
+            &self.params,
+            &self.secret_key,
+            &self.submit,
+            &runtime_arc,
+            &self.public_key,
+            ShufflerActor {
+                shuffler_id: self.shuffler_id,
+            },
+        )
+        .await
     }
 
     fn spawn_hand_loop(

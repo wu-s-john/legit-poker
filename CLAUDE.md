@@ -38,6 +38,9 @@ RISC-V programs require the target:
 - `cargo bench --bench riscv_machine` - VM benchmarks (requires valgrind + iai-callgrind-runner)
 - Nova benchmarks in `nova-benches/`: `cd nova-benches && cargo bench`
 
+### Database Schema
+- `just dump-schema` - Print the current database schema (schema-only SQL) for this project using the Postgres client container
+
 ## High-Level Architecture
 
 ### Core Components

@@ -22,6 +22,12 @@ use crate::{
     signing::WithSignature,
 };
 
+use crate::db::entity::sea_orm_active_enums::HandStatus;
+use sea_orm::prelude::TimeDateTimeWithTimeZone;
+use sea_orm::JsonValue;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+
 type WsStream = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 const LOG_TARGET: &str = "game::coordinator::realtime";
@@ -165,6 +171,7 @@ where
                 msg = source.next() => {
                     match msg {
                         Some(Ok(Message::Text(txt))) => {
+                            info!(target = LOG_TARGET, %txt, "received realtime text message");
                             if let Err(err) = self.handle_text(&topic, &mut joined, txt).await {
                                 warn!(target = LOG_TARGET, error = %err, "failed to handle realtime message");
                             }
@@ -233,11 +240,20 @@ where
                 }
             }
             other => {
-                debug!(
-                    target = LOG_TARGET,
-                    event = other,
-                    "ignoring realtime event"
-                );
+                if other.eq_ignore_ascii_case("system") {
+                    debug!(
+                        target = LOG_TARGET,
+                        event = other,
+                        payload = ?message.payload,
+                        "received realtime system event"
+                    );
+                } else {
+                    debug!(
+                        target = LOG_TARGET,
+                        event = other,
+                        "ignoring realtime event"
+                    );
+                }
             }
         }
 
@@ -260,15 +276,30 @@ where
 
         let new_row = change
             .new
-            .ok_or_else(|| anyhow!("change payload missing `new` record"))?;
+            .ok_or_else(|| anyhow!("change payload missing `new`/`record` field"))?;
 
-        let model: events::Model =
-            serde_json::from_value(new_row).context("failed to deserialize events row")?;
+        let model = decode_event_row(new_row.clone())
+            .with_context(|| anyhow!("failed to deserialize events row: {new_row:?}"))?;
 
-        let envelope =
-            model_to_envelope::<C>(model).context("failed to convert row to envelope")?;
-        if let Some(shuffle) = into_shuffle_envelope(envelope)? {
-            let _ = self.tx.send(shuffle);
+        let envelope = model_to_envelope::<C>(model).map_err(|err| {
+            tracing::error!(
+                target = LOG_TARGET,
+                error = %err,
+                debug_error = ?err,
+                "failed to convert realtime row into envelope"
+            );
+            err.context("failed to convert row to envelope")
+        })?;
+        match into_shuffle_envelope(envelope)? {
+            Some(shuffle) => {
+                let _ = self.tx.send(shuffle);
+            }
+            None => {
+                debug!(
+                    target = LOG_TARGET,
+                    "filtered envelope from realtime change"
+                );
+            }
         }
 
         Ok(())
@@ -289,6 +320,7 @@ where
             access_token: &self.cfg.api_key,
             user_token: &self.cfg.api_key,
             config: JoinConfig {
+                broadcast: broadcast_defaults(),
                 postgres_changes: [PostgresChange {
                     event: self.cfg.event.as_str(),
                     schema: self.cfg.schema.as_str(),
@@ -354,8 +386,24 @@ struct JoinPayload<'a> {
 
 #[derive(serde::Serialize)]
 struct JoinConfig<'a> {
+    #[serde(default = "broadcast_defaults")]
+    broadcast: BroadcastConfig,
     #[serde(rename = "postgres_changes")]
     postgres_changes: [PostgresChange<'a>; 1],
+}
+
+fn broadcast_defaults() -> BroadcastConfig {
+    BroadcastConfig {
+        ack: false,
+        self_notify: false,
+    }
+}
+
+#[derive(serde::Serialize)]
+struct BroadcastConfig {
+    ack: bool,
+    #[serde(rename = "self")]
+    self_notify: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -390,14 +438,126 @@ struct Change<T> {
     _commit_timestamp: String,
     #[serde(rename = "eventType", alias = "type")]
     event_type: String,
+    #[serde(default, rename = "new", alias = "record")]
     new: Option<T>,
-    #[serde(default)]
+    #[serde(default, rename = "old", alias = "old_record")]
     _old: Option<T>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 struct ReplyPayload {
     status: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawEventRow {
+    id: i64,
+    hand_id: i64,
+    entity_kind: i16,
+    entity_id: i64,
+    actor_kind: i16,
+    seat_id: Option<i16>,
+    shuffler_id: Option<i16>,
+    public_key: String,
+    nonce: i64,
+    phase: String,
+    message_type: String,
+    payload: JsonValue,
+    signature: String,
+    inserted_at: String,
+}
+
+fn parse_bytea(input: &str) -> Result<Vec<u8>> {
+    let trimmed = input
+        .strip_prefix("\\x")
+        .or_else(|| input.strip_prefix("\\\\x"))
+        .unwrap_or(input);
+    let bytes =
+        hex::decode(trimmed).with_context(|| anyhow!("failed to decode bytea value: {input}"))?;
+    Ok(bytes)
+}
+
+fn decode_event_row(value: Value) -> Result<events::Model> {
+    let raw: RawEventRow =
+        serde_json::from_value(value).context("failed to parse change row fields")?;
+
+    let public_key = parse_bytea(&raw.public_key)?;
+    let signature = parse_bytea(&raw.signature)?;
+
+    let phase = parse_hand_status(&raw.phase)?;
+
+    let inserted_at: TimeDateTimeWithTimeZone =
+        OffsetDateTime::parse(&raw.inserted_at, &Rfc3339)
+            .with_context(|| anyhow!("invalid timestamp {}", raw.inserted_at))?;
+
+    Ok(events::Model {
+        id: raw.id,
+        hand_id: raw.hand_id,
+        entity_kind: raw.entity_kind,
+        entity_id: raw.entity_id,
+        actor_kind: raw.actor_kind,
+        seat_id: raw.seat_id,
+        shuffler_id: raw.shuffler_id,
+        public_key,
+        nonce: raw.nonce,
+        phase,
+        message_type: raw.message_type,
+        payload: raw.payload,
+        signature,
+        inserted_at,
+    })
+}
+
+fn parse_hand_status(value: &str) -> Result<HandStatus> {
+    match value {
+        "pending" => Ok(HandStatus::Pending),
+        "shuffling" => Ok(HandStatus::Shuffling),
+        "dealing" => Ok(HandStatus::Dealing),
+        "betting" => Ok(HandStatus::Betting),
+        "showdown" => Ok(HandStatus::Showdown),
+        "complete" => Ok(HandStatus::Complete),
+        "cancelled" => Ok(HandStatus::Cancelled),
+        other => Err(anyhow!("invalid phase {}", other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn decode_event_row_decodes_hex_bytea() {
+        let raw = json!({
+            "id": 1,
+            "hand_id": 7,
+            "entity_kind": 2,
+            "entity_id": 3,
+            "actor_kind": 4,
+            "seat_id": null,
+            "shuffler_id": 5,
+            "public_key": "\\x010203",
+            "nonce": 42,
+            "phase": "shuffling",
+            "message_type": "shuffle",
+            "payload": {"foo": "bar"},
+            "signature": "\\x0a0b0c",
+            "inserted_at": "2025-10-17T00:00:00Z"
+        });
+
+        let model = decode_event_row(raw).expect("decode succeeds");
+        assert_eq!(model.id, 1);
+        assert_eq!(model.hand_id, 7);
+        assert_eq!(model.public_key, vec![1, 2, 3]);
+        assert_eq!(model.signature, vec![10, 11, 12]);
+        assert_eq!(model.phase, HandStatus::Shuffling);
+        assert_eq!(model.message_type, "shuffle");
+        assert_eq!(model.payload, json!({"foo": "bar"}));
+        assert_eq!(
+            model.inserted_at.format(&Rfc3339).unwrap(),
+            "2025-10-17T00:00:00Z"
+        );
+    }
 }
 
 fn into_shuffle_envelope<C>(

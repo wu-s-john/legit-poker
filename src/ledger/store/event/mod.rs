@@ -11,6 +11,7 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 use serde_json::Value as JsonValue;
+use tracing::{debug, Level};
 
 use crate::db::entity::events;
 use crate::ledger::messages::AnyMessageEnvelope;
@@ -23,6 +24,8 @@ use self::serialization::{
 };
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
+
+const LOG_TARGET: &str = "legit_poker::ledger::event_store";
 
 #[async_trait]
 pub trait EventStore<C>: Send + Sync
@@ -69,10 +72,20 @@ where
 {
     async fn persist_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<()> {
         let stored = StoredGameMessage::from_any(&event.message.value)?;
-        let payload = serde_json::to_value(StoredEnvelopePayload {
+        let payload_value = serde_json::to_value(StoredEnvelopePayload {
             game_id: event.game_id,
             message: stored.clone(),
         })?;
+        if tracing::enabled!(Level::DEBUG) {
+            let payload_json = serde_json::to_string_pretty(&payload_value)?;
+            debug!(
+                target: LOG_TARGET,
+                hand_id = event.hand_id,
+                nonce = event.nonce,
+                %payload_json,
+                "persisting event payload"
+            );
+        }
 
         let actor_cols = encode_actor(&event.actor)?;
         let public_key = serialize_curve(&event.public_key)?;
@@ -90,7 +103,7 @@ where
             nonce: Set(nonce),
             phase: Set(to_db_hand_status(event.message.value.phase())),
             message_type: Set(stored.message_type().to_string()),
-            payload: Set(JsonValue::from(payload)),
+            payload: Set(JsonValue::from(payload_value.clone())),
             signature: Set(event.message.signature.clone()),
             ..Default::default()
         };
@@ -109,10 +122,20 @@ where
         event: &AnyMessageEnvelope<C>,
     ) -> anyhow::Result<()> {
         let stored = StoredGameMessage::from_any(&event.message.value)?;
-        let payload = serde_json::to_value(StoredEnvelopePayload {
+        let payload_value = serde_json::to_value(StoredEnvelopePayload {
             game_id: event.game_id,
             message: stored.clone(),
         })?;
+        if tracing::enabled!(Level::DEBUG) {
+            let payload_json = serde_json::to_string_pretty(&payload_value)?;
+            debug!(
+                target: LOG_TARGET,
+                hand_id = event.hand_id,
+                nonce = event.nonce,
+                %payload_json,
+                "persisting event payload (txn)"
+            );
+        }
 
         let actor_cols = encode_actor(&event.actor)?;
         let public_key = serialize_curve(&event.public_key)?;
@@ -130,7 +153,7 @@ where
             nonce: Set(nonce),
             phase: Set(to_db_hand_status(event.message.value.phase())),
             message_type: Set(stored.message_type().to_string()),
-            payload: Set(JsonValue::from(payload)),
+            payload: Set(JsonValue::from(payload_value.clone())),
             signature: Set(event.message.signature.clone()),
             ..Default::default()
         };

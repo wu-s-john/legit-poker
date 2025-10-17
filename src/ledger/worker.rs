@@ -578,7 +578,6 @@ mod tests {
         let _ = worker;
     }
 
-    #[ignore]
     #[tokio::test]
     async fn persist_before_apply() {
         let _guard = setup_test_tracing();
@@ -643,7 +642,6 @@ mod tests {
         assert_eq!(state.tip_hash(hand_id), before_tip);
     }
 
-    #[ignore]
     #[tokio::test]
     async fn run_loop_drains_queue() {
         let _guard = setup_test_tracing();
@@ -721,7 +719,7 @@ mod tests {
                     .with_file(true)
                     .with_line_number(true)
                     .with_timer(timer)
-                    .with_test_writer(),
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default()),
             )
             .with(filter)
             .set_default()

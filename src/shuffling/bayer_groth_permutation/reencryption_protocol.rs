@@ -510,7 +510,7 @@ mod tests {
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
-                    .with_test_writer(), // This ensures output goes to test stdout
+                    .with_writer(tracing_subscriber::fmt::TestWriter::default()), // This ensures output goes to test stdout
             )
             .with(filter)
             .set_default()
@@ -1098,7 +1098,7 @@ mod tests {
     fn test_proof_generation_and_verification() {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
-            .with_test_writer()
+            .with_writer(tracing_subscriber::fmt::TestWriter::default())
             .try_init();
 
         const N: usize = 4;
@@ -1194,7 +1194,7 @@ mod tests {
     fn test_simple_permutation_no_rerand() {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
-            .with_test_writer()
+            .with_writer(tracing_subscriber::fmt::TestWriter::default())
             .try_init();
 
         const N: usize = 4;
@@ -1390,7 +1390,7 @@ mod tests {
     fn test_simple_permutation_with_constant_rerand() {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
-            .with_test_writer()
+            .with_writer(tracing_subscriber::fmt::TestWriter::default())
             .try_init();
 
         const N: usize = 4;
@@ -1555,7 +1555,7 @@ mod tests {
     fn test_simple_permutation_with_varying_rerand() {
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
-            .with_test_writer()
+            .with_writer(tracing_subscriber::fmt::TestWriter::default())
             .try_init();
 
         const N: usize = 4;

@@ -161,6 +161,61 @@ db-clean:
     echo "Clearing public.test table via SeaORM DSL..."
     RUST_LOG=db=info cargo run --bin db_clean
 
+# Truncate ledger tables to ensure a clean demo run
+reset-ledger:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v psql >/dev/null 2>&1; then
+        echo "psql not found. Install Postgres client tools." >&2
+        exit 1
+    fi
+    echo "Truncating ledger tables on {{ DATABASE_URL }}"
+    psql "{{ DATABASE_URL }}" <<'SQL'
+        TRUNCATE TABLE
+            public.table_snapshots,
+            public.phases,
+            public.hand_player,
+            public.hand_configs,
+            public.events,
+            public.hand_shufflers,
+            public.hands
+        RESTART IDENTITY CASCADE;
+    SQL
+    echo "Ledger tables truncated."
+
+# Dump schema-only SQL to stdout using a Postgres 17 client container
+dump-schema:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "docker not found. Install Docker Desktop or adjust the dump command." >&2
+        exit 1
+    fi
+    # Resolve DATABASE_URL components
+    URL="{{ DATABASE_URL }}"
+    URL="${URL#postgresql://}"
+    URL="${URL#postgres://}"
+    CREDS="${URL%%@*}"
+    HOSTPORT_DB="${URL#*@}"
+    HOSTPORT="${HOSTPORT_DB%%/*}"
+    DBNAME="${HOSTPORT_DB#*/}"
+    USER="${CREDS%%:*}"
+    PASS="${CREDS#*:}"
+    HOST="${HOSTPORT%%:*}"
+    PORT="${HOSTPORT##*:}"
+    if [[ "${HOSTPORT}" == "${HOST}" ]]; then
+        PORT=5432
+    fi
+    case "${HOST}" in
+        127.0.0.1|localhost) HOST_INSIDE="host.docker.internal" ;;
+        *) HOST_INSIDE="${HOST}" ;;
+    esac
+    docker run --rm \
+        -e PGPASSWORD="${PASS}" \
+        postgres:17 \
+        pg_dump -h "${HOST_INSIDE}" -p "${PORT}" -U "${USER}" -d "${DBNAME}" \
+        --schema-only --no-owner
+
 # Wait for Postgres to accept connections on DATABASE_URL (timeout seconds)
 wait-db TIMEOUT='30':
     #!/usr/bin/env bash
