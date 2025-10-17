@@ -472,9 +472,42 @@ fn parse_bytea(input: &str) -> Result<Vec<u8>> {
         .strip_prefix("\\x")
         .or_else(|| input.strip_prefix("\\\\x"))
         .unwrap_or(input);
-    let bytes =
+    let mut bytes =
         hex::decode(trimmed).with_context(|| anyhow!("failed to decode bytea value: {input}"))?;
+    if looks_like_ascii_hex(&bytes) {
+        if let Ok(ascii) = std::str::from_utf8(&bytes) {
+            match hex::decode(ascii) {
+                Ok(decoded) => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        original_len = bytes.len(),
+                        "bytea payload contained nested hex, normalizing"
+                    );
+                    bytes = decoded;
+                }
+                Err(err) => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        error = %err,
+                        "failed to normalize nested hex bytea payload; leaving as-is"
+                    );
+                }
+            }
+        }
+    }
     Ok(bytes)
+}
+
+fn looks_like_ascii_hex(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return false;
+    }
+    bytes.iter().all(|byte| {
+        matches!(
+            byte,
+            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F'
+        )
+    })
 }
 
 fn decode_event_row(value: Value) -> Result<events::Model> {
@@ -525,6 +558,16 @@ fn parse_hand_status(value: &str) -> Result<HandStatus> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn parse_bytea_handles_nested_hex() {
+        let raw = "\\x35313166363666626532326530623265323864636535666466333734646261323265633564343864343264316366643732336639636564383662666563313864";
+        let decoded = parse_bytea(raw).expect("decode succeeds");
+        assert_eq!(
+            hex::encode(decoded),
+            "511f66fbe22e0b2e28dce5fdf374dba22ec5d48d42d1cfd723f9ced86bfec18d"
+        );
+    }
 
     #[test]
     fn decode_event_row_decodes_hex_bytea() {
