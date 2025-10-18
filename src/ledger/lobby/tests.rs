@@ -809,6 +809,7 @@ async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<Test
         Arc::clone(&event_store),
         Arc::clone(&snapshot_store),
         Arc::clone(&state),
+        None,
     );
     let operator = LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
     if let Err(err) = operator.start(worker).await {

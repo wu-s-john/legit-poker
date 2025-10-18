@@ -231,6 +231,7 @@ mod tests {
             Arc::clone(&event_store_trait),
             Arc::clone(&snapshot_store),
             Arc::clone(&state),
+            None,
         );
         let handle = operator.start(worker).await.unwrap();
         handle.abort();

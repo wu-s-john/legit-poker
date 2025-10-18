@@ -20,12 +20,23 @@ use crate::ledger::types::HandId;
 pub use self::serialization::model_to_envelope;
 
 use self::serialization::{
-    encode_actor, serialize_curve, to_db_hand_status, StoredEnvelopePayload, StoredGameMessage,
+    encode_actor, to_db_hand_status, StoredEnvelopePayload, StoredGameMessage,
 };
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
 
 const LOG_TARGET: &str = "legit_poker::ledger::event_store";
+
+pub fn serialize_curve<C>(value: &C) -> anyhow::Result<Vec<u8>>
+where
+    C: CanonicalSerialize,
+{
+    let mut buf = Vec::new();
+    value
+        .serialize_compressed(&mut buf)
+        .map_err(|err| anyhow!("curve serialization failed: {err}"))?;
+    Ok(buf)
+}
 
 #[async_trait]
 pub trait EventStore<C>: Send + Sync

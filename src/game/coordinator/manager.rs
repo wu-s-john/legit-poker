@@ -11,10 +11,12 @@ use dashmap::DashMap;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use serde::Deserialize;
 use tokio::{
+    signal,
     sync::{broadcast, mpsc},
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 
 use crate::{
     curve_absorb::CurveAbsorb,
@@ -107,6 +109,8 @@ where
         .collect()
 }
 
+const LOG_TARGET: &str = "game::coordinator";
+
 pub struct GameCoordinator<C>
 where
     C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
@@ -163,6 +167,7 @@ where
             Arc::clone(&config.event_store),
             Arc::clone(&config.snapshot_store),
             Arc::clone(&config.state),
+            None,
         );
         let worker_handle = Some(operator.start(worker).await?);
 
@@ -272,6 +277,28 @@ where
             for sub in subs {
                 sub.cancel();
             }
+        }
+    }
+
+    /// Waits for a Ctrl+C signal and then gracefully shuts down the coordinator.
+    pub async fn shutdown_on_ctrl_c(self) -> Result<()> {
+        let ctrl_c_result = signal::ctrl_c().await;
+        match &ctrl_c_result {
+            Ok(()) => info!(
+                target = LOG_TARGET,
+                "Ctrl+C received; initiating coordinator shutdown"
+            ),
+            Err(err) => warn!(
+                target = LOG_TARGET,
+                error = ?err,
+                "failed to listen for Ctrl+C; shutting down coordinator anyway"
+            ),
+        }
+
+        let shutdown_result = self.shutdown().await;
+        match shutdown_result {
+            Ok(()) => ctrl_c_result.map_err(|err| anyhow!("failed to listen for ctrl+c: {err}")),
+            Err(err) => Err(err),
         }
     }
 

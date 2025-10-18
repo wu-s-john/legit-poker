@@ -6,6 +6,7 @@ use ark_ff::PrimeField;
 use thiserror::Error;
 
 use super::messages::AnyMessageEnvelope;
+use super::shuffler_signals::ShufflerDealSignalDispatcher;
 use super::state::LedgerState;
 use super::store::{EventStore, SnapshotStore};
 use crate::curve_absorb::CurveAbsorb;
@@ -28,6 +29,7 @@ where
     event_store: Arc<dyn EventStore<C>>,
     snapshot_store: Arc<dyn SnapshotStore<C>>,
     state: Arc<LedgerState<C>>,
+    signal_dispatcher: Option<Arc<ShufflerDealSignalDispatcher<C>>>,
     _marker: std::marker::PhantomData<C>,
 }
 
@@ -43,12 +45,14 @@ where
         event_store: Arc<dyn EventStore<C>>,
         snapshot_store: Arc<dyn SnapshotStore<C>>,
         state: Arc<LedgerState<C>>,
+        signal_dispatcher: Option<Arc<ShufflerDealSignalDispatcher<C>>>,
     ) -> Self {
         Self {
             receiver,
             event_store,
             snapshot_store,
             state,
+            signal_dispatcher,
             _marker: std::marker::PhantomData,
         }
     }
@@ -191,6 +195,18 @@ where
                         "failed to commit transaction"
                     );
                     return Err(WorkerError::Database);
+                }
+
+                if let Some(dispatcher) = &self.signal_dispatcher {
+                    if let Err(err) = dispatcher.observe_snapshot(&snapshot).await {
+                        warn!(
+                            target: LOG_TARGET,
+                            error = ?err,
+                            hand_id,
+                            nonce,
+                            "failed to dispatch shuffler signals"
+                        );
+                    }
                 }
 
                 info!(
@@ -573,6 +589,7 @@ mod tests {
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
+            None,
         );
         assert!(state.hands().is_empty());
         let _ = worker;
@@ -595,6 +612,7 @@ mod tests {
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
+            None,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -628,6 +646,7 @@ mod tests {
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
+            None,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -660,6 +679,7 @@ mod tests {
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
+            None,
         );
         let runner = tokio::spawn(async move { worker.run().await.unwrap() });
 

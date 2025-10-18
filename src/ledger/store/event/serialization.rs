@@ -277,17 +277,6 @@ pub(super) fn encode_actor(actor: &AnyActor) -> anyhow::Result<ActorColumns> {
     }
 }
 
-pub(super) fn serialize_curve<C>(value: &C) -> anyhow::Result<Vec<u8>>
-where
-    C: CanonicalSerialize,
-{
-    let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .map_err(|err| anyhow!("curve serialization failed: {err}"))?;
-    Ok(buf)
-}
-
 pub(super) fn to_db_hand_status(status: HandStatus) -> db_enums::HandStatus {
     match status {
         HandStatus::Pending => db_enums::HandStatus::Pending,
