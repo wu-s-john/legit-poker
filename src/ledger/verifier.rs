@@ -475,7 +475,10 @@ fn validate_blinding<C: CurveGroup>(
         .copied()
         .flatten()
         .ok_or(VerifyError::InvalidMessage)?;
-    let _player_identity = players.get(&player_id).ok_or(VerifyError::InvalidMessage)?;
+    let player_identity = players.get(&player_id).ok_or(VerifyError::InvalidMessage)?;
+    if player_identity.public_key != message.target_player_public_key {
+        return Err(VerifyError::InvalidMessage);
+    }
     let _shuffler_identity = shufflers
         .get(&actor.shuffler_id)
         .ok_or(VerifyError::InvalidMessage)?;
@@ -501,6 +504,18 @@ fn validate_partial_unblinding<C: CurveGroup>(
         _ => return Err(VerifyError::InvalidMessage),
     };
     if seating.get(&seat).copied().flatten().is_none() {
+        return Err(VerifyError::InvalidMessage);
+    }
+    let player_id = seating
+        .get(&seat)
+        .copied()
+        .flatten()
+        .ok_or(VerifyError::InvalidMessage)?;
+    let player_identity = table
+        .players
+        .get(&player_id)
+        .ok_or(VerifyError::InvalidMessage)?;
+    if player_identity.public_key != message.target_player_public_key {
         return Err(VerifyError::InvalidMessage);
     }
     if let Some(existing) = table
@@ -1000,9 +1015,16 @@ mod tests {
         }
 
         fn blinding_envelope(&self) -> AnyMessageEnvelope<Curve> {
+            let target_player_public_key = self
+                .players
+                .get(&PLAYER_ID)
+                .expect("player identity")
+                .public_key
+                .clone();
             let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                 0,
                 dummy_blinding_share(),
+                target_player_public_key,
             ));
             build_envelope(
                 HAND_ID,
@@ -1028,6 +1050,11 @@ mod tests {
                         share: Curve::zero(),
                         member_index,
                     },
+                    self.players
+                        .get(&PLAYER_ID)
+                        .expect("player identity")
+                        .public_key
+                        .clone(),
                 ));
             build_envelope(
                 HAND_ID,

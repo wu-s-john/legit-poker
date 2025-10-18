@@ -39,10 +39,12 @@ pub(super) enum StoredGameMessage {
     Blinding {
         card_in_deck_position: u8,
         share: String,
+        target_player_public_key: String,
     },
     PartialUnblinding {
         card_in_deck_position: u8,
         share: String,
+        target_player_public_key: String,
     },
     PlayerPreflop {
         action: PlayerBetAction,
@@ -91,10 +93,12 @@ impl StoredGameMessage {
             AnyGameMessage::Blinding(inner) => Ok(StoredGameMessage::Blinding {
                 card_in_deck_position: inner.card_in_deck_position,
                 share: encode_hex(&inner.share)?,
+                target_player_public_key: encode_hex(&inner.target_player_public_key)?,
             }),
             AnyGameMessage::PartialUnblinding(inner) => Ok(StoredGameMessage::PartialUnblinding {
                 card_in_deck_position: inner.card_in_deck_position,
                 share: encode_hex(&inner.share)?,
+                target_player_public_key: encode_hex(&inner.target_player_public_key)?,
             }),
             AnyGameMessage::PlayerPreflop(inner) => Ok(StoredGameMessage::PlayerPreflop {
                 action: inner.action.clone(),
@@ -137,21 +141,27 @@ impl StoredGameMessage {
             StoredGameMessage::Blinding {
                 card_in_deck_position,
                 share,
+                target_player_public_key,
             } => {
                 let share = decode_hex::<PlayerTargetedBlindingContribution<C>>(&share)?;
+                let target_player_public_key = decode_hex::<C>(&target_player_public_key)?;
                 AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                     card_in_deck_position,
                     share,
+                    target_player_public_key,
                 ))
             }
             StoredGameMessage::PartialUnblinding {
                 card_in_deck_position,
                 share,
+                target_player_public_key,
             } => {
                 let share = decode_hex::<PartialUnblindingShare<C>>(&share)?;
+                let target_player_public_key = decode_hex::<C>(&target_player_public_key)?;
                 AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
                     card_in_deck_position,
                     share,
+                    target_player_public_key,
                 ))
             }
             StoredGameMessage::PlayerPreflop { action } => {

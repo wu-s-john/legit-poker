@@ -11,7 +11,8 @@ use crate::ledger::actor::AnyActor;
 use crate::ledger::{GameActor, GameId, HandId, PlayerActor, ShufflerActor};
 use crate::player::signing::append_player_bet_action;
 use crate::shuffling::data_structures::{
-    append_ciphertext, append_shuffle_proof, ElGamalCiphertext, ShuffleProof, DECK_SIZE,
+    append_ciphertext, append_curve_point, append_shuffle_proof, ElGamalCiphertext, ShuffleProof,
+    DECK_SIZE,
 };
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
@@ -178,6 +179,7 @@ where
 {
     pub card_in_deck_position: u8,
     pub share: PlayerTargetedBlindingContribution<C>,
+    pub target_player_public_key: C,
     pub _curve: PhantomData<C>,
 }
 
@@ -191,6 +193,7 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
+        append_curve_point(builder, &self.target_player_public_key);
         self.share.write_transcript(builder);
     }
 }
@@ -200,10 +203,15 @@ where
     C: CurveGroup,
 {
     #[inline]
-    pub fn new(card_in_deck_position: u8, share: PlayerTargetedBlindingContribution<C>) -> Self {
+    pub fn new(
+        card_in_deck_position: u8,
+        share: PlayerTargetedBlindingContribution<C>,
+        target_player_public_key: C,
+    ) -> Self {
         Self {
             card_in_deck_position,
             share,
+            target_player_public_key,
             _curve: PhantomData,
         }
     }
@@ -216,6 +224,7 @@ where
 {
     pub card_in_deck_position: u8,
     pub share: PartialUnblindingShare<C>,
+    pub target_player_public_key: C,
     pub _curve: PhantomData<C>,
 }
 
@@ -229,6 +238,7 @@ where
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.card_in_deck_position);
+        append_curve_point(builder, &self.target_player_public_key);
         self.share.write_transcript(builder);
     }
 }
@@ -238,10 +248,15 @@ where
     C: CurveGroup,
 {
     #[inline]
-    pub fn new(card_in_deck_position: u8, share: PartialUnblindingShare<C>) -> Self {
+    pub fn new(
+        card_in_deck_position: u8,
+        share: PartialUnblindingShare<C>,
+        target_player_public_key: C,
+    ) -> Self {
         Self {
             card_in_deck_position,
             share,
+            target_player_public_key,
             _curve: PhantomData,
         }
     }
@@ -559,10 +574,12 @@ mod tests {
             AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                 7,
                 sample_blinding_contribution(),
+                sample_public_key(),
             )),
             AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
                 13,
                 sample_partial_unblinding_share(),
+                sample_public_key(),
             )),
             AnyGameMessage::PlayerPreflop(
                 GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(PlayerBetAction::Call),
@@ -622,11 +639,13 @@ mod tests {
         sign_and_verify(GameBlindingDecryptionMessage::<GrumpkinProjective>::new(
             1,
             sample_blinding_contribution(),
+            sample_public_key(),
         ))?;
         sign_and_verify(
             GamePartialUnblindingShareMessage::<GrumpkinProjective>::new(
                 2,
                 sample_partial_unblinding_share(),
+                sample_public_key(),
             ),
         )?;
         sign_and_verify(GameShowdownMessage::<GrumpkinProjective>::new(
@@ -695,5 +714,9 @@ mod tests {
             player_unblinding_helper: C::zero(),
             shuffler_proofs: Vec::new(),
         }
+    }
+
+    fn sample_public_key<C: CurveGroup>() -> C {
+        C::generator()
     }
 }

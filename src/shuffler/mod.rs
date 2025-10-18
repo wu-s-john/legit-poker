@@ -931,10 +931,15 @@ where
 
         let (blinding_envelope, unblinding_envelope) = {
             let mut state = runtime.state.lock();
+            let player_public_key = request.player_public_key.clone();
             let contribution = api
-                .provide_blinding_player_decryption_share(request.player_public_key, &mut state.rng)
+                .provide_blinding_player_decryption_share(player_public_key.clone(), &mut state.rng)
                 .map_err(|err| anyhow!("failed to compute blinding contribution: {err}"))?;
-            let blinding_msg = GameBlindingDecryptionMessage::new(request.deal_index, contribution);
+            let blinding_msg = GameBlindingDecryptionMessage::new(
+                request.deal_index,
+                contribution,
+                player_public_key.clone(),
+            );
             let blinding_envelope = Self::sign_blinding_envelope(
                 &mut state,
                 runtime,
@@ -948,8 +953,11 @@ where
             let partial_share = api
                 .provide_unblinding_decryption_share(&request.ciphertext)
                 .map_err(|err| anyhow!("failed to compute partial unblinding share: {err}"))?;
-            let unblinding_msg =
-                GamePartialUnblindingShareMessage::new(request.deal_index, partial_share);
+            let unblinding_msg = GamePartialUnblindingShareMessage::new(
+                request.deal_index,
+                partial_share,
+                player_public_key,
+            );
             let unblinding_envelope = Self::sign_partial_unblinding_envelope(
                 &mut state,
                 runtime,

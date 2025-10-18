@@ -2,3 +2,4 @@
 .env
 prisma/.env
 demo_conversation.log
+.DS_store

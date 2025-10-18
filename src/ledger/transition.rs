@@ -245,6 +245,13 @@ where
             .get(&player_id)
             .context("player identity not found")?;
 
+        let target_player_public_key = envelope.message.value.target_player_public_key.clone();
+
+        ensure!(
+            player_identity.public_key == target_player_public_key,
+            "blinding contribution targets unexpected player key"
+        );
+
         let aggregated_key = shuffler.aggregated_public_key.clone();
 
         ensure!(
@@ -252,7 +259,7 @@ where
                 .message
                 .value
                 .share
-                .verify(aggregated_key, player_identity.public_key),
+                .verify(aggregated_key.clone(), target_player_public_key.clone()),
             "invalid blinding contribution proof"
         );
 
@@ -287,7 +294,7 @@ where
                     &deck_cipher,
                     &ready_contribs,
                     aggregated_key,
-                    player_identity.public_key,
+                    target_player_public_key,
                 )
                 .map_err(|err| anyhow!(err))?;
 
@@ -386,6 +393,24 @@ where
             CardDestination::Hole { seat, hole_index } => (*seat, *hole_index),
             other => bail!("partial unblinding share targets non-hole card: {other:?}"),
         };
+
+        let player_id = snapshot
+            .seating
+            .get(&seat)
+            .and_then(|id| *id)
+            .context("seat has no player assigned")?;
+
+        let player_identity = snapshot
+            .players
+            .get(&player_id)
+            .context("player identity not found")?;
+
+        let target_player_public_key = envelope.message.value.target_player_public_key.clone();
+
+        ensure!(
+            player_identity.public_key == target_player_public_key,
+            "partial unblinding share targets unexpected player key"
+        );
 
         let entry = snapshot
             .dealing
@@ -1482,8 +1507,9 @@ mod tests {
         snapshot.dealing.player_unblinding_combined.clear();
 
         let card_pos = card_position_for(&snapshot, seat, 0);
-        let share = generate_blinding_contribution(&ctx, 10, player_pk, 0);
-        let message = GameBlindingDecryptionMessage::new(card_pos, share.clone());
+        let share = generate_blinding_contribution(&ctx, 10, player_pk.clone(), 0);
+        let message =
+            GameBlindingDecryptionMessage::new(card_pos, share.clone(), player_pk.clone());
         let envelope = build_blinding_envelope(&ctx, 10, message);
 
         let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
@@ -1546,10 +1572,11 @@ mod tests {
                 let share = generate_blinding_contribution(
                     &ctx,
                     *shuffler_id,
-                    player_pk,
+                    player_pk.clone(),
                     (hole_index as u64) * 10 + order as u64,
                 );
-                let message = GameBlindingDecryptionMessage::new(card_pos, share);
+                let message =
+                    GameBlindingDecryptionMessage::new(card_pos, share, player_pk.clone());
                 let envelope = build_blinding_envelope(&ctx, *shuffler_id, message);
                 let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
                     dealing_snapshot,
