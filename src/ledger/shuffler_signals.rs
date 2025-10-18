@@ -223,9 +223,7 @@ where
             if should_mark_phase_started {
                 state_entry.dealing_started_emitted = true;
             }
-            state_entry
-                .announced_cards
-                .extend(new_indices.into_iter());
+            state_entry.announced_cards.extend(new_indices.into_iter());
             state_entry.last_snapshot_seq = table.sequence;
         }
 
@@ -399,8 +397,8 @@ mod tests {
         fixture_dealing_snapshot, fixture_preflop_snapshot, fixture_shuffling_snapshot,
         FixtureContext,
     };
-    use ark_bn254::G1Projective as Curve;
     use anyhow::anyhow;
+    use ark_bn254::G1Projective as Curve;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::Mutex;
 
@@ -459,11 +457,10 @@ mod tests {
             _shufflers: &[ShufflerId],
             signal: &DealingPhaseStarted<C>,
         ) -> Result<()> {
-            if self
-                .fail_next_dealing_started
-                .swap(false, Ordering::SeqCst)
-            {
-                return Err(anyhow!("synthetic failure while broadcasting dealing start"));
+            if self.fail_next_dealing_started.swap(false, Ordering::SeqCst) {
+                return Err(anyhow!(
+                    "synthetic failure while broadcasting dealing start"
+                ));
             }
             self.dealing_started.lock().await.push(signal.clone());
             Ok(())

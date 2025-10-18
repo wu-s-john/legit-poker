@@ -20,7 +20,7 @@ use crate::ledger::types::HandId;
 pub use self::serialization::model_to_envelope;
 
 use self::serialization::{
-    encode_actor, to_db_hand_status, StoredEnvelopePayload, StoredGameMessage,
+    encode_actor, to_db_event_phase, StoredEnvelopePayload, StoredGameMessage,
 };
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
@@ -112,7 +112,7 @@ where
             shuffler_id: Set(actor_cols.shuffler_id),
             public_key: Set(public_key),
             nonce: Set(nonce),
-            phase: Set(to_db_hand_status(event.message.value.phase())),
+            phase: Set(to_db_event_phase(event.message.value.phase())),
             message_type: Set(stored.message_type().to_string()),
             payload: Set(JsonValue::from(payload_value.clone())),
             signature: Set(event.message.signature.clone()),
@@ -162,7 +162,7 @@ where
             shuffler_id: Set(actor_cols.shuffler_id),
             public_key: Set(public_key),
             nonce: Set(nonce),
-            phase: Set(to_db_hand_status(event.message.value.phase())),
+            phase: Set(to_db_event_phase(event.message.value.phase())),
             message_type: Set(stored.message_type().to_string()),
             payload: Set(JsonValue::from(payload_value.clone())),
             signature: Set(event.message.signature.clone()),

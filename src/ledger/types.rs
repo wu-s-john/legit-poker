@@ -22,6 +22,18 @@ pub enum HandStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum EventPhase {
+    Pending,
+    Shuffling,
+    Dealing,
+    Betting,
+    Reveals,
+    Showdown,
+    Complete,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct NonceKey {
     pub hand_id: HandId,
     pub entity_kind: EntityKind,

@@ -7,6 +7,7 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::CanonicalSerialize;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use serde::Deserialize;
@@ -18,11 +19,17 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+const DEAL_CHANNEL_CAPACITY: usize = 2048;
+
 use crate::{
     curve_absorb::CurveAbsorb,
     game::coordinator::realtime::{SupabaseRealtimeClient, SupabaseRealtimeClientConfig},
     ledger::{
         messages::{AnyMessageEnvelope, EnvelopedMessage, GameShuffleMessage},
+        shuffler_signals::{
+            DealShufflerRequest, DealingPhaseStarted, ShufflerDealSignalDispatcher,
+            ShufflerSignalRouter,
+        },
         store::{EventStore, SnapshotStore},
         types::{GameId, HandId, ShufflerId},
         verifier::Verifier,
@@ -37,6 +44,121 @@ use crate::{
 pub struct ShufflerSecretConfig<C: CurveGroup> {
     pub id: ShufflerId,
     pub secret: C::ScalarField,
+}
+
+struct CoordinatorDealRouter<C>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+{
+    shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
+    deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
+}
+
+impl<C> CoordinatorDealRouter<C>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+{
+    fn new(
+        shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
+        deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
+    ) -> Self {
+        Self {
+            shufflers,
+            deal_channels,
+        }
+    }
+}
+
+#[async_trait]
+impl<C> ShufflerSignalRouter<C> for CoordinatorDealRouter<C>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + Absorb,
+    C::Affine: Absorb,
+{
+    async fn broadcast_dealing_started(
+        &self,
+        shufflers: &[ShufflerId],
+        signal: &DealingPhaseStarted<C>,
+    ) -> Result<()> {
+        let key = (signal.game_id, signal.hand_id);
+        self.deal_channels.remove(&key);
+        let (sender, _) = broadcast::channel(DEAL_CHANNEL_CAPACITY);
+        let sender_for_subs = sender.clone();
+        self.deal_channels.insert(key, sender);
+
+        for &shuffler_id in shufflers {
+            match self.shufflers.get(&shuffler_id) {
+                Some(shuffler) => {
+                    if let Err(err) =
+                        shuffler.handle_dealing_phase_started(signal, sender_for_subs.subscribe())
+                    {
+                        warn!(
+                            target = LOG_TARGET,
+                            game_id = signal.game_id,
+                            hand_id = signal.hand_id,
+                            shuffler_id,
+                            error = %err,
+                            "failed to register dealing listener"
+                        );
+                    }
+                }
+                None => {
+                    warn!(
+                        target = LOG_TARGET,
+                        game_id = signal.game_id,
+                        hand_id = signal.hand_id,
+                        shuffler_id,
+                        "router missing shuffler instance"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn broadcast_deal_request(
+        &self,
+        _shufflers: &[ShufflerId],
+        request: &DealShufflerRequest<C>,
+    ) -> Result<()> {
+        let key = match request {
+            DealShufflerRequest::Player(req) => (req.game_id, req.hand_id),
+            DealShufflerRequest::Board(req) => (req.game_id, req.hand_id),
+        };
+
+        match self.deal_channels.get(&key) {
+            Some(sender) => {
+                if let Err(err) = sender.value().send(request.clone()) {
+                    warn!(
+                        target = LOG_TARGET,
+                        game_id = key.0,
+                        hand_id = key.1,
+                        error = %err,
+                        "failed to broadcast deal request"
+                    );
+                }
+            }
+            None => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = key.0,
+                    hand_id = key.1,
+                    "no deal channel registered for hand"
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -124,8 +246,9 @@ where
     realtime_stop: CancellationToken,
     realtime_handle: Option<JoinHandle<anyhow::Result<()>>>,
     worker_handle: Option<JoinHandle<Result<(), WorkerError>>>,
-    shufflers: HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>,
+    shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
     active_hands: DashMap<(GameId, HandId), Vec<HandSubscription<C>>>,
+    deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
 }
 
 impl<C> GameCoordinator<C>
@@ -161,15 +284,6 @@ where
             Arc::clone(&config.event_store),
             Arc::clone(&config.state),
         ));
-
-        let worker = LedgerWorker::new(
-            submit_rx,
-            Arc::clone(&config.event_store),
-            Arc::clone(&config.snapshot_store),
-            Arc::clone(&config.state),
-            None,
-        );
-        let worker_handle = Some(operator.start(worker).await?);
 
         let realtime_stop = CancellationToken::new();
         let (client, _rx0) =
@@ -207,6 +321,26 @@ where
             shufflers.insert(shuffler.id, instance);
         }
 
+        let shufflers = Arc::new(shufflers);
+        let deal_channels = Arc::new(DashMap::new());
+        let router: Arc<dyn ShufflerSignalRouter<C>> = Arc::new(CoordinatorDealRouter::new(
+            Arc::clone(&shufflers),
+            Arc::clone(&deal_channels),
+        ));
+        let dispatcher = Arc::new(ShufflerDealSignalDispatcher::new(
+            Arc::clone(&router),
+            config.state.hasher(),
+        ));
+
+        let worker = LedgerWorker::new(
+            submit_rx,
+            Arc::clone(&config.event_store),
+            Arc::clone(&config.snapshot_store),
+            Arc::clone(&config.state),
+            Some(dispatcher),
+        );
+        let worker_handle = Some(operator.start(worker).await?);
+
         Ok(Self {
             operator,
             state: Arc::clone(&config.state),
@@ -216,6 +350,7 @@ where
             worker_handle,
             shufflers,
             active_hands: DashMap::new(),
+            deal_channels,
         })
     }
 
@@ -278,6 +413,7 @@ where
                 sub.cancel();
             }
         }
+        self.deal_channels.remove(&(game_id, hand_id));
     }
 
     /// Waits for a Ctrl+C signal and then gracefully shuts down the coordinator.
@@ -316,7 +452,7 @@ where
         for shuffler in self.shufflers.values() {
             shuffler.cancel_all();
         }
-        self.shufflers.clear();
+        self.deal_channels.clear();
 
         if let Some(handle) = self.realtime_handle.take() {
             match handle.await {

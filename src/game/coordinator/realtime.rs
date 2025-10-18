@@ -22,7 +22,7 @@ use crate::{
     signing::WithSignature,
 };
 
-use crate::db::entity::sea_orm_active_enums::HandStatus;
+use crate::db::entity::sea_orm_active_enums::EventPhase;
 use sea_orm::prelude::TimeDateTimeWithTimeZone;
 use sea_orm::JsonValue;
 use time::format_description::well_known::Rfc3339;
@@ -517,7 +517,7 @@ fn decode_event_row(value: Value) -> Result<events::Model> {
     let public_key = parse_bytea(&raw.public_key)?;
     let signature = parse_bytea(&raw.signature)?;
 
-    let phase = parse_hand_status(&raw.phase)?;
+    let phase = parse_event_phase(&raw.phase)?;
 
     let inserted_at: TimeDateTimeWithTimeZone =
         OffsetDateTime::parse(&raw.inserted_at, &Rfc3339)
@@ -541,15 +541,16 @@ fn decode_event_row(value: Value) -> Result<events::Model> {
     })
 }
 
-fn parse_hand_status(value: &str) -> Result<HandStatus> {
+fn parse_event_phase(value: &str) -> Result<EventPhase> {
     match value {
-        "pending" => Ok(HandStatus::Pending),
-        "shuffling" => Ok(HandStatus::Shuffling),
-        "dealing" => Ok(HandStatus::Dealing),
-        "betting" => Ok(HandStatus::Betting),
-        "showdown" => Ok(HandStatus::Showdown),
-        "complete" => Ok(HandStatus::Complete),
-        "cancelled" => Ok(HandStatus::Cancelled),
+        "pending" => Ok(EventPhase::Pending),
+        "shuffling" => Ok(EventPhase::Shuffling),
+        "dealing" => Ok(EventPhase::Dealing),
+        "betting" => Ok(EventPhase::Betting),
+        "reveals" => Ok(EventPhase::Reveals),
+        "showdown" => Ok(EventPhase::Showdown),
+        "complete" => Ok(EventPhase::Complete),
+        "cancelled" => Ok(EventPhase::Cancelled),
         other => Err(anyhow!("invalid phase {}", other)),
     }
 }
@@ -593,7 +594,7 @@ mod tests {
         assert_eq!(model.hand_id, 7);
         assert_eq!(model.public_key, vec![1, 2, 3]);
         assert_eq!(model.signature, vec![10, 11, 12]);
-        assert_eq!(model.phase, HandStatus::Shuffling);
+        assert_eq!(model.phase, EventPhase::Shuffling);
         assert_eq!(model.message_type, "shuffle");
         assert_eq!(model.payload, json!({"foo": "bar"}));
         assert_eq!(

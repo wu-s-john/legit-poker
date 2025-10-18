@@ -18,6 +18,17 @@ CREATE TYPE public.phase_kind AS ENUM (
     'reveals'
 );
 
+CREATE TYPE public.event_phase AS ENUM (
+    'pending',
+    'shuffling',
+    'dealing',
+    'betting',
+    'reveals',
+    'showdown',
+    'complete',
+    'cancelled'
+);
+
 CREATE TYPE public.game_status AS ENUM (
     'onboarding',
     'active',
@@ -129,7 +140,7 @@ CREATE TABLE public.events (
     shuffler_id SMALLINT,
     public_key BYTEA NOT NULL,
     nonce BIGINT NOT NULL,
-    phase public.hand_status NOT NULL,
+    phase public.event_phase NOT NULL,
     message_type TEXT NOT NULL,
     payload JSONB NOT NULL,
     signature BYTEA NOT NULL,

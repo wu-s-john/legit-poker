@@ -3,7 +3,7 @@ use ark_crypto_primitives::signature::SignatureScheme;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const DOMAIN_TAG: &[u8] = b"zkpoker/action/v1";
+const DOMAIN_TAG: &[u8] = b"legit-poker/action/v1";
 
 /// Builder for canonical action transcripts.
 pub struct TranscriptBuilder {

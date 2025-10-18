@@ -22,7 +22,7 @@ use rand::Rng;
 use super::snapshot::phases::{
     HandPhase, PhaseBetting, PhaseDealing, PhaseShowdown, PhaseShuffling,
 };
-use super::types::{HandStatus, SignatureBytes};
+use super::types::{EventPhase, HandStatus, SignatureBytes};
 
 pub trait Street: Clone + Default + Serialize {
     fn status() -> HandStatus;
@@ -363,16 +363,16 @@ impl<C> AnyGameMessage<C>
 where
     C: CurveGroup,
 {
-    pub fn phase(&self) -> HandStatus {
+    pub fn phase(&self) -> EventPhase {
         match self {
-            AnyGameMessage::Shuffle(_) => HandStatus::Shuffling,
-            AnyGameMessage::Blinding(_) => HandStatus::Dealing,
-            AnyGameMessage::PartialUnblinding(_) => HandStatus::Showdown,
-            AnyGameMessage::PlayerPreflop(_) => HandStatus::Betting,
-            AnyGameMessage::PlayerFlop(_) => HandStatus::Betting,
-            AnyGameMessage::PlayerTurn(_) => HandStatus::Betting,
-            AnyGameMessage::PlayerRiver(_) => HandStatus::Betting,
-            AnyGameMessage::Showdown(_) => HandStatus::Showdown,
+            AnyGameMessage::Shuffle(_) => EventPhase::Shuffling,
+            AnyGameMessage::Blinding(_) => EventPhase::Dealing,
+            AnyGameMessage::PartialUnblinding(_) => EventPhase::Reveals,
+            AnyGameMessage::PlayerPreflop(_) => EventPhase::Betting,
+            AnyGameMessage::PlayerFlop(_) => EventPhase::Betting,
+            AnyGameMessage::PlayerTurn(_) => EventPhase::Betting,
+            AnyGameMessage::PlayerRiver(_) => EventPhase::Betting,
+            AnyGameMessage::Showdown(_) => EventPhase::Showdown,
         }
     }
 }

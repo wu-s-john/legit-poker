@@ -14,7 +14,7 @@ use crate::ledger::messages::{
     GamePartialUnblindingShareMessage, GamePlayerMessage, GameShowdownMessage, GameShuffleMessage,
     PreflopStreet, RiverStreet, TurnStreet,
 };
-use crate::ledger::types::{GameId, HandStatus};
+use crate::ledger::types::{EventPhase, GameId};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
@@ -277,15 +277,16 @@ pub(super) fn encode_actor(actor: &AnyActor) -> anyhow::Result<ActorColumns> {
     }
 }
 
-pub(super) fn to_db_hand_status(status: HandStatus) -> db_enums::HandStatus {
-    match status {
-        HandStatus::Pending => db_enums::HandStatus::Pending,
-        HandStatus::Shuffling => db_enums::HandStatus::Shuffling,
-        HandStatus::Dealing => db_enums::HandStatus::Dealing,
-        HandStatus::Betting => db_enums::HandStatus::Betting,
-        HandStatus::Showdown => db_enums::HandStatus::Showdown,
-        HandStatus::Complete => db_enums::HandStatus::Complete,
-        HandStatus::Cancelled => db_enums::HandStatus::Cancelled,
+pub(super) fn to_db_event_phase(phase: EventPhase) -> db_enums::EventPhase {
+    match phase {
+        EventPhase::Pending => db_enums::EventPhase::Pending,
+        EventPhase::Shuffling => db_enums::EventPhase::Shuffling,
+        EventPhase::Dealing => db_enums::EventPhase::Dealing,
+        EventPhase::Betting => db_enums::EventPhase::Betting,
+        EventPhase::Reveals => db_enums::EventPhase::Reveals,
+        EventPhase::Showdown => db_enums::EventPhase::Showdown,
+        EventPhase::Complete => db_enums::EventPhase::Complete,
+        EventPhase::Cancelled => db_enums::EventPhase::Cancelled,
     }
 }
 

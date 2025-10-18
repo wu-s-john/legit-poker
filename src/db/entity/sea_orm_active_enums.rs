@@ -12,6 +12,26 @@ pub enum ApplicationStatus {
     Failure,
 }
 #[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "event_phase")]
+pub enum EventPhase {
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "shuffling")]
+    Shuffling,
+    #[sea_orm(string_value = "dealing")]
+    Dealing,
+    #[sea_orm(string_value = "betting")]
+    Betting,
+    #[sea_orm(string_value = "reveals")]
+    Reveals,
+    #[sea_orm(string_value = "showdown")]
+    Showdown,
+    #[sea_orm(string_value = "complete")]
+    Complete,
+    #[sea_orm(string_value = "cancelled")]
+    Cancelled,
+}
+#[derive(Debug, Clone, PartialEq, Eq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
 #[sea_orm(rs_type = "String", db_type = "Enum", enum_name = "game_status")]
 pub enum GameStatus {
     #[sea_orm(string_value = "onboarding")]
