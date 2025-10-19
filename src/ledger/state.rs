@@ -10,13 +10,11 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::ledger::actor::{AnyActor, PlayerActor, ShufflerActor};
 use crate::ledger::hash::{default_poseidon_hasher, LedgerHasher};
 use crate::ledger::messages::{
-    AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage, FlopStreet,
+    AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage, FinalizedAnyMessageEnvelope, FlopStreet,
     GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage, GamePlayerMessage,
     GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
 };
-use crate::ledger::snapshot::AnyTableSnapshot;
-#[cfg(test)]
-use crate::ledger::snapshot::SnapshotStatus;
+use crate::ledger::snapshot::{clone_snapshot_for_failure, AnyTableSnapshot, SnapshotStatus};
 use crate::ledger::transition::apply_transition;
 use crate::ledger::types::{HandId, StateHash};
 use crate::signing::WithSignature;
@@ -179,14 +177,40 @@ where
 
     pub fn replay<I>(&self, events: I) -> anyhow::Result<()>
     where
-        I: IntoIterator<Item = AnyMessageEnvelope<C>>,
+        I: IntoIterator<Item = FinalizedAnyMessageEnvelope<C>>,
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
         C::ScalarField: PrimeField + Absorb,
         C::Affine: Absorb,
     {
-        for event in events {
-            self.apply_event(&event)?;
+        for finalized in events {
+            match finalized.snapshot_status {
+                SnapshotStatus::Success => {
+                    self.apply_event(&finalized.envelope)?;
+                }
+                SnapshotStatus::Failure(reason) => {
+                    let hand_id = finalized.envelope.hand_id;
+                    let (_, current_snapshot) = self
+                        .tip_snapshot(hand_id)
+                        .with_context(|| format!("no snapshot tip for hand {}", hand_id))?;
+                    let hasher = self.hasher();
+                    let failure_snapshot =
+                        clone_snapshot_for_failure(&current_snapshot, hasher.as_ref(), reason);
+                    let failure_sequence = failure_snapshot.sequence();
+                    let failure_phase = failure_snapshot.event_phase();
+                    self.upsert_snapshot(hand_id, failure_snapshot, true);
+                    debug_assert_eq!(
+                        failure_sequence,
+                        finalized.snapshot_sequence_id,
+                        "replayed failure snapshot sequence should match persisted sequence"
+                    );
+                    debug_assert_eq!(
+                        failure_phase,
+                        finalized.applied_phase,
+                        "replayed failure phase should match persisted phase"
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -222,12 +246,17 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
+    use crate::ledger::actor::AnyActor;
     use crate::ledger::hash::LedgerHasher;
+    use crate::ledger::messages::{
+        AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GameShuffleMessage,
+    };
     use crate::ledger::snapshot::{
         build_default_card_plan, AnyTableSnapshot, PlayerStackInfo, PlayerStacks, RevealsSnapshot,
         ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, ShufflingStep, TableAtShuffling,
         TableSnapshot,
     };
+    use crate::signing::WithSignature;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
@@ -368,6 +397,62 @@ mod tests {
 
         // ensure original snapshot still accessible
         assert!(state.snapshot(1, first_hash).is_some());
+    }
+
+    #[test]
+    fn replay_skips_failed_events() {
+        let state = LedgerState::<Curve>::new();
+        let hasher = state.hasher();
+        let hand_id = 24;
+        let initial_snapshot = AnyTableSnapshot::Shuffling(
+            sample_table_snapshot::<Curve>(&*hasher),
+        );
+        let initial_sequence = initial_snapshot.sequence();
+        let initial_hash = initial_snapshot.state_hash();
+        let applied_phase = initial_snapshot.event_phase();
+        state.upsert_snapshot(hand_id, initial_snapshot, true);
+
+        let shuffle_message = GameShuffleMessage::new(
+            std::array::from_fn(|_| sample_cipher::<Curve>()),
+            std::array::from_fn(|_| sample_cipher::<Curve>()),
+            sample_shuffle_proof::<Curve>(),
+            0,
+        );
+
+        let envelope = AnyMessageEnvelope {
+            hand_id,
+            game_id: 11,
+            actor: AnyActor::None,
+            nonce: 1,
+            public_key: Curve::zero(),
+            message: WithSignature {
+                value: AnyGameMessage::Shuffle(shuffle_message),
+                signature: Vec::new(),
+                transcript: Vec::new(),
+            },
+        };
+
+        let failure_reason = "boom".to_string();
+        let finalized = FinalizedAnyMessageEnvelope {
+            envelope,
+            snapshot_status: SnapshotStatus::Failure(failure_reason.clone()),
+            applied_phase,
+            snapshot_sequence_id: initial_sequence + 1,
+        };
+
+        state
+            .replay(vec![finalized])
+            .expect("replay should tolerate failed events");
+
+        let (_, tip) = state
+            .tip_snapshot(hand_id)
+            .expect("tip remains available after replay");
+        assert!(matches!(
+            tip.status(),
+            SnapshotStatus::Failure(reason) if reason == &failure_reason
+        ));
+        assert_eq!(tip.sequence(), initial_sequence + 1);
+        assert_eq!(tip.previous_hash(), Some(initial_hash));
     }
 }
 
