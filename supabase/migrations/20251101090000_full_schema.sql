@@ -132,6 +132,7 @@ CREATE TABLE public.hand_shufflers (
 
 CREATE TABLE public.events (
     id BIGSERIAL PRIMARY KEY,
+    game_id BIGINT NOT NULL REFERENCES public.games(id),
     hand_id BIGINT NOT NULL REFERENCES public.hands(id) ON DELETE CASCADE,
     entity_kind SMALLINT NOT NULL,
     entity_id BIGINT NOT NULL,
@@ -141,6 +142,10 @@ CREATE TABLE public.events (
     public_key BYTEA NOT NULL,
     nonce BIGINT NOT NULL,
     phase public.event_phase NOT NULL,
+    snapshot_number INTEGER NOT NULL,
+    is_successful BOOLEAN NOT NULL,
+    failure_message TEXT,
+    resulting_phase public.event_phase NOT NULL,
     message_type TEXT NOT NULL,
     payload JSONB NOT NULL,
     signature BYTEA NOT NULL,

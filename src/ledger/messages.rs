@@ -23,6 +23,7 @@ use rand::Rng;
 use super::snapshot::phases::{
     HandPhase, PhaseBetting, PhaseDealing, PhaseShowdown, PhaseShuffling,
 };
+use super::snapshot::{SnapshotSeq, SnapshotStatus};
 use super::types::{EventPhase, HandStatus, SignatureBytes};
 
 pub trait Street: Clone + Default + Serialize {
@@ -417,6 +418,17 @@ where
     pub nonce: u64,
     pub public_key: C,
     pub message: WithSignature<SignatureBytes, AnyGameMessage<C>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FinalizedAnyMessageEnvelope<C>
+where
+    C: CurveGroup,
+{
+    pub envelope: AnyMessageEnvelope<C>,
+    pub snapshot_status: SnapshotStatus,
+    pub applied_phase: EventPhase,
+    pub snapshot_sequence_id: SnapshotSeq,
 }
 
 pub trait SignatureEncoder {

@@ -144,7 +144,10 @@ where
         guard.remove(&hand_id);
     }
 
-    pub fn apply_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<AnyTableSnapshot<C>>
+    pub fn preview_event(
+        &self,
+        event: &AnyMessageEnvelope<C>,
+    ) -> anyhow::Result<AnyTableSnapshot<C>>
     where
         C: CurveGroup + CurveAbsorb<C::BaseField>,
         C::BaseField: PrimeField,
@@ -157,7 +160,18 @@ where
             .with_context(|| format!("no snapshot tip for hand {}", hand_id))?;
         let hasher = self.hasher();
 
-        let snapshot = self.apply_message(current_snapshot.clone(), event, &hasher)?;
+        self.apply_message(current_snapshot, event, &hasher)
+    }
+
+    pub fn apply_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<AnyTableSnapshot<C>>
+    where
+        C: CurveGroup + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField,
+        C::ScalarField: PrimeField + Absorb,
+        C::Affine: Absorb,
+    {
+        let hand_id = event.hand_id;
+        let snapshot = self.preview_event(event)?;
         self.upsert_snapshot(hand_id, snapshot.clone(), true);
 
         Ok(snapshot)

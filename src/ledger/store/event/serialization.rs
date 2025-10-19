@@ -10,10 +10,11 @@ use crate::db::entity::sea_orm_active_enums as db_enums;
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::ledger::actor::AnyActor;
 use crate::ledger::messages::{
-    AnyGameMessage, AnyMessageEnvelope, FlopStreet, GameBlindingDecryptionMessage,
-    GamePartialUnblindingShareMessage, GamePlayerMessage, GameShowdownMessage, GameShuffleMessage,
-    PreflopStreet, RiverStreet, TurnStreet,
+    AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, FlopStreet,
+    GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage, GamePlayerMessage,
+    GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
 };
+use crate::ledger::snapshot::SnapshotStatus;
 use crate::ledger::types::{EventPhase, GameId};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
 use crate::shuffling::player_decryption::{
@@ -197,7 +198,7 @@ impl StoredGameMessage {
     }
 }
 
-pub fn model_to_envelope<C>(row: events::Model) -> anyhow::Result<AnyMessageEnvelope<C>>
+pub fn model_to_envelope<C>(row: events::Model) -> anyhow::Result<FinalizedAnyMessageEnvelope<C>>
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
 {
@@ -243,13 +244,31 @@ where
         transcript: message.to_signing_bytes(),
     };
 
-    Ok(AnyMessageEnvelope {
+    let envelope = AnyMessageEnvelope {
         hand_id: row.hand_id,
         game_id: payload.game_id,
         actor,
         nonce,
         public_key,
         message: with_signature,
+    };
+
+    let snapshot_sequence_id = u32::try_from(row.snapshot_number)
+        .map_err(|_| anyhow!("stored snapshot_number {} is negative", row.snapshot_number))?;
+    let snapshot_status = if row.is_successful {
+        SnapshotStatus::Success
+    } else {
+        SnapshotStatus::Failure(
+            row.failure_message
+                .unwrap_or_else(|| "unknown failure".to_string()),
+        )
+    };
+
+    Ok(FinalizedAnyMessageEnvelope {
+        envelope,
+        snapshot_status,
+        applied_phase: from_db_event_phase(row.resulting_phase),
+        snapshot_sequence_id,
     })
 }
 
@@ -297,6 +316,19 @@ pub(super) fn to_db_event_phase(phase: EventPhase) -> db_enums::EventPhase {
         EventPhase::Showdown => db_enums::EventPhase::Showdown,
         EventPhase::Complete => db_enums::EventPhase::Complete,
         EventPhase::Cancelled => db_enums::EventPhase::Cancelled,
+    }
+}
+
+pub(super) fn from_db_event_phase(phase: db_enums::EventPhase) -> EventPhase {
+    match phase {
+        db_enums::EventPhase::Pending => EventPhase::Pending,
+        db_enums::EventPhase::Shuffling => EventPhase::Shuffling,
+        db_enums::EventPhase::Dealing => EventPhase::Dealing,
+        db_enums::EventPhase::Betting => EventPhase::Betting,
+        db_enums::EventPhase::Reveals => EventPhase::Reveals,
+        db_enums::EventPhase::Showdown => EventPhase::Showdown,
+        db_enums::EventPhase::Complete => EventPhase::Complete,
+        db_enums::EventPhase::Cancelled => EventPhase::Cancelled,
     }
 }
 

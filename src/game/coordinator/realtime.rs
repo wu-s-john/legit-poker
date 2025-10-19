@@ -281,7 +281,7 @@ where
         let model = decode_event_row(new_row.clone())
             .with_context(|| anyhow!("failed to deserialize events row: {new_row:?}"))?;
 
-        let envelope = model_to_envelope::<C>(model).map_err(|err| {
+        let finalized = model_to_envelope::<C>(model).map_err(|err| {
             tracing::error!(
                 target = LOG_TARGET,
                 error = %err,
@@ -290,7 +290,7 @@ where
             );
             err.context("failed to convert row to envelope")
         })?;
-        match into_shuffle_envelope(envelope)? {
+        match into_shuffle_envelope(finalized.envelope)? {
             Some(shuffle) => {
                 let _ = self.tx.send(shuffle);
             }
@@ -452,6 +452,7 @@ struct ReplyPayload {
 #[derive(Debug, serde::Deserialize)]
 struct RawEventRow {
     id: i64,
+    game_id: i64,
     hand_id: i64,
     entity_kind: i16,
     entity_id: i64,
@@ -461,6 +462,10 @@ struct RawEventRow {
     public_key: String,
     nonce: i64,
     phase: String,
+    snapshot_number: i32,
+    is_successful: bool,
+    failure_message: Option<String>,
+    resulting_phase: String,
     message_type: String,
     payload: JsonValue,
     signature: String,
@@ -518,6 +523,7 @@ fn decode_event_row(value: Value) -> Result<events::Model> {
     let signature = parse_bytea(&raw.signature)?;
 
     let phase = parse_event_phase(&raw.phase)?;
+    let resulting_phase = parse_event_phase(&raw.resulting_phase)?;
 
     let inserted_at: TimeDateTimeWithTimeZone =
         OffsetDateTime::parse(&raw.inserted_at, &Rfc3339)
@@ -525,6 +531,7 @@ fn decode_event_row(value: Value) -> Result<events::Model> {
 
     Ok(events::Model {
         id: raw.id,
+        game_id: raw.game_id,
         hand_id: raw.hand_id,
         entity_kind: raw.entity_kind,
         entity_id: raw.entity_id,
@@ -534,6 +541,10 @@ fn decode_event_row(value: Value) -> Result<events::Model> {
         public_key,
         nonce: raw.nonce,
         phase,
+        snapshot_number: raw.snapshot_number,
+        is_successful: raw.is_successful,
+        failure_message: raw.failure_message,
+        resulting_phase,
         message_type: raw.message_type,
         payload: raw.payload,
         signature,
