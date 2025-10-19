@@ -16,6 +16,7 @@
 
 ## Coding Style & Naming Conventions
 - Rust: Edition 2021. Format with `cargo fmt --all` (check: `cargo fmt --all -- --check`). Use `snake_case` for files/functions, `CamelCase` for types. Prefer `anyhow::Result` and `?`; avoid `unwrap()` outside tests.
+- Rust: Minimize reliance on `Default`; if you think a struct or enum needs default values, stop and ask the user what those values should be instead of calling `Default::default()`.
 - Imports: Place all imports at the top of the file. Do not import within function/block scope or in the middle of a file. Use `use` statements instead of fully qualified paths. If name conflicts arise, alias with `as` to avoid collisions (e.g., `use foo::Type as FooType; use bar::Type as BarType;`). For TypeScript, use top-level `import` and alias conflicts similarly (`import { Type as FooType } from '...';`).
 - Functional Rust: favor iterator chains (`map/filter/fold`) and `std::array::from_fn` over mutable loops.
 - Tracing: use `tracing` macros with targets and spans. Example: `tracing::info!(target="shuffling", ?deck_id, "reshuffled");` and annotate hot paths with `#[tracing::instrument(skip(..), target="r1cs")]`.
