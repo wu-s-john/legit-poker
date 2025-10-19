@@ -14,7 +14,8 @@ use serde_json::Value as JsonValue;
 use tracing::{debug, Level};
 
 use crate::db::entity::events;
-use crate::ledger::messages::AnyMessageEnvelope;
+use crate::ledger::messages::FinalizedAnyMessageEnvelope;
+use crate::ledger::snapshot::SnapshotStatus;
 use crate::ledger::types::HandId;
 
 pub use self::serialization::model_to_envelope;
@@ -38,21 +39,30 @@ where
     Ok(buf)
 }
 
+fn status_columns(status: &SnapshotStatus) -> (bool, Option<String>) {
+    match status {
+        SnapshotStatus::Success => (true, None),
+        SnapshotStatus::Failure(reason) => (false, Some(reason.clone())),
+    }
+}
+
 #[async_trait]
 pub trait EventStore<C>: Send + Sync
 where
     C: CurveGroup + Send + Sync + 'static,
 {
-    async fn persist_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<()>;
+    async fn persist_event(&self, event: &FinalizedAnyMessageEnvelope<C>) -> anyhow::Result<()>;
     async fn persist_event_in_txn(
         &self,
         txn: &DatabaseTransaction,
-        event: &AnyMessageEnvelope<C>,
+        event: &FinalizedAnyMessageEnvelope<C>,
     ) -> anyhow::Result<()>;
     async fn remove_event(&self, hand_id: HandId, nonce: u64) -> anyhow::Result<()>;
-    async fn load_all_events(&self) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>>;
-    async fn load_hand_events(&self, hand_id: HandId)
-        -> anyhow::Result<Vec<AnyMessageEnvelope<C>>>;
+    async fn load_all_events(&self) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>>;
+    async fn load_hand_events(
+        &self,
+        hand_id: HandId,
+    ) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>>;
     fn connection(&self) -> &DatabaseConnection;
 }
 
@@ -81,30 +91,38 @@ impl<C> EventStore<C> for SeaOrmEventStore<C>
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
 {
-    async fn persist_event(&self, event: &AnyMessageEnvelope<C>) -> anyhow::Result<()> {
-        let stored = StoredGameMessage::from_any(&event.message.value)?;
+    async fn persist_event(&self, event: &FinalizedAnyMessageEnvelope<C>) -> anyhow::Result<()> {
+        let stored = StoredGameMessage::from_any(&event.envelope.message.value)?;
         let payload_value = serde_json::to_value(StoredEnvelopePayload {
-            game_id: event.game_id,
+            game_id: event.envelope.game_id,
             message: stored.clone(),
         })?;
         if tracing::enabled!(Level::DEBUG) {
             let payload_json = serde_json::to_string_pretty(&payload_value)?;
             debug!(
                 target: LOG_TARGET,
-                hand_id = event.hand_id,
-                nonce = event.nonce,
+                hand_id = event.envelope.hand_id,
+                nonce = event.envelope.nonce,
                 %payload_json,
                 "persisting event payload"
             );
         }
 
-        let actor_cols = encode_actor(&event.actor)?;
-        let public_key = serialize_curve(&event.public_key)?;
-        let nonce = i64::try_from(event.nonce)
-            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.nonce))?;
+        let actor_cols = encode_actor(&event.envelope.actor)?;
+        let public_key = serialize_curve(&event.envelope.public_key)?;
+        let nonce = i64::try_from(event.envelope.nonce)
+            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.envelope.nonce))?;
+        let (is_successful, failure_message) = status_columns(&event.snapshot_status);
+        let snapshot_number = i32::try_from(event.snapshot_sequence_id).map_err(|_| {
+            anyhow!(
+                "snapshot sequence {} exceeds i32::MAX",
+                event.snapshot_sequence_id
+            )
+        })?;
 
         let active = events::ActiveModel {
-            hand_id: Set(event.hand_id),
+            game_id: Set(event.envelope.game_id),
+            hand_id: Set(event.envelope.hand_id),
             entity_kind: Set(actor_cols.entity_kind),
             entity_id: Set(actor_cols.entity_id),
             actor_kind: Set(actor_cols.actor_kind),
@@ -112,10 +130,14 @@ where
             shuffler_id: Set(actor_cols.shuffler_id),
             public_key: Set(public_key),
             nonce: Set(nonce),
-            phase: Set(to_db_event_phase(event.message.value.phase())),
+            phase: Set(to_db_event_phase(event.envelope.message.value.phase())),
+            snapshot_number: Set(snapshot_number),
+            is_successful: Set(is_successful),
+            failure_message: Set(failure_message),
+            resulting_phase: Set(to_db_event_phase(event.applied_phase)),
             message_type: Set(stored.message_type().to_string()),
             payload: Set(JsonValue::from(payload_value.clone())),
-            signature: Set(event.message.signature.clone()),
+            signature: Set(event.envelope.message.signature.clone()),
             ..Default::default()
         };
 
@@ -130,31 +152,39 @@ where
     async fn persist_event_in_txn(
         &self,
         txn: &DatabaseTransaction,
-        event: &AnyMessageEnvelope<C>,
+        event: &FinalizedAnyMessageEnvelope<C>,
     ) -> anyhow::Result<()> {
-        let stored = StoredGameMessage::from_any(&event.message.value)?;
+        let stored = StoredGameMessage::from_any(&event.envelope.message.value)?;
         let payload_value = serde_json::to_value(StoredEnvelopePayload {
-            game_id: event.game_id,
+            game_id: event.envelope.game_id,
             message: stored.clone(),
         })?;
         if tracing::enabled!(Level::DEBUG) {
             let payload_json = serde_json::to_string_pretty(&payload_value)?;
             debug!(
                 target: LOG_TARGET,
-                hand_id = event.hand_id,
-                nonce = event.nonce,
+                hand_id = event.envelope.hand_id,
+                nonce = event.envelope.nonce,
                 %payload_json,
                 "persisting event payload (txn)"
             );
         }
 
-        let actor_cols = encode_actor(&event.actor)?;
-        let public_key = serialize_curve(&event.public_key)?;
-        let nonce = i64::try_from(event.nonce)
-            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.nonce))?;
+        let actor_cols = encode_actor(&event.envelope.actor)?;
+        let public_key = serialize_curve(&event.envelope.public_key)?;
+        let nonce = i64::try_from(event.envelope.nonce)
+            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.envelope.nonce))?;
+        let (is_successful, failure_message) = status_columns(&event.snapshot_status);
+        let snapshot_number = i32::try_from(event.snapshot_sequence_id).map_err(|_| {
+            anyhow!(
+                "snapshot sequence {} exceeds i32::MAX",
+                event.snapshot_sequence_id
+            )
+        })?;
 
         let active = events::ActiveModel {
-            hand_id: Set(event.hand_id),
+            game_id: Set(event.envelope.game_id),
+            hand_id: Set(event.envelope.hand_id),
             entity_kind: Set(actor_cols.entity_kind),
             entity_id: Set(actor_cols.entity_id),
             actor_kind: Set(actor_cols.actor_kind),
@@ -162,10 +192,14 @@ where
             shuffler_id: Set(actor_cols.shuffler_id),
             public_key: Set(public_key),
             nonce: Set(nonce),
-            phase: Set(to_db_event_phase(event.message.value.phase())),
+            phase: Set(to_db_event_phase(event.envelope.message.value.phase())),
+            snapshot_number: Set(snapshot_number),
+            is_successful: Set(is_successful),
+            failure_message: Set(failure_message),
+            resulting_phase: Set(to_db_event_phase(event.applied_phase)),
             message_type: Set(stored.message_type().to_string()),
             payload: Set(JsonValue::from(payload_value.clone())),
-            signature: Set(event.message.signature.clone()),
+            signature: Set(event.envelope.message.signature.clone()),
             ..Default::default()
         };
 
@@ -191,7 +225,7 @@ where
         Ok(())
     }
 
-    async fn load_all_events(&self) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
+    async fn load_all_events(&self) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>> {
         let rows = events::Entity::find()
             .order_by_asc(events::Column::HandId)
             .order_by_asc(events::Column::Nonce)
@@ -205,7 +239,7 @@ where
     async fn load_hand_events(
         &self,
         hand_id: HandId,
-    ) -> anyhow::Result<Vec<AnyMessageEnvelope<C>>> {
+    ) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>> {
         let rows = events::Entity::find()
             .filter(events::Column::HandId.eq(hand_id))
             .order_by_asc(events::Column::Nonce)
@@ -235,11 +269,14 @@ mod tests {
         ShufflerRecord, ShufflerRegistrationConfig,
     };
     use crate::ledger::messages::{
-        AnyGameMessage, GamePlayerMessage, GameShuffleMessage, PreflopStreet,
+        AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
+        GameShuffleMessage, PreflopStreet,
     };
     use crate::ledger::operator::LedgerOperator;
+    use crate::ledger::snapshot::SnapshotStatus;
     use crate::ledger::state::LedgerState;
     use crate::ledger::store::SeaOrmEventStore;
+    use crate::ledger::types::EventPhase;
     use crate::ledger::typestate::MaybeSaved;
     use crate::ledger::verifier::LedgerVerifier;
     use crate::ledger::{GameId, HandId};
@@ -560,6 +597,15 @@ mod tests {
         }
     }
 
+    fn finalized(envelope: AnyMessageEnvelope<Curve>) -> FinalizedAnyMessageEnvelope<Curve> {
+        FinalizedAnyMessageEnvelope {
+            envelope,
+            snapshot_status: SnapshotStatus::Success,
+            applied_phase: EventPhase::Shuffling,
+            snapshot_sequence_id: 1,
+        }
+    }
+
     #[tokio::test]
     async fn stored_message_roundtrip_player_action() {
         let message = AnyGameMessage::PlayerPreflop(
@@ -583,12 +629,15 @@ mod tests {
         };
 
         let envelope = sample_shuffle_envelope(hand_id, game_id, 10);
-        store.persist_event(&envelope).await.unwrap();
+        store
+            .persist_event(&finalized(envelope.clone()))
+            .await
+            .unwrap();
 
         let loaded = store.load_all_events().await.unwrap();
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].nonce, envelope.nonce);
-        assert_eq!(loaded[0].hand_id, hand_id);
+        assert_eq!(loaded[0].envelope.nonce, envelope.nonce);
+        assert_eq!(loaded[0].envelope.hand_id, hand_id);
     }
 
     #[tokio::test]
@@ -598,7 +647,10 @@ mod tests {
         };
 
         let envelope = sample_shuffle_envelope(hand_id, game_id, 22);
-        store.persist_event(&envelope).await.unwrap();
+        store
+            .persist_event(&finalized(envelope.clone()))
+            .await
+            .unwrap();
         store
             .remove_event(envelope.hand_id, envelope.nonce)
             .await

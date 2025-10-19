@@ -67,6 +67,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
+    Events,
     GamePlayers,
     GameShufflers,
     HandConfigs,
@@ -105,6 +106,7 @@ impl ColumnTrait for Column {
 impl RelationTrait for Relation {
     fn def(&self) -> RelationDef {
         match self {
+            Self::Events => Entity::has_many(super::events::Entity).into(),
             Self::GamePlayers => Entity::has_many(super::game_players::Entity).into(),
             Self::GameShufflers => Entity::has_many(super::game_shufflers::Entity).into(),
             Self::HandConfigs => Entity::has_many(super::hand_configs::Entity).into(),
@@ -119,6 +121,12 @@ impl RelationTrait for Relation {
                 .into(),
             Self::TableSnapshots => Entity::has_many(super::table_snapshots::Entity).into(),
         }
+    }
+}
+
+impl Related<super::events::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Events.def()
     }
 }
 

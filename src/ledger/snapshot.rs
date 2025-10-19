@@ -13,7 +13,7 @@ use crate::ledger::messages::{
     EnvelopedMessage, FlopStreet, GameMessage, GamePlayerMessage, PreflopStreet, RiverStreet,
     TurnStreet,
 };
-use crate::ledger::types::{GameId, HandId, ShufflerId, StateHash};
+use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId, StateHash};
 use crate::showdown::HandCategory;
 use crate::shuffling::community_decryption::CommunityDecryptionShare;
 use crate::shuffling::data_structures::{
@@ -454,6 +454,32 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
             AnyTableSnapshot::River(table) => table.previous_hash,
             AnyTableSnapshot::Showdown(table) => table.previous_hash,
             AnyTableSnapshot::Complete(table) => table.previous_hash,
+        }
+    }
+
+    pub fn sequence(&self) -> SnapshotSeq {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => table.sequence,
+            AnyTableSnapshot::Dealing(table) => table.sequence,
+            AnyTableSnapshot::Preflop(table) => table.sequence,
+            AnyTableSnapshot::Flop(table) => table.sequence,
+            AnyTableSnapshot::Turn(table) => table.sequence,
+            AnyTableSnapshot::River(table) => table.sequence,
+            AnyTableSnapshot::Showdown(table) => table.sequence,
+            AnyTableSnapshot::Complete(table) => table.sequence,
+        }
+    }
+
+    pub fn event_phase(&self) -> EventPhase {
+        match self {
+            AnyTableSnapshot::Shuffling(_) => EventPhase::Shuffling,
+            AnyTableSnapshot::Dealing(_) => EventPhase::Dealing,
+            AnyTableSnapshot::Preflop(_) => EventPhase::Betting,
+            AnyTableSnapshot::Flop(_) => EventPhase::Betting,
+            AnyTableSnapshot::Turn(_) => EventPhase::Betting,
+            AnyTableSnapshot::River(_) => EventPhase::Betting,
+            AnyTableSnapshot::Showdown(_) => EventPhase::Showdown,
+            AnyTableSnapshot::Complete(_) => EventPhase::Complete,
         }
     }
 

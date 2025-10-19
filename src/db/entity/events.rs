@@ -19,6 +19,7 @@ impl EntityName for Entity {
 #[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Eq, Serialize, Deserialize)]
 pub struct Model {
     pub id: i64,
+    pub game_id: i64,
     pub hand_id: i64,
     pub entity_kind: i16,
     pub entity_id: i64,
@@ -28,6 +29,10 @@ pub struct Model {
     pub public_key: Vec<u8>,
     pub nonce: i64,
     pub phase: EventPhase,
+    pub snapshot_number: i32,
+    pub is_successful: bool,
+    pub failure_message: Option<String>,
+    pub resulting_phase: EventPhase,
     pub message_type: String,
     pub payload: Json,
     pub signature: Vec<u8>,
@@ -37,6 +42,7 @@ pub struct Model {
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 pub enum Column {
     Id,
+    GameId,
     HandId,
     EntityKind,
     EntityId,
@@ -46,6 +52,10 @@ pub enum Column {
     PublicKey,
     Nonce,
     Phase,
+    SnapshotNumber,
+    IsSuccessful,
+    FailureMessage,
+    ResultingPhase,
     MessageType,
     Payload,
     Signature,
@@ -66,6 +76,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 
 #[derive(Copy, Clone, Debug, EnumIter)]
 pub enum Relation {
+    Games,
     Hands,
     Phases,
 }
@@ -75,6 +86,7 @@ impl ColumnTrait for Column {
     fn def(&self) -> ColumnDef {
         match self {
             Self::Id => ColumnType::BigInteger.def(),
+            Self::GameId => ColumnType::BigInteger.def(),
             Self::HandId => ColumnType::BigInteger.def(),
             Self::EntityKind => ColumnType::SmallInteger.def(),
             Self::EntityId => ColumnType::BigInteger.def(),
@@ -84,6 +96,10 @@ impl ColumnTrait for Column {
             Self::PublicKey => ColumnType::VarBinary(StringLen::None).def(),
             Self::Nonce => ColumnType::BigInteger.def(),
             Self::Phase => EventPhase::db_type().get_column_type().to_owned().def(),
+            Self::SnapshotNumber => ColumnType::Integer.def(),
+            Self::IsSuccessful => ColumnType::Boolean.def(),
+            Self::FailureMessage => ColumnType::Text.def().null(),
+            Self::ResultingPhase => EventPhase::db_type().get_column_type().to_owned().def(),
             Self::MessageType => ColumnType::Text.def(),
             Self::Payload => ColumnType::JsonBinary.def(),
             Self::Signature => ColumnType::VarBinary(StringLen::None).def(),
@@ -95,12 +111,22 @@ impl ColumnTrait for Column {
 impl RelationTrait for Relation {
     fn def(&self) -> RelationDef {
         match self {
+            Self::Games => Entity::belongs_to(super::games::Entity)
+                .from(Column::GameId)
+                .to(super::games::Column::Id)
+                .into(),
             Self::Hands => Entity::belongs_to(super::hands::Entity)
                 .from(Column::HandId)
                 .to(super::hands::Column::Id)
                 .into(),
             Self::Phases => Entity::has_many(super::phases::Entity).into(),
         }
+    }
+}
+
+impl Related<super::games::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Games.def()
     }
 }
 
