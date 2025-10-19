@@ -59,8 +59,7 @@ where
         worker: LedgerWorker<C>,
     ) -> anyhow::Result<JoinHandle<Result<(), WorkerError>>> {
         let events = self.event_store.load_all_events().await?;
-        let envelopes = events.into_iter().map(|finalized| finalized.envelope);
-        self.state.replay(envelopes)?;
+        self.state.replay(events)?;
         let handle = tokio::spawn(async move {
             let result = worker.run().await;
             if let Err(err) = &result {
