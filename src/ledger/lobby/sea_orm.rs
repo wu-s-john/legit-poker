@@ -10,7 +10,8 @@ use crate::db::entity::sea_orm_active_enums::{
     GameStatus as DbGameStatus, HandStatus as DbHandStatus,
 };
 use crate::db::entity::{
-    game_players, game_shufflers, games, hand_player, hand_shufflers, hands, players, shufflers,
+    game_players, game_shufflers, games, hand_configs, hand_player, hand_shufflers, hands, players,
+    shufflers,
 };
 use crate::engine::nl::types::{Chips, PlayerId, PlayerStatus, SeatId};
 use crate::ledger::hash::LedgerHasher;
@@ -32,8 +33,8 @@ use async_trait::async_trait;
 use rand::{rngs::StdRng, SeedableRng};
 use sea_orm::DbErr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
-    PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    DbBackend, EntityTrait, PaginatorTrait, QueryFilter, Set, Statement, TransactionTrait,
 };
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
@@ -287,6 +288,9 @@ where
 
         let txn = self.begin().await?;
 
+        let hand_config_db_id =
+            insert_hand_config(&txn, params.game.state.id, &params.hand_config).await?;
+
         let hand_model = hands::ActiveModel {
             game_id: Set(params.game.state.id),
             hand_no: Set(params.hand_no),
@@ -295,6 +299,7 @@ where
             big_blind_seat: Set(params.hand_config.big_blind_seat as i16),
             deck_commitment: Set(params.deck_commitment.clone()),
             status: Set(DbHandStatus::Pending),
+            hand_config_id: Set(hand_config_db_id),
             ..Default::default()
         };
         let hand_inserted = hand_model.insert(&txn).await?;
@@ -520,7 +525,7 @@ where
         game_id: params.game.state.id,
         hand_id: Some(hand_id),
         sequence: 0,
-        cfg: Some(Arc::new(params.hand_config.clone())),
+        cfg: Arc::new(params.hand_config.clone()),
         shufflers: Arc::new(shuffler_roster),
         players: Arc::new(player_roster),
         seating: Arc::new(seating),
@@ -540,6 +545,31 @@ where
     };
     snapshot.initialize_hash(hasher);
     Ok(snapshot)
+}
+
+async fn insert_hand_config(
+    txn: &DatabaseTransaction,
+    game_id: GameId,
+    cfg: &crate::engine::nl::types::HandConfig,
+) -> Result<i64, GameSetupError> {
+    let small_blind = chips_to_i64(cfg.stakes.small_blind)?;
+    let big_blind = chips_to_i64(cfg.stakes.big_blind)?;
+    let ante = chips_to_i64(cfg.stakes.ante)?;
+
+    let model = hand_configs::ActiveModel {
+        game_id: Set(game_id),
+        small_blind: Set(small_blind),
+        big_blind: Set(big_blind),
+        ante: Set(ante),
+        button_seat: Set(i16::from(cfg.button)),
+        small_blind_seat: Set(i16::from(cfg.small_blind_seat)),
+        big_blind_seat: Set(i16::from(cfg.big_blind_seat)),
+        check_raise_allowed: Set(cfg.check_raise_allowed),
+        ..Default::default()
+    };
+
+    let inserted = model.insert(txn).await.map_err(GameSetupError::Database)?;
+    Ok(inserted.id)
 }
 
 fn compute_initial_commitment(cfg: &crate::engine::nl::types::HandConfig, seat: SeatId) -> Chips {

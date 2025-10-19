@@ -476,6 +476,7 @@ fn init_tracing(json: bool) -> Result<()> {
             .with_env_filter(filter)
             .with_target(true)
             .with_level(true)
+            .with_thread_ids(true)
             .with_timer(Uptime::default())
             .with_ansi(false)
             .json()
@@ -488,6 +489,7 @@ fn init_tracing(json: bool) -> Result<()> {
             .with_env_filter(filter)
             .with_target(true)
             .with_level(true)
+            .with_thread_ids(true)
             .with_timer(Uptime::default())
             .try_init()
             .map_err(|err| anyhow!("failed to initialize tracing subscriber: {err}"))?;

@@ -200,13 +200,11 @@ where
                     let failure_phase = failure_snapshot.event_phase();
                     self.upsert_snapshot(hand_id, failure_snapshot, true);
                     debug_assert_eq!(
-                        failure_sequence,
-                        finalized.snapshot_sequence_id,
+                        failure_sequence, finalized.snapshot_sequence_id,
                         "replayed failure snapshot sequence should match persisted sequence"
                     );
                     debug_assert_eq!(
-                        failure_phase,
-                        finalized.applied_phase,
+                        failure_phase, finalized.applied_phase,
                         "replayed failure phase should match persisted phase"
                     );
                 }
@@ -256,8 +254,8 @@ mod tests {
         ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, ShufflingStep, TableAtShuffling,
         TableSnapshot,
     };
-    use crate::signing::WithSignature;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
+    use crate::signing::WithSignature;
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
 
@@ -334,7 +332,7 @@ mod tests {
             game_id: 0,
             hand_id: Some(0),
             sequence: 0,
-            cfg: Some(Arc::new(hand_cfg)),
+            cfg: Arc::new(hand_cfg),
             shufflers: Arc::new(shufflers),
             players: Arc::new(BTreeMap::new()),
             seating: Arc::new(seating_map),
@@ -404,9 +402,8 @@ mod tests {
         let state = LedgerState::<Curve>::new();
         let hasher = state.hasher();
         let hand_id = 24;
-        let initial_snapshot = AnyTableSnapshot::Shuffling(
-            sample_table_snapshot::<Curve>(&*hasher),
-        );
+        let initial_snapshot =
+            AnyTableSnapshot::Shuffling(sample_table_snapshot::<Curve>(&*hasher));
         let initial_sequence = initial_snapshot.sequence();
         let initial_hash = initial_snapshot.state_hash();
         let applied_phase = initial_snapshot.event_phase();

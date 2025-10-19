@@ -171,7 +171,7 @@ where
                 msg = source.next() => {
                     match msg {
                         Some(Ok(Message::Text(txt))) => {
-                            info!(target = LOG_TARGET, %txt, "received realtime text message");
+                            // info!(target = LOG_TARGET, %txt, "received realtime text message");
                             if let Err(err) = self.handle_text(&topic, &mut joined, txt).await {
                                 warn!(target = LOG_TARGET, error = %err, "failed to handle realtime message");
                             }

@@ -296,12 +296,13 @@ mod tests {
         ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction,
         DbBackend, Statement, Value,
     };
-    use std::{env, time::Duration as StdDuration};
+    use std::{env, sync::Arc, time::Duration as StdDuration};
     use tokio::sync::mpsc;
     use tokio::time::{sleep, timeout, Duration};
     use tracing::{info, Level};
     use tracing_subscriber::{filter, fmt, prelude::*};
 
+    use crate::engine::nl::types::{HandConfig, TableStakes};
     use crate::ledger::hash::LedgerHasher;
     use crate::ledger::messages::{AnyGameMessage, GameShuffleMessage};
     use crate::ledger::snapshot::{
@@ -382,11 +383,23 @@ mod tests {
             },
         );
 
+        let hand_cfg = HandConfig {
+            stakes: TableStakes {
+                small_blind: 0,
+                big_blind: 0,
+                ante: 0,
+            },
+            button: 0,
+            small_blind_seat: 0,
+            big_blind_seat: 0,
+            check_raise_allowed: true,
+        };
+
         let mut snapshot: TableSnapshot<PhaseShuffling, Curve> = TableSnapshot {
             game_id: TEST_GAME_ID,
             hand_id: Some(hand_id),
             sequence: 0,
-            cfg: None,
+            cfg: Arc::new(hand_cfg),
             shufflers: Arc::new(roster),
             players: Arc::new(Default::default()),
             seating: Arc::new(Default::default()),

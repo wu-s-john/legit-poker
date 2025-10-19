@@ -33,6 +33,7 @@ pub struct Model {
     pub current_hand_id: Option<i64>,
     pub current_state_hash: Option<Vec<u8>>,
     pub current_phase: Option<PhaseKind>,
+    pub default_hand_config_id: Option<i64>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -51,6 +52,7 @@ pub enum Column {
     CurrentHandId,
     CurrentStateHash,
     CurrentPhase,
+    DefaultHandConfigId,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
@@ -99,6 +101,7 @@ impl ColumnTrait for Column {
                 .to_owned()
                 .def()
                 .null(),
+            Self::DefaultHandConfigId => ColumnType::BigInteger.def().null(),
         }
     }
 }
@@ -109,7 +112,10 @@ impl RelationTrait for Relation {
             Self::Events => Entity::has_many(super::events::Entity).into(),
             Self::GamePlayers => Entity::has_many(super::game_players::Entity).into(),
             Self::GameShufflers => Entity::has_many(super::game_shufflers::Entity).into(),
-            Self::HandConfigs => Entity::has_many(super::hand_configs::Entity).into(),
+            Self::HandConfigs => Entity::belongs_to(super::hand_configs::Entity)
+                .from(Column::DefaultHandConfigId)
+                .to(super::hand_configs::Column::Id)
+                .into(),
             Self::HandPlayer => Entity::has_many(super::hand_player::Entity).into(),
             Self::Hands => Entity::belongs_to(super::hands::Entity)
                 .from(Column::CurrentHandId)

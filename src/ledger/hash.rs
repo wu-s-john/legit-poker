@@ -89,13 +89,8 @@ where
     let mut builder = TranscriptBuilder::new("ledger/state/init");
     append_ids(&mut builder, snapshot.game_id, snapshot.hand_id);
 
-    match snapshot.cfg.as_ref() {
-        Some(cfg) => {
-            builder.append_u8(1);
-            cfg.write_transcript(&mut builder);
-        }
-        None => builder.append_u8(0),
-    }
+    builder.append_u8(1);
+    snapshot.cfg.write_transcript(&mut builder);
 
     snapshot.shufflers.as_ref().write_transcript(&mut builder);
     snapshot.players.as_ref().write_transcript(&mut builder);

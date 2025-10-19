@@ -241,11 +241,15 @@ pub struct ShufflingHandState<C: CurveGroup> {
     pub turn_index: usize,
     pub initial_deck: [ElGamalCiphertext<C>; DECK_SIZE],
     pub latest_deck: [ElGamalCiphertext<C>; DECK_SIZE],
-    pub completed: bool,
     pub acted: bool,
     pub rng: StdRng,
 }
 
+impl<C: CurveGroup> ShufflingHandState<C> {
+    fn is_complete(&self) -> bool {
+        self.buffered.len() >= self.expected_order.len()
+    }
+}
 #[derive(Debug)]
 struct HandRuntime<C: CurveGroup> {
     pub game_id: GameId,
@@ -341,8 +345,8 @@ where
         hand_id: HandId,
         turn_index: usize,
         snapshot: &TableAtShuffling<C>,
-        updates: broadcast::Receiver<EnvelopedMessage<C, GameShuffleMessage<C>>>,
-    ) -> Result<HandSubscription<C>>
+        shuffle_updates: broadcast::Receiver<EnvelopedMessage<C, GameShuffleMessage<C>>>,
+    ) -> Result<HandSubscription<C, S>>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync,
@@ -394,9 +398,8 @@ where
             turn_index,
             initial_deck,
             latest_deck,
-            completed: false,
-            rng: StdRng::from_seed(hand_seed),
             acted: false,
+            rng: StdRng::from_seed(hand_seed),
         };
 
         let cancel = CancellationToken::new();
@@ -435,14 +438,14 @@ where
             shuffler_id: self.shuffler_id,
         };
         let history_cap = self.config.message_history_cap;
-        let handle = Self::spawn_hand_loop(
+        let handle = Self::spawn_shuffle_loop(
             self.index,
             api.clone(),
             params.clone(),
             secret.clone(),
             submit.clone(),
             Arc::clone(&runtime),
-            updates,
+            shuffle_updates,
             history_cap,
             public_key.clone(),
             actor,
@@ -450,10 +453,17 @@ where
 
         Ok(HandSubscription::new(
             key,
+            self.shuffler_id,
+            self.index,
             Arc::clone(&self.states),
             Arc::clone(&self.deal_handles),
             cancel,
             handle,
+            submit,
+            api,
+            params,
+            secret,
+            public_key,
         ))
     }
 
@@ -501,85 +511,14 @@ where
         .await
     }
 
-    pub fn handle_dealing_phase_started(
-        &self,
-        signal: &DealingPhaseStarted<C>,
-        updates: broadcast::Receiver<DealShufflerRequest<C>>,
-    ) -> Result<()>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-        C: CurveAbsorb<C::BaseField>,
-        C::Affine: Absorb,
-        C::ScalarField: Absorb,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
-        S::Parameters: Send + Sync + 'static,
-        S::SecretKey: Send + Sync + 'static,
-        C: Send + Sync + 'static,
-    {
-        let key = (signal.game_id, signal.hand_id);
-        let runtime = {
-            let entry = self.states.get(&key).ok_or_else(|| {
-                anyhow!(
-                    "hand {} for game {} not registered",
-                    signal.hand_id,
-                    signal.game_id
-                )
-            })?;
-            let runtime = Arc::clone(entry.value());
-            drop(entry);
-            runtime
-        };
-
-        let actor = ShufflerActor {
-            shuffler_id: self.shuffler_id,
-        };
-
-        let submit = self.submit.clone();
-        let api = Arc::clone(&self.api);
-        let params = Arc::clone(&self.params);
-        let secret = Arc::clone(&self.secret_key);
-        let public_key = self.public_key.clone();
-        let deal_handles = Arc::clone(&self.deal_handles);
-        let key_for_task = key;
-        let handle = Self::spawn_deal_loop(
-            self.index,
-            runtime,
-            updates,
-            submit,
-            api,
-            params,
-            secret,
-            public_key,
-            actor,
-            deal_handles,
-            key_for_task,
-        );
-
-        if let Some(previous) = self.deal_handles.insert(key, handle) {
-            previous.abort();
-        }
-
-        info!(
-            target = LOG_TARGET,
-            game_id = signal.game_id,
-            hand_id = signal.hand_id,
-            shuffler_id = self.shuffler_id,
-            "registered dealing phase listener"
-        );
-
-        Ok(())
-    }
-
-    fn spawn_hand_loop(
+    fn spawn_shuffle_loop(
         shuffler_index: usize,
         api: Arc<ShufflerKeypair<C>>,
         params: Arc<S::Parameters>,
         secret: Arc<S::SecretKey>,
         submit: mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: Arc<HandRuntime<C>>,
-        updates: broadcast::Receiver<EnvelopedMessage<C, GameShuffleMessage<C>>>,
+        shuffle_updates: broadcast::Receiver<EnvelopedMessage<C, GameShuffleMessage<C>>>,
         history_cap: usize,
         public_key: C,
         actor: ShufflerActor,
@@ -596,13 +535,13 @@ where
         tokio::spawn(async move {
             let game_id = runtime.game_id;
             let hand_id = runtime.hand_id;
-            if let Err(err) = Self::hand_loop(
+            if let Err(err) = Self::shuffle_loop(
                 api,
                 params,
                 secret,
                 submit,
                 Arc::clone(&runtime),
-                updates,
+                shuffle_updates,
                 history_cap,
                 public_key,
                 actor,
@@ -616,77 +555,18 @@ where
                     hand_id,
                     shuffler_index,
                     error = %err,
-                    "hand loop exited with error"
+                    "shuffle loop exited with error"
                 );
             } else {
                 debug!(
                     target = LOG_TARGET,
-                    game_id, hand_id, shuffler_index, "hand loop finished"
+                    game_id, hand_id, shuffler_index, "shuffle loop finished"
                 );
             }
         })
     }
 
-    fn spawn_deal_loop(
-        shuffler_index: usize,
-        runtime: Arc<HandRuntime<C>>,
-        updates: broadcast::Receiver<DealShufflerRequest<C>>,
-        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-        api: Arc<ShufflerKeypair<C>>,
-        params: Arc<S::Parameters>,
-        secret: Arc<S::SecretKey>,
-        public_key: C,
-        actor: ShufflerActor,
-        handles: Arc<DashMap<(GameId, HandId), JoinHandle<()>>>,
-        key: (GameId, HandId),
-    ) -> JoinHandle<()>
-    where
-        C: Send + Sync + 'static,
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + 'static,
-        C::BaseField: PrimeField + Send + Sync + 'static,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
-        S::Parameters: Send + Sync + 'static,
-        S::SecretKey: Send + Sync + 'static,
-    {
-        tokio::spawn(async move {
-            let result = Self::deal_loop(
-                runtime.clone(),
-                updates,
-                submit,
-                api,
-                params,
-                secret,
-                public_key,
-                actor,
-                shuffler_index,
-            )
-            .await;
-
-            if let Err(err) = result {
-                warn!(
-                    target = LOG_TARGET,
-                    game_id = runtime.game_id,
-                    hand_id = runtime.hand_id,
-                    shuffler_index,
-                    error = %err,
-                    "deal loop exited with error"
-                );
-            } else {
-                debug!(
-                    target = LOG_TARGET,
-                    game_id = runtime.game_id,
-                    hand_id = runtime.hand_id,
-                    shuffler_index,
-                    "deal loop finished"
-                );
-            }
-
-            handles.remove(&key);
-        })
-    }
-
-    async fn hand_loop(
+    async fn shuffle_loop(
         api: Arc<ShufflerKeypair<C>>,
         params: Arc<S::Parameters>,
         secret: Arc<S::SecretKey>,
@@ -712,7 +592,7 @@ where
                         game_id = runtime.game_id,
                         hand_id = runtime.hand_id,
                         shuffler_index,
-                        "cancellation token triggered; stopping hand loop"
+                        "cancellation token triggered; stopping shuffle loop"
                     );
                     break;
                 }
@@ -744,13 +624,17 @@ where
                                 }
                             }
 
-                            if runtime.state.lock().completed {
+                            let is_complete = {
+                                let state = runtime.state.lock();
+                                state.is_complete()
+                            };
+                            if is_complete {
                                 info!(
                                     target = LOG_TARGET,
                                     game_id = runtime.game_id,
                                     hand_id = runtime.hand_id,
                                     shuffler_index,
-                                    "shuffling complete; exiting hand loop"
+                                    "shuffling complete; exiting shuffle loop"
                                 );
                                 break;
                             }
@@ -971,6 +855,18 @@ where
             (blinding_envelope, unblinding_envelope)
         };
 
+        debug!(
+            target = LOG_TARGET,
+            game_id = runtime.game_id,
+            hand_id = runtime.hand_id,
+            shuffler_id = actor.shuffler_id,
+            deal_index = request.deal_index,
+            seat = request.seat,
+            hole_index = request.hole_index,
+            player_key = ?request.player_public_key,
+            "submitting player blinding and unblinding shares"
+        );
+
         submit
             .send(blinding_envelope)
             .await
@@ -1119,7 +1015,7 @@ where
         if envelope.hand_id != runtime.hand_id || envelope.game_id != runtime.game_id {
             return false;
         }
-        if state.completed {
+        if state.is_complete() {
             return false;
         }
 
@@ -1144,7 +1040,6 @@ where
             state.buffered.drain(0..drop_count);
         }
         state.next_nonce = state.next_nonce.max(envelope.nonce.saturating_add(1));
-        state.completed = state.buffered.len() >= state.expected_order.len();
 
         !state.acted && state.buffered.len() == state.turn_index
     }
@@ -1166,7 +1061,7 @@ where
     {
         let (envelope_for_state, deck_out_state, nonce_for_update) = {
             let mut state = runtime.state.lock();
-            if state.completed || state.acted {
+            if state.is_complete() || state.acted {
                 return Ok(());
             }
 
@@ -1307,37 +1202,198 @@ where
     }
 }
 
-pub struct HandSubscription<C: CurveGroup> {
+fn spawn_deal_loop<C, S>(
+    shuffler_index: usize,
+    runtime: Arc<HandRuntime<C>>,
+    updates: broadcast::Receiver<DealShufflerRequest<C>>,
+    submit: mpsc::Sender<AnyMessageEnvelope<C>>,
+    api: Arc<ShufflerKeypair<C>>,
+    params: Arc<S::Parameters>,
+    secret: Arc<S::SecretKey>,
+    public_key: C,
+    actor: ShufflerActor,
+    handles: Arc<DashMap<(GameId, HandId), JoinHandle<()>>>,
     key: (GameId, HandId),
+) -> JoinHandle<()>
+where
+    C: CurveGroup + Send + Sync + 'static,
+    C::Config: CurveConfig<ScalarField = C::ScalarField>,
+    C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + 'static + Absorb,
+    C::BaseField: PrimeField + Send + Sync + 'static,
+    C: CurveAbsorb<C::BaseField>,
+    C::Affine: Absorb,
+    S: SignatureScheme<PublicKey = C::Affine>,
+    S::Signature: SignatureEncoder + Send + Sync + 'static,
+    S::Parameters: Send + Sync + 'static,
+    S::SecretKey: Send + Sync + 'static,
+{
+    tokio::spawn(async move {
+        let result = Shuffler::<C, S>::deal_loop(
+            runtime.clone(),
+            updates,
+            submit,
+            api,
+            params,
+            secret,
+            public_key,
+            actor,
+            shuffler_index,
+        )
+        .await;
+
+        if let Err(err) = result {
+            warn!(
+                target = LOG_TARGET,
+                game_id = runtime.game_id,
+                hand_id = runtime.hand_id,
+                shuffler_index,
+                error = %err,
+                "deal loop exited with error"
+            );
+        } else {
+            debug!(
+                target = LOG_TARGET,
+                game_id = runtime.game_id,
+                hand_id = runtime.hand_id,
+                shuffler_index,
+                "deal loop finished"
+            );
+        }
+
+        handles.remove(&key);
+    })
+}
+
+pub struct HandSubscription<C, S>
+where
+    C: CurveGroup,
+    S: SignatureScheme<PublicKey = C::Affine>,
+{
+    key: (GameId, HandId),
+    shuffler_id: ShufflerId,
+    shuffler_index: usize,
     map: Arc<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
     deal_handles: Arc<DashMap<(GameId, HandId), JoinHandle<()>>>,
     cancel: CancellationToken,
     handle: Option<JoinHandle<()>>,
+    submit: mpsc::Sender<AnyMessageEnvelope<C>>,
+    api: Arc<ShufflerKeypair<C>>,
+    params: Arc<S::Parameters>,
+    secret: Arc<S::SecretKey>,
+    public_key: C,
 }
 
-impl<C: CurveGroup> HandSubscription<C> {
+impl<C, S> HandSubscription<C, S>
+where
+    C: CurveGroup,
+    S: SignatureScheme<PublicKey = C::Affine>,
+{
     fn new(
         key: (GameId, HandId),
+        shuffler_id: ShufflerId,
+        shuffler_index: usize,
         map: Arc<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
         deal_handles: Arc<DashMap<(GameId, HandId), JoinHandle<()>>>,
         cancel: CancellationToken,
         handle: JoinHandle<()>,
+        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
+        api: Arc<ShufflerKeypair<C>>,
+        params: Arc<S::Parameters>,
+        secret: Arc<S::SecretKey>,
+        public_key: C,
     ) -> Self {
         Self {
             key,
+            shuffler_id,
+            shuffler_index,
             map,
             deal_handles,
             cancel,
             handle: Some(handle),
+            submit,
+            api,
+            params,
+            secret,
+            public_key,
         }
     }
 
     pub fn cancel(&self) {
         self.cancel.cancel();
     }
+
+    pub(crate) fn shuffler_id(&self) -> ShufflerId {
+        self.shuffler_id
+    }
+
+    pub(crate) fn handle_dealing_phase_started(
+        &self,
+        signal: &DealingPhaseStarted<C>,
+        updates: broadcast::Receiver<DealShufflerRequest<C>>,
+    ) -> Result<()>
+    where
+        C: Send + Sync + 'static,
+        C::Config: CurveConfig<ScalarField = C::ScalarField>,
+        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + Absorb,
+        C::BaseField: PrimeField + Send + Sync,
+        C: CurveAbsorb<C::BaseField>,
+        C::Affine: Absorb,
+        S::Signature: SignatureEncoder + Send + Sync + 'static,
+        S::Parameters: Send + Sync + 'static,
+        S::SecretKey: Send + Sync + 'static,
+    {
+        if signal.game_id != self.key.0 || signal.hand_id != self.key.1 {
+            return Ok(());
+        }
+        if !signal.shufflers.iter().any(|&id| id == self.shuffler_id) {
+            return Ok(());
+        }
+
+        let runtime = {
+            let entry = self.map.get(&self.key).ok_or_else(|| {
+                anyhow!("hand {} for game {} not registered", self.key.1, self.key.0)
+            })?;
+            Arc::clone(entry.value())
+        };
+
+        let actor = ShufflerActor {
+            shuffler_id: self.shuffler_id,
+        };
+        let handle = spawn_deal_loop::<C, S>(
+            self.shuffler_index,
+            runtime,
+            updates,
+            self.submit.clone(),
+            Arc::clone(&self.api),
+            Arc::clone(&self.params),
+            Arc::clone(&self.secret),
+            self.public_key.clone(),
+            actor,
+            Arc::clone(&self.deal_handles),
+            self.key,
+        );
+
+        if let Some(previous) = self.deal_handles.insert(self.key, handle) {
+            previous.abort();
+        }
+
+        info!(
+            target = LOG_TARGET,
+            game_id = self.key.0,
+            hand_id = self.key.1,
+            shuffler_id = self.shuffler_id,
+            "registered dealing phase listener"
+        );
+
+        Ok(())
+    }
 }
 
-impl<C: CurveGroup> Drop for HandSubscription<C> {
+impl<C, S> Drop for HandSubscription<C, S>
+where
+    C: CurveGroup,
+    S: SignatureScheme<PublicKey = C::Affine>,
+{
     fn drop(&mut self) {
         self.cancel.cancel();
         if let Some(handle) = self.handle.take() {
@@ -1545,7 +1601,6 @@ mod tests {
                 turn_index: 0,
                 initial_deck: deck.clone(),
                 latest_deck: deck,
-                completed: false,
                 acted: false,
                 rng: StdRng::seed_from_u64(0xABCDu64),
             }),
@@ -1561,7 +1616,22 @@ mod tests {
             card_plan: BTreeMap::new(),
             assignments: BTreeMap::new(),
         };
-        shuffler
+        let dummy_handle = tokio::spawn(async {});
+        let subscription = HandSubscription::<Curve, ShufflerScheme<Curve>>::new(
+            key,
+            0,
+            0,
+            Arc::clone(&shuffler.states),
+            Arc::clone(&shuffler.deal_handles),
+            runtime.cancel.clone(),
+            dummy_handle,
+            shuffler.submit.clone(),
+            Arc::clone(&shuffler.api),
+            Arc::clone(&shuffler.params),
+            Arc::clone(&shuffler.secret_key),
+            shuffler.public_key.clone(),
+        );
+        subscription
             .handle_dealing_phase_started(&start_signal, deal_tx.subscribe())
             .expect("register dealing loop");
 
@@ -1643,7 +1713,6 @@ mod tests {
                 turn_index: 0,
                 initial_deck: deck.clone(),
                 latest_deck: deck,
-                completed: false,
                 acted: false,
                 rng: StdRng::seed_from_u64(0xEEEEu64),
             }),
@@ -1659,7 +1728,22 @@ mod tests {
             card_plan: BTreeMap::new(),
             assignments: BTreeMap::new(),
         };
-        shuffler
+        let dummy_handle = tokio::spawn(async {});
+        let subscription = HandSubscription::<Curve, ShufflerScheme<Curve>>::new(
+            key,
+            0,
+            0,
+            Arc::clone(&shuffler.states),
+            Arc::clone(&shuffler.deal_handles),
+            runtime.cancel.clone(),
+            dummy_handle,
+            shuffler.submit.clone(),
+            Arc::clone(&shuffler.api),
+            Arc::clone(&shuffler.params),
+            Arc::clone(&shuffler.secret_key),
+            shuffler.public_key.clone(),
+        );
+        subscription
             .handle_dealing_phase_started(&start_signal, deal_tx.subscribe())
             .expect("register dealing loop");
 

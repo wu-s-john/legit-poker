@@ -31,6 +31,7 @@ pub struct Model {
     pub current_sequence: i32,
     pub current_state_hash: Option<Vec<u8>>,
     pub current_phase: Option<PhaseKind>,
+    pub hand_config_id: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
@@ -47,6 +48,7 @@ pub enum Column {
     CurrentSequence,
     CurrentStateHash,
     CurrentPhase,
+    HandConfigId,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
@@ -65,6 +67,7 @@ impl PrimaryKeyTrait for PrimaryKey {
 pub enum Relation {
     Events,
     Games,
+    HandConfigs,
     HandPlayer,
     HandShufflers,
     TableSnapshots,
@@ -90,6 +93,7 @@ impl ColumnTrait for Column {
                 .to_owned()
                 .def()
                 .null(),
+            Self::HandConfigId => ColumnType::BigInteger.def(),
         }
     }
 }
@@ -101,6 +105,10 @@ impl RelationTrait for Relation {
             Self::Games => Entity::belongs_to(super::games::Entity)
                 .from(Column::GameId)
                 .to(super::games::Column::Id)
+                .into(),
+            Self::HandConfigs => Entity::belongs_to(super::hand_configs::Entity)
+                .from(Column::HandConfigId)
+                .to(super::hand_configs::Column::Id)
                 .into(),
             Self::HandPlayer => Entity::has_many(super::hand_player::Entity).into(),
             Self::HandShufflers => Entity::has_many(super::hand_shufflers::Entity).into(),
@@ -118,6 +126,12 @@ impl Related<super::events::Entity> for Entity {
 impl Related<super::games::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Games.def()
+    }
+}
+
+impl Related<super::hand_configs::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::HandConfigs.def()
     }
 }
 

@@ -366,7 +366,7 @@ where
     pub game_id: GameId,
     pub hand_id: Option<HandId>,
     pub sequence: SnapshotSeq,
-    pub cfg: Option<Shared<HandConfig>>,
+    pub cfg: Shared<HandConfig>,
     pub shufflers: Shared<ShufflerRoster<C>>,
     pub players: Shared<PlayerRoster<C>>,
     pub seating: Shared<SeatingMap>,

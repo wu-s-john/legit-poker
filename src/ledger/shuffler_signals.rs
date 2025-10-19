@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use ark_ec::CurveGroup;
 use async_trait::async_trait;
+use tracing::{debug, info};
 
 use crate::engine::nl::types::SeatId;
 use crate::ledger::hash::LedgerHasher;
@@ -13,6 +14,8 @@ use crate::ledger::snapshot::{
 };
 use crate::ledger::types::{GameId, HandId, ShufflerId, StateHash};
 use crate::shuffling::{ElGamalCiphertext, PlayerAccessibleCiphertext};
+
+const LOG_TARGET: &str = "ledger::shuffler_signals";
 
 /// Request emitted to shufflers when they must contribute shares for a specific card.
 #[derive(Clone, Debug)]
@@ -138,7 +141,16 @@ where
 
     pub async fn observe_snapshot(&self, snapshot: &AnyTableSnapshot<C>) -> Result<()> {
         match snapshot {
-            AnyTableSnapshot::Dealing(table) => self.handle_dealing_snapshot(table).await,
+            AnyTableSnapshot::Dealing(table) => {
+                info!(
+                    target = LOG_TARGET,
+                    game_id = table.game_id,
+                    hand_id = ?table.hand_id,
+                    sequence = table.sequence,
+                    "observed dealing snapshot"
+                );
+                self.handle_dealing_snapshot(table).await
+            }
             AnyTableSnapshot::Preflop(table) => {
                 if let Some(hand_id) = table.hand_id {
                     self.teardown_hand((table.game_id, hand_id));
@@ -190,6 +202,15 @@ where
         let key = (table.game_id, hand_id);
 
         let mut state_entry = self.ensure_hand_state(key, table)?;
+        debug!(
+            target = LOG_TARGET,
+            game_id = table.game_id,
+            hand_id,
+            sequence = table.sequence,
+            snapshot_seq = state_entry.last_snapshot_seq,
+            announced = state_entry.announced_cards.len(),
+            "processing dealing snapshot"
+        );
         state_entry.card_plan = table.dealing.card_plan.clone();
         state_entry.shufflers = table.shufflers.iter().map(|(id, _)| *id).collect();
         let should_mark_phase_started = !state_entry.dealing_started_emitted;
@@ -211,12 +232,47 @@ where
             self.router
                 .broadcast_dealing_started(&shufflers, &signal)
                 .await?;
+            info!(
+                target = LOG_TARGET,
+                game_id = table.game_id,
+                hand_id,
+                shuffler_count = shufflers.len(),
+                "emitted dealing phase started signal"
+            );
         }
 
+        let request_count = requests.len();
         for request in &requests {
             self.router
                 .broadcast_deal_request(&shufflers, request)
                 .await?;
+            debug!(
+                target = LOG_TARGET,
+                game_id = table.game_id,
+                hand_id,
+                request_kind = match request {
+                    DealShufflerRequest::Player(_) => "player",
+                    DealShufflerRequest::Board(_) => "board",
+                },
+                "broadcast deal request"
+            );
+        }
+
+        if request_count == 0 {
+            debug!(
+                target = LOG_TARGET,
+                game_id = table.game_id,
+                hand_id,
+                "no new dealing requests in snapshot"
+            );
+        } else {
+            info!(
+                target = LOG_TARGET,
+                game_id = table.game_id,
+                hand_id,
+                new_requests = request_count,
+                "dispatched dealing requests"
+            );
         }
 
         if let Some(mut state_entry) = self.hands.get_mut(&key) {
@@ -225,6 +281,14 @@ where
             }
             state_entry.announced_cards.extend(new_indices.into_iter());
             state_entry.last_snapshot_seq = table.sequence;
+            info!(
+                target = LOG_TARGET,
+                game_id = key.0,
+                hand_id = key.1,
+                announced = state_entry.announced_cards.len(),
+                sequence = table.sequence,
+                "updated dealing hand state"
+            );
         }
 
         Ok(())
@@ -270,6 +334,17 @@ where
         let mut requests = Vec::new();
         let mut new_indices = Vec::new();
 
+        debug!(
+            target = LOG_TARGET,
+            game_id = table.game_id,
+            hand_id,
+            card_plan_entries = state.card_plan.len(),
+            assignments = table.dealing.assignments.len(),
+            player_ciphertexts = table.dealing.player_ciphertexts.len(),
+            community_cards = table.dealing.community_cards.len(),
+            "collecting new dealing requests"
+        );
+
         for (deal_index, destination) in &state.card_plan {
             if state.announced_cards.contains(deal_index) {
                 continue;
@@ -280,7 +355,18 @@ where
                     let key = (*seat, *hole_index);
                     let ciphertext = match table.dealing.player_ciphertexts.get(&key) {
                         Some(ct) => ct.clone(),
-                        None => continue,
+                        None => {
+                            debug!(
+                                target = LOG_TARGET,
+                                game_id = table.game_id,
+                                hand_id,
+                                deal_index,
+                                seat = *seat,
+                                hole_index = *hole_index,
+                                "player ciphertext missing; skipping request"
+                            );
+                            continue;
+                        }
                     };
 
                     let player_public_key = self.player_public_key_for_seat(table, *seat)?;
@@ -306,6 +392,15 @@ where
                             &ct,
                         )?);
                         new_indices.push(*deal_index);
+                    } else {
+                        debug!(
+                            target = LOG_TARGET,
+                            game_id = table.game_id,
+                            hand_id,
+                            deal_index,
+                            board_index,
+                            "board ciphertext missing; skipping request"
+                        );
                     }
                 }
                 CardDestination::Burn | CardDestination::Unused => {
@@ -376,6 +471,15 @@ where
             .players
             .get(&player_id)
             .context("missing player identity for seated player")?;
+        debug!(
+            target = LOG_TARGET,
+            game_id = table.game_id,
+            hand_id = ?table.hand_id,
+            seat,
+            player_id,
+            public_key = ?identity.public_key,
+            "resolved player public key for seat"
+        );
         Ok(identity.public_key.clone())
     }
 }

@@ -13,15 +13,18 @@ use crate::ledger::messages::{
 };
 use crate::ledger::snapshot::{
     build_default_card_plan, build_initial_betting_state, AnyPlayerActionMsg, AnyTableSnapshot,
-    BettingSnapshot, CardDestination, DealingSnapshot, DealtCard, PhaseBetting, PhaseShowdown,
-    PhaseShuffling, RevealedHand, RevealsSnapshot, ShufflingStep, SnapshotStatus, TableSnapshot,
+    BettingSnapshot, CardDestination, CardPlan, DealingSnapshot, DealtCard, PhaseBetting,
+    PhaseShowdown, PhaseShuffling, RevealedHand, RevealsSnapshot, SeatingMap, ShufflingStep,
+    SnapshotStatus, TableSnapshot,
 };
 use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::poseidon_config;
 use crate::showdown::{choose_best5_from7, idx_of};
-use crate::shuffling::player_decryption::combine_unblinding_shares;
+use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
+use crate::shuffling::player_decryption::{combine_unblinding_shares, PlayerAccessibleCiphertext};
 use crate::signing::Signable;
 use std::collections::BTreeMap;
+use tracing::warn;
 
 pub trait TransitionHandler<C>: GameMessage<C> + Signable
 where
@@ -50,6 +53,71 @@ where
     <M as TransitionHandler<C>>::apply_transition(snapshot, envelope, hasher)
 }
 
+fn empty_player_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
+    PlayerAccessibleCiphertext {
+        blinded_base: C::zero(),
+        blinded_message_with_player_key: C::zero(),
+        player_unblinding_helper: C::zero(),
+        shuffler_proofs: Vec::new(),
+    }
+}
+
+fn initialize_dealing_state<C: CurveGroup>(
+    final_deck: &[ElGamalCiphertext<C>; DECK_SIZE],
+    card_plan: CardPlan,
+    seating: &SeatingMap,
+) -> DealingSnapshot<C> {
+    let mut assignments = BTreeMap::new();
+    let mut player_ciphertexts = BTreeMap::new();
+    let mut player_unblinding_combined = BTreeMap::new();
+    let mut community_cards = BTreeMap::new();
+
+    for (&card_ref, destination) in card_plan.iter() {
+        let deck_idx = card_ref.saturating_sub(1) as usize;
+        if let Some(cipher) = final_deck.get(deck_idx) {
+            assignments.insert(
+                card_ref,
+                DealtCard {
+                    cipher: cipher.clone(),
+                    source_index: Some(deck_idx as u8),
+                },
+            );
+        }
+
+        match destination {
+            CardDestination::Hole { seat, hole_index } => {
+                if seating
+                    .get(seat)
+                    .map(|maybe_player| maybe_player.is_some())
+                    .unwrap_or(false)
+                {
+                    player_ciphertexts
+                        .entry((*seat, *hole_index))
+                        .or_insert_with(empty_player_ciphertext);
+                    player_unblinding_combined
+                        .entry((*seat, *hole_index))
+                        .or_insert_with(C::zero);
+                }
+            }
+            CardDestination::Board { .. } => {
+                community_cards.insert(card_ref, card_ref.saturating_sub(1));
+            }
+            CardDestination::Burn | CardDestination::Unused => {}
+        }
+    }
+
+    DealingSnapshot {
+        assignments,
+        player_ciphertexts,
+        player_blinding_contribs: Default::default(),
+        player_unblinding_shares: Default::default(),
+        player_unblinding_combined,
+        community_decryption_shares: Default::default(),
+        community_cards,
+        card_plan,
+    }
+}
+
 fn promote_to_dealing<C: CurveGroup>(
     table: TableSnapshot<PhaseShuffling, C>,
 ) -> Result<AnyTableSnapshot<C>> {
@@ -69,21 +137,13 @@ fn promote_to_dealing<C: CurveGroup>(
         ..
     } = table;
 
-    let card_plan = cfg
-        .as_ref()
-        .map(|cfg| build_default_card_plan(cfg, &seating))
-        .unwrap_or_default();
+    let card_plan = build_default_card_plan(cfg.as_ref(), &seating);
+    ensure!(
+        !card_plan.is_empty(),
+        "card plan empty when promoting to dealing"
+    );
 
-    let dealing = DealingSnapshot {
-        assignments: Default::default(),
-        player_ciphertexts: Default::default(),
-        player_blinding_contribs: Default::default(),
-        player_unblinding_shares: Default::default(),
-        player_unblinding_combined: Default::default(),
-        community_decryption_shares: Default::default(),
-        community_cards: Default::default(),
-        card_plan,
-    };
+    let dealing = initialize_dealing_state(&shuffling.final_deck, card_plan, &seating);
 
     Ok(AnyTableSnapshot::Dealing(TableSnapshot {
         game_id,
@@ -247,10 +307,30 @@ where
 
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
 
-        ensure!(
-            player_identity.public_key == target_player_public_key,
-            "blinding contribution targets unexpected player key"
-        );
+        if player_identity.public_key != target_player_public_key {
+            warn!(
+                target = "ledger::transition",
+                game_id = snapshot.game_id,
+                hand_id = snapshot.hand_id,
+                shuffler_id,
+                seat,
+                hole_index,
+                expected = ?player_identity.public_key,
+                actual = ?target_player_public_key,
+                "blinding contribution player key mismatch"
+            );
+            let roster_keys: Vec<String> = snapshot
+                .players
+                .iter()
+                .map(|(player_id, identity)| format!("{}:{:?}", player_id, identity.public_key))
+                .collect();
+            bail!(
+                "blinding contribution targets unexpected player key (seat {seat}, hole {hole_index}): expected {:?}, actual {:?}, roster {{{}}}",
+                player_identity.public_key,
+                target_player_public_key,
+                roster_keys.join(", ")
+            );
+        }
 
         let aggregated_key = shuffler.aggregated_public_key.clone();
 
@@ -325,13 +405,8 @@ where
             });
 
         if all_hole_cards_ready {
-            let cfg = snapshot
-                .cfg
-                .as_ref()
-                .map(|cfg| cfg.as_ref())
-                .context("hand configuration missing for betting transition")?;
-
-            let betting_state = build_initial_betting_state(cfg, snapshot.stacks.as_ref());
+            let betting_state =
+                build_initial_betting_state(snapshot.cfg.as_ref(), snapshot.stacks.as_ref());
             let betting = BettingSnapshot {
                 state: betting_state,
                 last_events: Vec::new(),
@@ -407,10 +482,29 @@ where
 
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
 
-        ensure!(
-            player_identity.public_key == target_player_public_key,
-            "partial unblinding share targets unexpected player key"
-        );
+        if player_identity.public_key != target_player_public_key {
+            warn!(
+                target = "ledger::transition",
+                game_id = snapshot.game_id,
+                hand_id = snapshot.hand_id,
+                seat,
+                hole_index,
+                expected = ?player_identity.public_key,
+                actual = ?target_player_public_key,
+                "partial unblinding share player key mismatch"
+            );
+            let roster_keys: Vec<String> = snapshot
+                .players
+                .iter()
+                .map(|(player_id, identity)| format!("{}:{:?}", player_id, identity.public_key))
+                .collect();
+            bail!(
+                "partial unblinding share targets unexpected player key (seat {seat}, hole {hole_index}): expected {:?}, actual {:?}, roster {{{}}}",
+                player_identity.public_key,
+                target_player_public_key,
+                roster_keys.join(", ")
+            );
+        }
 
         let entry = snapshot
             .dealing
@@ -1430,6 +1524,14 @@ mod tests {
         match result {
             AnyTableSnapshot::Dealing(next) => {
                 assert_eq!(next.dealing.card_plan.len(), DECK_SIZE);
+                assert_eq!(next.dealing.assignments.len(), DECK_SIZE);
+                let hole_slots = next
+                    .dealing
+                    .card_plan
+                    .values()
+                    .filter(|destination| matches!(destination, CardDestination::Hole { .. }))
+                    .count();
+                assert_eq!(next.dealing.player_ciphertexts.len(), hole_slots);
                 assert_eq!(next.shuffling.final_deck, final_deck);
                 assert_eq!(
                     next.shuffling.steps.len(),

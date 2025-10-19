@@ -17,7 +17,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const DEAL_CHANNEL_CAPACITY: usize = 2048;
 
@@ -53,8 +53,8 @@ where
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
 {
-    shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
     deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
+    active_hands: Arc<DashMap<(GameId, HandId), Vec<HandSubscription<C, ShufflerScheme<C>>>>>,
 }
 
 impl<C> CoordinatorDealRouter<C>
@@ -65,12 +65,12 @@ where
     C::Affine: Absorb,
 {
     fn new(
-        shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
         deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
+        active_hands: Arc<DashMap<(GameId, HandId), Vec<HandSubscription<C, ShufflerScheme<C>>>>>,
     ) -> Self {
         Self {
-            shufflers,
             deal_channels,
+            active_hands,
         }
     }
 }
@@ -94,32 +94,45 @@ where
         let sender_for_subs = sender.clone();
         self.deal_channels.insert(key, sender);
 
-        for &shuffler_id in shufflers {
-            match self.shufflers.get(&shuffler_id) {
-                Some(shuffler) => {
-                    if let Err(err) =
-                        shuffler.handle_dealing_phase_started(signal, sender_for_subs.subscribe())
-                    {
+        if let Some(subs_ref) = self.active_hands.get(&key) {
+            let subscriptions = subs_ref.value();
+            for &shuffler_id in shufflers {
+                match subscriptions
+                    .iter()
+                    .find(|subscription| subscription.shuffler_id() == shuffler_id)
+                {
+                    Some(subscription) => {
+                        if let Err(err) = subscription
+                            .handle_dealing_phase_started(signal, sender_for_subs.subscribe())
+                        {
+                            warn!(
+                                target = LOG_TARGET,
+                                game_id = signal.game_id,
+                                hand_id = signal.hand_id,
+                                shuffler_id,
+                                error = %err,
+                                "failed to register dealing listener"
+                            );
+                        }
+                    }
+                    None => {
                         warn!(
                             target = LOG_TARGET,
                             game_id = signal.game_id,
                             hand_id = signal.hand_id,
                             shuffler_id,
-                            error = %err,
-                            "failed to register dealing listener"
+                            "no shuffler subscription registered for dealing"
                         );
                     }
                 }
-                None => {
-                    warn!(
-                        target = LOG_TARGET,
-                        game_id = signal.game_id,
-                        hand_id = signal.hand_id,
-                        shuffler_id,
-                        "router missing shuffler instance"
-                    );
-                }
             }
+        } else {
+            warn!(
+                target = LOG_TARGET,
+                game_id = signal.game_id,
+                hand_id = signal.hand_id,
+                "no hand subscriptions available for dealing start"
+            );
         }
 
         Ok(())
@@ -146,6 +159,16 @@ where
                         "failed to broadcast deal request"
                     );
                 }
+                debug!(
+                    target = LOG_TARGET,
+                    game_id = key.0,
+                    hand_id = key.1,
+                    request_kind = match request {
+                        DealShufflerRequest::Player(_) => "player",
+                        DealShufflerRequest::Board(_) => "board",
+                    },
+                    "deal request broadcast"
+                );
             }
             None => {
                 warn!(
@@ -247,7 +270,7 @@ where
     realtime_handle: Option<JoinHandle<anyhow::Result<()>>>,
     worker_handle: Option<JoinHandle<Result<(), WorkerError>>>,
     shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
-    active_hands: DashMap<(GameId, HandId), Vec<HandSubscription<C>>>,
+    active_hands: Arc<DashMap<(GameId, HandId), Vec<HandSubscription<C, ShufflerScheme<C>>>>>,
     deal_channels: Arc<DashMap<(GameId, HandId), broadcast::Sender<DealShufflerRequest<C>>>>,
 }
 
@@ -323,9 +346,10 @@ where
 
         let shufflers = Arc::new(shufflers);
         let deal_channels = Arc::new(DashMap::new());
+        let active_hands = Arc::new(DashMap::new());
         let router: Arc<dyn ShufflerSignalRouter<C>> = Arc::new(CoordinatorDealRouter::new(
-            Arc::clone(&shufflers),
             Arc::clone(&deal_channels),
+            Arc::clone(&active_hands),
         ));
         let dispatcher = Arc::new(ShufflerDealSignalDispatcher::new(
             Arc::clone(&router),
@@ -349,7 +373,7 @@ where
             realtime_handle,
             worker_handle,
             shufflers,
-            active_hands: DashMap::new(),
+            active_hands,
             deal_channels,
         })
     }

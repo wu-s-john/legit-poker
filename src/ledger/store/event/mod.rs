@@ -46,6 +46,69 @@ fn status_columns(status: &SnapshotStatus) -> (bool, Option<String>) {
     }
 }
 
+fn log_event_payload<C>(
+    event: &FinalizedAnyMessageEnvelope<C>,
+    payload_value: &JsonValue,
+    message: &str,
+) -> anyhow::Result<()>
+where
+    C: CurveGroup,
+{
+    if tracing::enabled!(Level::DEBUG) {
+        let payload_json = serde_json::to_string_pretty(payload_value)?;
+        debug!(
+            target = LOG_TARGET,
+            hand_id = event.envelope.hand_id,
+            nonce = event.envelope.nonce,
+            %payload_json,
+            message = message
+        );
+    }
+    Ok(())
+}
+
+fn active_model_for_event<C>(
+    event: &FinalizedAnyMessageEnvelope<C>,
+    stored: &StoredGameMessage,
+    payload_value: &JsonValue,
+) -> anyhow::Result<events::ActiveModel>
+where
+    C: CurveGroup + CanonicalSerialize,
+{
+    let actor_cols = encode_actor(&event.envelope.actor)?;
+    let public_key = serialize_curve(&event.envelope.public_key)?;
+    let nonce = i64::try_from(event.envelope.nonce)
+        .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.envelope.nonce))?;
+    let (is_successful, failure_message) = status_columns(&event.snapshot_status);
+    let snapshot_number = i32::try_from(event.snapshot_sequence_id).map_err(|_| {
+        anyhow!(
+            "snapshot sequence {} exceeds i32::MAX",
+            event.snapshot_sequence_id
+        )
+    })?;
+
+    Ok(events::ActiveModel {
+        game_id: Set(event.envelope.game_id),
+        hand_id: Set(event.envelope.hand_id),
+        entity_kind: Set(actor_cols.entity_kind),
+        entity_id: Set(actor_cols.entity_id),
+        actor_kind: Set(actor_cols.actor_kind),
+        seat_id: Set(actor_cols.seat_id),
+        shuffler_id: Set(actor_cols.shuffler_id),
+        public_key: Set(public_key),
+        nonce: Set(nonce),
+        phase: Set(to_db_event_phase(event.envelope.message.value.phase())),
+        snapshot_number: Set(snapshot_number),
+        is_successful: Set(is_successful),
+        failure_message: Set(failure_message),
+        resulting_phase: Set(to_db_event_phase(event.applied_phase)),
+        message_type: Set(stored.message_type().to_string()),
+        payload: Set(payload_value.clone()),
+        signature: Set(event.envelope.message.signature.clone()),
+        ..Default::default()
+    })
+}
+
 #[async_trait]
 pub trait EventStore<C>: Send + Sync
 where
@@ -97,49 +160,9 @@ where
             game_id: event.envelope.game_id,
             message: stored.clone(),
         })?;
-        if tracing::enabled!(Level::DEBUG) {
-            let payload_json = serde_json::to_string_pretty(&payload_value)?;
-            debug!(
-                target: LOG_TARGET,
-                hand_id = event.envelope.hand_id,
-                nonce = event.envelope.nonce,
-                %payload_json,
-                "persisting event payload"
-            );
-        }
+        log_event_payload(event, &payload_value, "persisting event payload")?;
 
-        let actor_cols = encode_actor(&event.envelope.actor)?;
-        let public_key = serialize_curve(&event.envelope.public_key)?;
-        let nonce = i64::try_from(event.envelope.nonce)
-            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.envelope.nonce))?;
-        let (is_successful, failure_message) = status_columns(&event.snapshot_status);
-        let snapshot_number = i32::try_from(event.snapshot_sequence_id).map_err(|_| {
-            anyhow!(
-                "snapshot sequence {} exceeds i32::MAX",
-                event.snapshot_sequence_id
-            )
-        })?;
-
-        let active = events::ActiveModel {
-            game_id: Set(event.envelope.game_id),
-            hand_id: Set(event.envelope.hand_id),
-            entity_kind: Set(actor_cols.entity_kind),
-            entity_id: Set(actor_cols.entity_id),
-            actor_kind: Set(actor_cols.actor_kind),
-            seat_id: Set(actor_cols.seat_id),
-            shuffler_id: Set(actor_cols.shuffler_id),
-            public_key: Set(public_key),
-            nonce: Set(nonce),
-            phase: Set(to_db_event_phase(event.envelope.message.value.phase())),
-            snapshot_number: Set(snapshot_number),
-            is_successful: Set(is_successful),
-            failure_message: Set(failure_message),
-            resulting_phase: Set(to_db_event_phase(event.applied_phase)),
-            message_type: Set(stored.message_type().to_string()),
-            payload: Set(JsonValue::from(payload_value.clone())),
-            signature: Set(event.envelope.message.signature.clone()),
-            ..Default::default()
-        };
+        let active = active_model_for_event(event, &stored, &payload_value)?;
 
         events::Entity::insert(active)
             .exec(&self.connection)
@@ -159,49 +182,9 @@ where
             game_id: event.envelope.game_id,
             message: stored.clone(),
         })?;
-        if tracing::enabled!(Level::DEBUG) {
-            let payload_json = serde_json::to_string_pretty(&payload_value)?;
-            debug!(
-                target: LOG_TARGET,
-                hand_id = event.envelope.hand_id,
-                nonce = event.envelope.nonce,
-                %payload_json,
-                "persisting event payload (txn)"
-            );
-        }
+        log_event_payload(event, &payload_value, "persisting event payload (txn)")?;
 
-        let actor_cols = encode_actor(&event.envelope.actor)?;
-        let public_key = serialize_curve(&event.envelope.public_key)?;
-        let nonce = i64::try_from(event.envelope.nonce)
-            .map_err(|_| anyhow!("nonce {} exceeds i64::MAX", event.envelope.nonce))?;
-        let (is_successful, failure_message) = status_columns(&event.snapshot_status);
-        let snapshot_number = i32::try_from(event.snapshot_sequence_id).map_err(|_| {
-            anyhow!(
-                "snapshot sequence {} exceeds i32::MAX",
-                event.snapshot_sequence_id
-            )
-        })?;
-
-        let active = events::ActiveModel {
-            game_id: Set(event.envelope.game_id),
-            hand_id: Set(event.envelope.hand_id),
-            entity_kind: Set(actor_cols.entity_kind),
-            entity_id: Set(actor_cols.entity_id),
-            actor_kind: Set(actor_cols.actor_kind),
-            seat_id: Set(actor_cols.seat_id),
-            shuffler_id: Set(actor_cols.shuffler_id),
-            public_key: Set(public_key),
-            nonce: Set(nonce),
-            phase: Set(to_db_event_phase(event.envelope.message.value.phase())),
-            snapshot_number: Set(snapshot_number),
-            is_successful: Set(is_successful),
-            failure_message: Set(failure_message),
-            resulting_phase: Set(to_db_event_phase(event.applied_phase)),
-            message_type: Set(stored.message_type().to_string()),
-            payload: Set(JsonValue::from(payload_value.clone())),
-            signature: Set(event.envelope.message.signature.clone()),
-            ..Default::default()
-        };
+        let active = active_model_for_event(event, &stored, &payload_value)?;
 
         events::Entity::insert(active)
             .exec(txn)

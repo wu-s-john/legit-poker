@@ -4,7 +4,9 @@ use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use hex::encode as hex_encode;
 use sea_orm::sea_query::OnConflict;
-use sea_orm::{ActiveModelTrait, DatabaseTransaction, EntityTrait, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
+};
 use serde_json::{json, Value as JsonValue};
 use tracing::info;
 
@@ -12,12 +14,12 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::sea_orm_active_enums::{
     self as db_enums, ApplicationStatus as DbApplicationStatus,
 };
-use crate::db::entity::{games, hands, phases, table_snapshots};
+use crate::db::entity::{games, hand_configs, hands, phases, table_snapshots};
 use crate::engine::nl::events::NormalizedAction;
 use crate::engine::nl::state::BettingState;
 use crate::engine::nl::types::{
-    PlayerState as EnginePlayerState, PlayerStatus as EnginePlayerStatus, Pot as EnginePot,
-    Pots as EnginePots, Street,
+    HandConfig, PlayerState as EnginePlayerState, PlayerStatus as EnginePlayerStatus,
+    Pot as EnginePot, Pots as EnginePots, Street,
 };
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::{
@@ -31,6 +33,7 @@ use crate::shuffling::data_structures::{
     append_ciphertext, append_curve_point, append_shuffle_proof, DECK_SIZE,
 };
 use crate::signing::{Signable, TranscriptBuilder};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct PreparedPhase {
@@ -45,6 +48,7 @@ pub struct PreparedSnapshot {
     pub(super) sequence: i32,
     pub(super) state_hash: StateHash,
     pub(super) previous_hash: Option<StateHash>,
+    pub(super) hand_config: Arc<HandConfig>,
     pub(super) stacks: JsonValue,
     pub(super) shuffling_hash: Option<StateHash>,
     pub(super) dealing_hash: Option<StateHash>,
@@ -121,6 +125,7 @@ where
         sequence,
         state_hash: table.state_hash,
         previous_hash: table.previous_hash,
+        hand_config: Arc::clone(&table.cfg),
         stacks,
         shuffling_hash: Some(hash),
         dealing_hash: None,
@@ -158,6 +163,7 @@ where
         sequence,
         state_hash: table.state_hash,
         previous_hash: table.previous_hash,
+        hand_config: Arc::clone(&table.cfg),
         stacks,
         shuffling_hash: Some(shuffle_hash),
         dealing_hash: Some(deal_hash),
@@ -199,6 +205,7 @@ where
         sequence,
         state_hash: table.state_hash,
         previous_hash: table.previous_hash,
+        hand_config: Arc::clone(&table.cfg),
         stacks,
         shuffling_hash: Some(shuffle_hash),
         dealing_hash: Some(deal_hash),
@@ -240,6 +247,7 @@ where
         sequence,
         state_hash: table.state_hash,
         previous_hash: table.previous_hash,
+        hand_config: Arc::clone(&table.cfg),
         stacks,
         shuffling_hash: Some(shuffle_hash),
         dealing_hash: Some(deal_hash),
@@ -281,6 +289,7 @@ where
         sequence,
         state_hash: table.state_hash,
         previous_hash: table.previous_hash,
+        hand_config: Arc::clone(&table.cfg),
         stacks,
         shuffling_hash: Some(shuffle_hash),
         dealing_hash: Some(deal_hash),
@@ -731,6 +740,9 @@ pub(super) async fn persist_prepared_snapshot(
         "phase entries ensured"
     );
 
+    let hand_config_id =
+        ensure_hand_config(txn, prepared.game_id, prepared.hand_config.as_ref()).await?;
+
     let snapshot_model = table_snapshots::ActiveModel {
         snapshot_hash: Set(prepared.state_hash.as_bytes().to_vec()),
         game_id: Set(prepared.game_id),
@@ -738,7 +750,7 @@ pub(super) async fn persist_prepared_snapshot(
         sequence: Set(prepared.sequence),
         state_hash: Set(prepared.state_hash.as_bytes().to_vec()),
         previous_hash: Set(prepared.previous_hash.map(|hash| hash.as_bytes().to_vec())),
-        hand_config_id: Set(None),
+        hand_config_id: Set(hand_config_id),
         player_stacks: Set(prepared.stacks.clone()),
         shuffling_hash: Set(prepared.shuffling_hash.map(|hash| hash.as_bytes().to_vec())),
         dealing_hash: Set(prepared.dealing_hash.map(|hash| hash.as_bytes().to_vec())),
@@ -769,6 +781,7 @@ pub(super) async fn persist_prepared_snapshot(
         id: Set(prepared.hand_id),
         ..Default::default()
     };
+    hand_model.hand_config_id = Set(hand_config_id);
     hand_model.current_sequence = Set(prepared.sequence);
     hand_model.current_state_hash = Set(Some(prepared.state_hash.as_bytes().to_vec()));
     hand_model.current_phase = Set(Some(prepared.phase_kind.clone()));
@@ -784,6 +797,7 @@ pub(super) async fn persist_prepared_snapshot(
         id: Set(prepared.game_id),
         ..Default::default()
     };
+    game_model.default_hand_config_id = Set(Some(hand_config_id));
     game_model.current_hand_id = Set(Some(prepared.hand_id));
     game_model.current_state_hash = Set(Some(prepared.state_hash.as_bytes().to_vec()));
     game_model.current_phase = Set(Some(prepared.phase_kind.clone()));
@@ -796,6 +810,56 @@ pub(super) async fn persist_prepared_snapshot(
     );
 
     Ok(())
+}
+
+async fn ensure_hand_config(
+    txn: &DatabaseTransaction,
+    game_id: GameId,
+    config: &HandConfig,
+) -> anyhow::Result<i64> {
+    use hand_configs::Column;
+
+    let small_blind = chips_to_i64(config.stakes.small_blind, "small blind")?;
+    let big_blind = chips_to_i64(config.stakes.big_blind, "big blind")?;
+    let ante = chips_to_i64(config.stakes.ante, "ante")?;
+    let button = i16::from(config.button);
+    let small_blind_seat = i16::from(config.small_blind_seat);
+    let big_blind_seat = i16::from(config.big_blind_seat);
+
+    if let Some(existing) = hand_configs::Entity::find()
+        .filter(Column::GameId.eq(game_id))
+        .filter(Column::SmallBlind.eq(small_blind))
+        .filter(Column::BigBlind.eq(big_blind))
+        .filter(Column::Ante.eq(ante))
+        .filter(Column::ButtonSeat.eq(button))
+        .filter(Column::SmallBlindSeat.eq(small_blind_seat))
+        .filter(Column::BigBlindSeat.eq(big_blind_seat))
+        .filter(Column::CheckRaiseAllowed.eq(config.check_raise_allowed))
+        .order_by_desc(Column::CreatedAt)
+        .one(txn)
+        .await?
+    {
+        return Ok(existing.id);
+    }
+
+    let active = hand_configs::ActiveModel {
+        game_id: Set(game_id),
+        small_blind: Set(small_blind),
+        big_blind: Set(big_blind),
+        ante: Set(ante),
+        button_seat: Set(button),
+        small_blind_seat: Set(small_blind_seat),
+        big_blind_seat: Set(big_blind_seat),
+        check_raise_allowed: Set(config.check_raise_allowed),
+        ..Default::default()
+    };
+
+    let inserted = active.insert(txn).await?;
+    Ok(inserted.id)
+}
+
+fn chips_to_i64(value: u64, label: &str) -> anyhow::Result<i64> {
+    i64::try_from(value).map_err(|_| anyhow!("{label} {value} exceeds i64::MAX"))
 }
 
 async fn insert_phase_if_needed(
