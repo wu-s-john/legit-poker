@@ -159,7 +159,7 @@ pub struct RSShuffleWithBayerGrothLinkCircuit<
     pub c_power: C,
 
     // ============ Private Inputs ============
-    /// The actual permutation values (1-indexed)
+    /// The actual permutation values (0-indexed)
     pub permutation: [C::ScalarField; N],
     /// RS shuffle witness data
     pub witness: PermutationWitnessTrace<N, LEVELS>,

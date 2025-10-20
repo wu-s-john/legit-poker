@@ -125,7 +125,7 @@ where
     Ok(d)
 }
 
-/// Gadget for computing left product: L = ∏_{i=1}^N (d_i - perm_offset_challenge_z)
+/// Gadget for computing left product: L = ∏_{i=0}^{N-1} (d_i - perm_offset_challenge_z)
 pub(crate) fn left_product_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
     d: &[FV],
     perm_offset_challenge_z: &FV,
@@ -145,7 +145,7 @@ where
     Ok(product)
 }
 
-/// Gadget for computing right product: R = ∏_{i=1}^N (perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z)
+/// Gadget for computing right product: R = ∏_{i=0}^{N-1} (perm_mixing_challenge_y*i + perm_power_challenge^{i} - perm_offset_challenge_z)
 /// Uses running power computation for efficiency
 pub(crate) fn right_product_gadget<F: PrimeField, ConstraintF: PrimeField, FV>(
     cs: ConstraintSystemRef<ConstraintF>,
@@ -161,9 +161,11 @@ where
     let mut product = FV::one();
     let mut power_of_challenge = FV::one(); // perm_power_challenge^0 = 1
 
-    for i in 1..=n {
-        // Update running power: perm_power_challenge^i = perm_power_challenge^(i-1) * perm_power_challenge
-        power_of_challenge *= perm_power_challenge;
+    for i in 0..n {
+        if i > 0 {
+            // Update running power: perm_power_challenge^i = perm_power_challenge^(i-1) * perm_power_challenge
+            power_of_challenge *= perm_power_challenge;
+        }
 
         // Compute i as field element
         let i_const = FV::new_constant(cs.clone(), F::from(i as u64))?;
@@ -190,8 +192,8 @@ where
 /// Returns: C_d = Com(d - z; t) = ∑(d_i - z)*G_i + t*G_blinding
 pub fn compute_blinded_commitment_to_d_minus_z_gadget<F, C, CV, FV, const N: usize>(
     generator: &CV,
-    permutation: &[FV; N],        // a vector (π(1), ..., π(N))
-    perm_power_vector: &[FV; N],  // b vector (x^π(1), ..., x^π(N))
+    permutation: &[FV; N],        // a vector (π(0), ..., π(N-1))
+    perm_power_vector: &[FV; N],  // b vector (x^{π(0)}, ..., x^{π(N-1)})
     perm_mixing_challenge_y: &FV, // y challenge
     perm_offset_challenge_z: &FV, // z challenge
     blinding_r: &FV,              // blinding factor r for permutation
@@ -208,7 +210,7 @@ where
     // Step 1: Compute d vector: d_i = y*a_i + b_i
     let d_vector = linear_blend_gadget(permutation, perm_power_vector, perm_mixing_challenge_y)?;
 
-    // Step 2: Compute d - z vector: (d_1 - z, ..., d_N - z)
+    // Step 2: Compute d - z vector: (d_0 - z, ..., d_{N-1} - z)
     let d_minus_z_vector: Vec<FV> = d_vector
         .iter()
         .map(|d_i| d_i - perm_offset_challenge_z)
@@ -293,11 +295,11 @@ where
     Ok(randomness_factor)
 }
 
-/// Compute the permutation power vector = (x^π(1), ..., x^π(N)) in-circuit
+/// Compute the permutation power vector = (x^{π(0)}, ..., x^{π(N-1)}) in-circuit
 ///
 /// Parameters:
 /// - cs: Constraint system reference
-/// - permutation: The permutation π as circuit variables (values 1 to N)
+/// - permutation: The permutation π as circuit variables (values 0 to N-1)
 /// - perm_power_challenge: The challenge x derived from Fiat-Shamir
 ///
 /// Returns: Power vector as circuit variables
@@ -353,9 +355,9 @@ mod tests {
     use ark_relations::gr1cs::ConstraintSystem;
     use ark_std::{rand::RngCore, test_rng, UniformRand};
 
-    /// Generate a random permutation of 1..=n
+    /// Generate a random permutation of 0..n-1
     fn random_permutation(n: usize, rng: &mut impl RngCore) -> Vec<usize> {
-        let mut perm: Vec<usize> = (1..=n).collect();
+        let mut perm: Vec<usize> = (0..n).collect();
 
         // Fisher-Yates shuffle
         for i in (1..n).rev() {
@@ -399,8 +401,8 @@ mod tests {
         let mut rng = test_rng();
         let cs = ConstraintSystem::<Fr>::new_ref();
 
-        // Create a small permutation
-        let perm = vec![2, 1, 3];
+        // Create a small permutation (0-indexed values)
+        let perm = vec![2, 0, 1];
         let n = perm.len();
 
         // Generate challenges
@@ -448,7 +450,7 @@ mod tests {
         let y_val = Fr::rand(&mut rng);
         let z_val = Fr::rand(&mut rng);
 
-        // Compute hidden vector b = (x^π(1), ..., x^π(n))
+        // Compute hidden vector b = (x^{π(0)}, ..., x^{π(n-1)})
         let b_vals: Vec<Fr> = perm.iter().map(|&i| x_val.pow(&[i as u64])).collect();
 
         // Native implementation
@@ -603,14 +605,14 @@ mod tests {
         // Test with n=1 (trivial permutation)
         {
             let n = 1;
-            let _perm = vec![1];
-            let a_vals = vec![Fr::one()];
+            let _perm = vec![0];
+            let a_vals = vec![Fr::from(0u64)];
 
             let x_val = Fr::rand(&mut rng);
             let y_val = Fr::rand(&mut rng);
             let z_val = Fr::rand(&mut rng);
 
-            let b_vals = vec![x_val];
+            let b_vals = vec![Fr::one()];
 
             let left = native::compute_left_product(
                 &native::compute_linear_blend(&a_vals, &b_vals, y_val),
@@ -625,7 +627,7 @@ mod tests {
         // Test with identity permutation
         {
             let n = 5;
-            let perm: Vec<usize> = (1..=n).collect();
+            let perm: Vec<usize> = (0..n).collect();
             let a_vals: Vec<Fr> = perm.iter().map(|&i| Fr::from(i as u64)).collect();
 
             let x_val = Fr::rand(&mut rng);
@@ -647,7 +649,7 @@ mod tests {
         // Test with reverse permutation
         {
             let n = 5;
-            let perm: Vec<usize> = (1..=n).rev().collect();
+            let perm: Vec<usize> = (0..n).rev().collect();
             let a_vals: Vec<Fr> = perm.iter().map(|&i| Fr::from(i as u64)).collect();
 
             let x_val = Fr::rand(&mut rng);

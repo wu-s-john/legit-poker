@@ -149,13 +149,12 @@ where
     // 3) Apply the exact prepared permutation to the input deck and re-encrypt
     // Use the RS permutation extracted from the prepared witness to guarantee
     // consistency between BG setup (b, commitments) and the output deck.
-    let pi_1idx: [usize; N] = prepared.rs_trace.extract_permutation_array();
-    let pi_0idx: [usize; N] = core::array::from_fn(|i| pi_1idx[i] - 1);
+    let pi: [usize; N] = prepared.rs_trace.extract_permutation_array();
     // Fresh rerandomization scalars
     let rerand: [G::ScalarField; N] =
         crate::shuffling::encryption::generate_randomization_array::<G::Config, N>(rng);
     let ct_output: [ElGamalCiphertext<G>; N] = std::array::from_fn(|i| {
-        ct_input[pi_0idx[i]].add_encryption_layer(rerand[i], config.public_key.clone())
+        ct_input[pi[i]].add_encryption_layer(rerand[i], config.public_key.clone())
     });
     tracing::info!(
         target = LOG_TARGET,
@@ -254,10 +253,10 @@ where
 
     // Sanity-check the Σ‑protocol relation inline (mirrors native verifier)
     {
-        use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1;
+        use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence;
         use crate::shuffling::pedersen_commitment::msm_ciphertexts;
         let powers: [G::ScalarField; N] =
-            compute_powers_sequence_with_index_1(prepared.bg_setup.power_challenge_scalar);
+            compute_powers_sequence(prepared.bg_setup.power_challenge_scalar);
         let input_ciphertext_aggregator = msm_ciphertexts(ct_input, &powers);
         let lhs = super::bayer_groth_permutation::reencryption_protocol::encrypt_one_and_combine(
             &config.public_key,

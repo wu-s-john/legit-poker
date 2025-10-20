@@ -23,13 +23,13 @@ pub fn compute_linear_blend<F: Field>(
         .collect()
 }
 
-/// Compute left product: L = ∏_{i=1}^N (d_i - perm_offset_challenge_z)
+/// Compute left product: L = ∏_{i=0}^{N-1} (d_i - perm_offset_challenge_z)
 pub fn compute_left_product<F: Field>(d: &[F], perm_offset_challenge_z: F) -> F {
     d.iter()
         .fold(F::one(), |acc, d_i| acc * (*d_i - perm_offset_challenge_z))
 }
 
-/// Compute right product: R = ∏_{i=1}^N (perm_mixing_challenge_y*i + perm_power_challenge^i - perm_offset_challenge_z)
+/// Compute right product: R = ∏_{i=0}^{N-1} (perm_mixing_challenge_y*i + perm_power_challenge^{i} - perm_offset_challenge_z)
 /// Uses running power computation for efficiency
 pub fn compute_right_product<F: Field>(
     perm_mixing_challenge_y: F,
@@ -40,8 +40,10 @@ pub fn compute_right_product<F: Field>(
     let mut result = F::one();
     let mut power_of_challenge = F::one(); // perm_power_challenge^0 = 1
 
-    for i in 1..=n {
-        power_of_challenge *= perm_power_challenge; // perm_power_challenge^i
+    for i in 0..n {
+        if i > 0 {
+            power_of_challenge *= perm_power_challenge; // perm_power_challenge^i
+        }
         let i_scalar = F::from(i as u64);
         let term =
             perm_mixing_challenge_y * i_scalar + power_of_challenge - perm_offset_challenge_z;
@@ -62,8 +64,8 @@ pub fn fixed_base_scalar_mul<G: CurveGroup>(scalar: G::ScalarField, base: G::Aff
 /// Complete permutation equality proof computation (native)
 ///
 /// Given:
-/// - perm_vector: permutation vector (π(1), ..., π(N))
-/// - perm_power_vector: power vector (x^π(1), ..., x^π(N))
+/// - perm_vector: permutation vector (π(0), ..., π(N-1))
+/// - perm_power_vector: power vector (x^{π(0)}, ..., x^{π(N-1)})
 /// - perm_mixing_challenge_y: challenge for linear combination
 /// - perm_offset_challenge_z: offset challenge for polynomial evaluation
 /// - perm_power_challenge: challenge x for computing powers
@@ -111,13 +113,13 @@ where
     (left, right, point)
 }
 
-/// Compute the permutation power vector = (perm_power_challenge^π(1), ..., perm_power_challenge^π(N))
+/// Compute the permutation power vector = (perm_power_challenge^{π(0)}, ..., perm_power_challenge^{π(N-1)})
 /// given a permutation and power challenge
 pub fn compute_perm_power_vector<F: Field>(
     permutation: &[usize],
     perm_power_challenge: F,
 ) -> Vec<F> {
-    // power_vector[i] = perm_power_challenge^π(i+1) since permutation is 1-indexed
+    // power_vector[i] = perm_power_challenge^{π(i)} with 0-indexed permutation values
     permutation
         .iter()
         .map(|&pi| perm_power_challenge.pow(&[pi as u64]))
@@ -129,12 +131,12 @@ pub fn verify_permutation_equality<F: Field>(left_product: F, right_product: F) 
     left_product == right_product
 }
 
-/// Compute the left product for permutation equality check: ∏(y*π(i) + x^π(i) - z) for i=1..N
+/// Compute the left product for permutation equality check: ∏(y*π(i) + x^{π(i)} - z) for i=0..N-1
 /// This is the product over the permuted values
 ///
 /// # Parameters
-/// - `permutation`: The permutation vector [π(1), ..., π(N)]
-/// - `perm_power_vector`: The power vector [x^π(1), ..., x^π(N)]
+/// - `permutation`: The permutation vector [π(0), ..., π(N-1)]
+/// - `perm_power_vector`: The power vector [x^{π(0)}, ..., x^{π(N-1)}]
 /// - `perm_mixing_challenge_y`: The mixing challenge y
 /// - `perm_offset_challenge_z`: The offset challenge z
 pub fn compute_left_product_for_permutation_check<F: PrimeField, const N: usize>(
@@ -153,7 +155,7 @@ pub fn compute_left_product_for_permutation_check<F: PrimeField, const N: usize>
     product
 }
 
-/// Compute the right product for permutation equality check: ∏(y*i + x^i - z) for i=1..N
+/// Compute the right product for permutation equality check: ∏(y*i + x^{i} - z) for i=0..N-1
 /// This is the product over the natural order
 ///
 /// # Parameters
@@ -166,8 +168,8 @@ pub fn compute_right_product_for_permutation_check<F: PrimeField, const N: usize
     perm_offset_challenge_z: F,
 ) -> F {
     let mut product = F::one();
-    for i in 1..=N {
-        // Compute y*i + x^i - z
+    for i in 0..N {
+        // Compute y*i + x^{i} - z
         let i_scalar = F::from(i as u64);
         let x_pow_i = perm_power_challenge.pow(&[i as u64]);
         let term = perm_mixing_challenge_y * i_scalar + x_pow_i - perm_offset_challenge_z;
@@ -180,6 +182,7 @@ pub fn compute_right_product_for_permutation_check<F: PrimeField, const N: usize
 mod tests {
     use super::*;
     use ark_bn254::Fr;
+    use ark_ff::Zero;
     use ark_std::{test_rng, UniformRand};
 
     #[test]
@@ -227,10 +230,10 @@ mod tests {
             n,
         );
 
-        // (2*1 + 3^1 - 1) * (2*2 + 3^2 - 1) * (2*3 + 3^3 - 1)
-        // = (2 + 3 - 1) * (4 + 9 - 1) * (6 + 27 - 1)
-        // = 4 * 12 * 32 = 1536
-        assert_eq!(result, Fr::from(1536u64));
+        // (2*0 + 3^0 - 1) * (2*1 + 3^1 - 1) * (2*2 + 3^2 - 1)
+        // = (0 + 1 - 1) * (2 + 3 - 1) * (4 + 9 - 1)
+        // = 0 * 4 * 12 = 0
+        assert_eq!(result, Fr::zero());
     }
 
     #[test]
@@ -240,15 +243,15 @@ mod tests {
         let mut rng = test_rng();
         let n = 5;
 
-        // Create a permutation: [3, 1, 4, 2, 5]
-        let perm = vec![3, 1, 4, 2, 5];
+        // Create a permutation: [3, 1, 4, 2, 0]
+        let perm = vec![3, 1, 4, 2, 0];
         let perm_vector: Vec<Fr> = perm.iter().map(|&i| Fr::from(i as u64)).collect();
 
         let perm_power_challenge = Fr::rand(&mut rng);
         let perm_mixing_challenge_y = Fr::rand(&mut rng);
         let perm_offset_challenge_z = Fr::rand(&mut rng);
 
-        // Compute power vector = (perm_power_challenge^3, perm_power_challenge^1, perm_power_challenge^4, perm_power_challenge^2, perm_power_challenge^5)
+        // Compute power vector = (perm_power_challenge^3, perm_power_challenge^1, perm_power_challenge^4, perm_power_challenge^2, perm_power_challenge^0)
         let perm_power_vector: Vec<Fr> = perm
             .iter()
             .map(|&i| perm_power_challenge.pow(&[i as u64]))

@@ -8,7 +8,7 @@
 //!
 //! where
 //!   - a = (x^1, x^2, …, x^N) with x←FS is the public power vector
-//!   - b = (b_1, …, b_N) = (x^{π(1)}, x^{π(2)}, …, x^{π(N)}) is the output-aligned permuted power vector
+//!   - b = (b_0, …, b_{N-1}) = (x^{π(0)}, x^{π(1)}, …, x^{π(N-1)}) is the output-aligned permuted power vector
 //!   - ρ = -Σ_i b_i·ρ_i = -Σ_i x^{π(i)}·ρ_i is the aggregate rerandomization
 //!
 //! ## Math identity proved by the Σ‑protocol
@@ -47,13 +47,13 @@
 //!
 //! ## Implementation Details
 //! - Uses const generics (N) for compile-time size checking and type safety.
-//! - `a_j` = x^(j+1) for j=0..N-1 is the public power vector (1-indexed in math)
+//! - `a_j` = x^{j} for j=0..N-1 is the public power vector (0-indexed in math)
 //! - `b_i` = x^{π(i)} for i=0..N-1 is the output-aligned permuted power vector
 //! - The Pedersen commitment is a *scalar-vector* Pedersen over N coordinates.
 //! - No π^{-1} computation required - we work directly with π
 
 use crate::pedersen_commitment::bytes_opening::ReencryptionWindow;
-use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1;
+use crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence;
 use crate::shuffling::curve_absorb::CurveAbsorb;
 use crate::shuffling::data_structures::ElGamalCiphertext;
 use crate::shuffling::pedersen_commitment::{msm_ciphertexts, pedersen_commit_scalars};
@@ -63,6 +63,8 @@ use ark_crypto_primitives::{
     sponge::CryptographicSponge,
 };
 use ark_ec::CurveGroup;
+#[cfg(test)]
+use ark_ff::One;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::UniformRand;
@@ -154,7 +156,7 @@ where
 {
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive proof generation");
 
-    let powers: [G::ScalarField; N] = compute_powers_sequence_with_index_1(perm_power_challenge);
+    let powers: [G::ScalarField; N] = compute_powers_sequence(perm_power_challenge);
 
     // Compute aggregator C^a directly on provided ciphertexts
     let input_ciphertext_aggregator = msm_ciphertexts(input_ciphertexts, &powers);
@@ -273,7 +275,7 @@ where
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
 
     let powers: [G::ScalarField; N] =
-        crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence_with_index_1(
+        crate::shuffling::bayer_groth_permutation::utils::compute_powers_sequence(
             perm_power_challenge,
         );
 
@@ -547,15 +549,14 @@ mod tests {
         let input_idx: [usize; N] = core::array::from_fn(|i| i);
         let rs_trace = run_rs_shuffle_permutation::<Fq, usize, N, LEVELS>(seed, &input_idx);
 
-        // Extract 1-indexed permutation for BG transcript helper and 0-indexed for shuffling
-        let perm_1idx: [usize; N] = rs_trace.extract_permutation_array();
-        let perm_0idx: [usize; N] = core::array::from_fn(|i| perm_1idx[i] - 1);
+        // Extract 0-indexed permutation for BG transcript helper and shuffling
+        let perm: [usize; N] = rs_trace.extract_permutation_array();
 
         // Build input deck and shuffle + rerandomize
         let (c_in, _enc_r) =
             generate_random_ciphertexts::<G1Projective, N>(&keys.public_key, &mut rng);
         let (c_out, rerand) =
-            shuffle_and_rerandomize_random(&c_in, &perm_0idx, keys.public_key, &mut rng);
+            shuffle_and_rerandomize_random(&c_in, &perm, keys.public_key, &mut rng);
 
         // Derive (x, b, c_power) via BG transcript helper
         let mut bg_tr = new_bayer_groth_transcript_with_poseidon::<Fq>(b"reencryption-proof");
@@ -564,14 +565,14 @@ mod tests {
         let (_b_base, b_scalar, setup) = bg_tr.compute_power_challenge_setup::<G1Projective, N>(
             &perm_params,
             &power_params,
-            &perm_1idx,
+            &perm,
             blinding_r,
             blinding_s,
         );
 
         // Sanity: recompute b from perm + x and compare
         let b_check = crate::shuffling::bayer_groth_permutation::utils::compute_perm_power_vector(
-            &perm_1idx,
+            &perm,
             setup.power_challenge_scalar,
         );
         assert_eq!(
@@ -706,12 +707,12 @@ mod tests {
         // Derive challenge x (would come from earlier Fiat-Shamir steps)
         let x = Fr::from(2u64); // Fixed for testing
 
-        // Compute b array: b[i] = x^{π(i)+1} for output-aligned powers with 1-based indexing
+        // Compute b array: b[i] = x^{π(i)} for output-aligned powers with 0-based indexing
         let mut b = [Fr::zero(); N];
         for i in 0..N {
-            b[i] = x.pow(&[(pi[i] + 1) as u64]);
+            b[i] = x.pow(&[pi[i] as u64]);
         }
-        tracing::trace!("Computed b array for witness (output-aligned with 1-based indexing)");
+        tracing::trace!("Computed b array for witness (output-aligned with 0-based indexing)");
 
         // rerandomization_scalars are already output-indexed from shuffle_and_rerandomize_random
         let rerandomization_scalars = rerandomizations_output;
@@ -1000,7 +1001,7 @@ mod tests {
         });
 
         // Use the utils function to compute aggregator with powers
-        let powers = compute_powers_sequence_with_index_1(x);
+        let powers = compute_powers_sequence(x);
         let agg = msm_ciphertexts(&output_ciphertexts, &powers);
 
         // Manually compute expected
@@ -1008,7 +1009,7 @@ mod tests {
             c1: G1Projective::zero(),
             c2: G1Projective::zero(),
         };
-        let mut x_power = x;
+        let mut x_power = Fr::one();
         for i in 0..N {
             expected.c1 += output_ciphertexts[i].c1 * x_power;
             expected.c2 += output_ciphertexts[i].c2 * x_power;
@@ -1123,10 +1124,10 @@ mod tests {
         // FS challenge and vectors
         let x = Fr::from(2u64);
 
-        // b[i] = x^{π(i)+1} for output-aligned powers with 1-based indexing
+        // b[i] = x^{π(i)} for output-aligned powers with 0-based indexing
         let mut b = [Fr::zero(); N];
         for i in 0..N {
-            b[i] = x.pow(&[(pi[i] + 1) as u64]);
+            b[i] = x.pow(&[pi[i] as u64]);
         }
 
         // power_perm_commitment = com(b; power_perm_blinding_factor)
@@ -1280,11 +1281,10 @@ mod tests {
         let x = Fr::from(2u64);
         tracing::info!(target: TEST_TARGET, "Challenge x = {:?}", x);
 
-        // Compute b array: b[i] = x^{π(i)+1} for output-aligned powers with 1-based indexing
-        // The protocol uses 1-based indexing for powers: a_j = x^{j+1}
-        // So we need b[i] = x^{π(i)+1} to match this indexing
-        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1+1} = x^2, b[1] = x^{2+1} = x^3, etc.
-        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[(pi[i] + 1) as u64]));
+        // Compute b array: b[i] = x^{π(i)} for output-aligned powers with 0-based indexing
+        // The protocol uses 0-based indexing for powers: a_j = x^{j}
+        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1}, b[1] = x^{2}, etc.
+        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[pi[i] as u64]));
 
         tracing::info!(target: TEST_TARGET, "Computed b vector (output-aligned powers):");
         for (i, b_i) in b.iter().enumerate() {
@@ -1302,7 +1302,7 @@ mod tests {
         tracing::info!(target: TEST_TARGET, "Rerandomization scalars: all zeros (no rerandomization)");
 
         // Verify the shuffle relation holds: ∏C_j^{x^j} = ∏(C'_i)^{b_i} (since ρ=0)
-        let powers = compute_powers_sequence_with_index_1::<Fr, N>(x);
+        let powers = compute_powers_sequence::<Fr, N>(x);
         tracing::info!(target: TEST_TARGET, "Powers of x: {:?}", powers);
 
         // Compute ∏C_j^{x^j}
@@ -1474,11 +1474,10 @@ mod tests {
         let x = Fr::from(2u64);
         tracing::info!(target: TEST_TARGET, "Challenge x = {:?}", x);
 
-        // Compute b array: b[i] = x^{π(i)+1} for output-aligned powers with 1-based indexing
-        // The protocol uses 1-based indexing for powers: a_j = x^{j+1}
-        // So we need b[i] = x^{π(i)+1} to match this indexing
-        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1+1} = x^2, b[1] = x^{2+1} = x^3, etc.
-        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[(pi[i] + 1) as u64]));
+        // Compute b array: b[i] = x^{π(i)} for output-aligned powers with 0-based indexing
+        // The protocol uses 0-based indexing for powers: a_j = x^{j}
+        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1}, b[1] = x^{2}, etc.
+        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[pi[i] as u64]));
 
         tracing::info!(target: TEST_TARGET, "Computed b vector (output-aligned powers):");
         for (i, b_i) in b.iter().enumerate() {
@@ -1643,15 +1642,14 @@ mod tests {
         let x = Fr::from(2u64);
         tracing::info!(target: TEST_TARGET, "Challenge x = {:?}", x);
 
-        // Compute b array: b[i] = x^{π(i)+1} for output-aligned powers with 1-based indexing
-        // The protocol uses 1-based indexing for powers: a_j = x^{j+1}
-        // So we need b[i] = x^{π(i)+1} to match this indexing
-        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1+1} = x^2, b[1] = x^{2+1} = x^3, etc.
-        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[(pi[i] + 1) as u64]));
+        // Compute b array: b[i] = x^{π(i)} for output-aligned powers with 0-based indexing
+        // The protocol uses 0-based indexing for powers: a_j = x^{j}
+        // π = [1, 2, 3, 0] (0-based), so b[0] = x^{1}, b[1] = x^{2}, etc.
+        let b: [Fr; N] = std::array::from_fn(|i| x.pow(&[pi[i] as u64]));
 
-        tracing::info!(target: TEST_TARGET, "Computed b vector (output-aligned powers with 1-based indexing):");
+        tracing::info!(target: TEST_TARGET, "Computed b vector (output-aligned powers with 0-based indexing):");
         for (i, b_i) in b.iter().enumerate() {
-            tracing::info!(target: TEST_TARGET, "  b[{}] = x^{} = {:?}", i, pi[i] + 1, b_i);
+            tracing::info!(target: TEST_TARGET, "  b[{}] = x^{} = {:?}", i, pi[i], b_i);
         }
 
         // VERIFY THE SHUFFLE RELATION BEFORE RUNNING THE PROTOCOL

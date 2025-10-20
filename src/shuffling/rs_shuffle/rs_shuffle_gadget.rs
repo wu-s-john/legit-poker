@@ -1099,12 +1099,12 @@ mod tests {
 
         // Generate witness data
         let seed = Fr::from(123u64);
-        // Create input array with 1-based values for permutation
-        let input_array: [usize; N] = std::array::from_fn(|i| i + 1);
+        // Create input array with 0-based values for permutation
+        let input_array: [usize; N] = std::array::from_fn(|i| i);
         let rs_shuffle_trace =
             run_rs_shuffle_permutation::<Fr, usize, N, LEVELS>(seed, &input_array);
 
-        // The output_array directly contains the permuted values (1-based)
+        // The output_array directly contains the permuted values (0-based)
         let permutation_native: Vec<usize> = rs_shuffle_trace.permuted_output.to_vec();
 
         // Generate random challenges for native computation

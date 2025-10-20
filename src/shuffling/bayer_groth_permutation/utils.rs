@@ -6,11 +6,11 @@ use crate::{shuffling::pedersen_commitment::msm_ciphertexts, ElGamalCiphertext};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 #[cfg(test)]
-use ark_r1cs_std::fields::fp::FpVar;
+use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};
 #[cfg(test)]
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 
-/// Compute the power sequence [x^1, x^2, ..., x^N] efficiently for SNARKs
+/// Compute the power sequence [x^0, x^1, ..., x^{N-1}] efficiently for SNARKs
 ///
 /// This function avoids using `pow()` which is inefficient in SNARKs.
 /// Instead, it uses iterative multiplication which is much cheaper in constraints.
@@ -19,12 +19,12 @@ use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError};
 /// - `x`: The base value to compute powers of
 ///
 /// # Returns
-/// An array [x^1, x^2, ..., x^N]
+/// An array [x^0, x^1, ..., x^{N-1}]
 ///
-pub(crate) fn compute_powers_sequence_with_index_1<F: PrimeField, const N: usize>(x: F) -> [F; N] {
-    // Use scan pattern to accumulate powers
+pub(crate) fn compute_powers_sequence<F: PrimeField, const N: usize>(x: F) -> [F; N] {
+    // Use scan pattern to accumulate powers starting at exponent 0
     let mut powers = Vec::with_capacity(N);
-    let mut current = x;
+    let mut current = F::one();
     powers.push(current);
 
     for _ in 1..N {
@@ -37,7 +37,7 @@ pub(crate) fn compute_powers_sequence_with_index_1<F: PrimeField, const N: usize
         .expect("Vector length should match array size N")
 }
 
-/// Compute the power sequence [x^1, x^2, ..., x^N] inside a SNARK circuit
+/// Compute the power sequence [x^0, x^1, ..., x^{N-1}] inside a SNARK circuit
 ///
 /// This is the circuit version of `compute_powers_sequence` that efficiently
 /// computes powers using iterative multiplication rather than bit decomposition.
@@ -47,18 +47,18 @@ pub(crate) fn compute_powers_sequence_with_index_1<F: PrimeField, const N: usize
 /// - `x`: The base value as a circuit variable
 ///
 /// # Returns
-/// An array of circuit variables representing [x^1, x^2, ..., x^N]
+/// An array of circuit variables representing [x^0, x^1, ..., x^{N-1}]
 ///
 /// # Constraints
 /// Enforces N-1 multiplication constraints: x_{i+1} = x_i * x
 #[cfg(test)]
 pub fn compute_powers_sequence_gadget<F: PrimeField, const N: usize>(
-    _cs: ConstraintSystemRef<F>,
+    cs: ConstraintSystemRef<F>,
     x: &FpVar<F>,
 ) -> Result<[FpVar<F>; N], SynthesisError> {
-    // Use scan pattern to accumulate powers in circuit
+    // Use scan pattern to accumulate powers in circuit starting at exponent 0
     let mut powers = Vec::with_capacity(N);
-    let mut current = x.clone();
+    let mut current = FpVar::new_constant(cs.clone(), F::one())?;
     powers.push(current.clone());
 
     for _ in 1..N {
@@ -69,23 +69,22 @@ pub fn compute_powers_sequence_gadget<F: PrimeField, const N: usize>(
     powers.try_into().map_err(|_| SynthesisError::Unsatisfiable)
 }
 
-/// Compute the permutation power vector = (x^π(1), ..., x^π(N))
+/// Compute the permutation power vector = (x^{π(0)}, ..., x^{π(N-1)})
 ///
 /// Given a permutation π and a challenge x, this computes the power vector
 /// where the i-th element is x raised to the power of π(i).
 ///
 /// # Parameters
-/// - `permutation`: The permutation π (1-indexed values)
+/// - `permutation`: The permutation π (0-indexed values)
 /// - `perm_power_challenge`: The challenge x derived from Fiat-Shamir (in scalar field)
 ///
 /// # Returns
-/// An array where `power_vector[i] = x^π(i)` for i = 0..N-1
+/// An array where `power_vector[i] = x^{π(i)}` for i = 0..N-1
 pub(crate) fn compute_perm_power_vector<F: PrimeField, const N: usize>(
     permutation: &[usize; N],
     perm_power_challenge: F,
 ) -> [F; N] {
-    // power_vector[i] = x^π(i)
-    // Note: permutation contains 1-indexed values
+    // power_vector[i] = x^{π(i)} with 0-indexed permutation values
     let power_vector: Vec<F> = permutation
         .iter()
         .map(|&pi| perm_power_challenge.pow(&[pi as u64]))
@@ -108,7 +107,7 @@ pub(crate) fn compute_perm_power_vector<F: PrimeField, const N: usize>(
 /// efficient circuit computation without field conversion.
 ///
 /// # Parameters
-/// - `permutation`: The permutation π (1-indexed values)
+/// - `permutation`: The permutation π (0-indexed values)
 /// - `power_challenge`: The challenge x in base field
 ///
 /// # Returns
@@ -117,34 +116,33 @@ pub(crate) fn compute_perm_power_vector_base_field<F: PrimeField, const N: usize
     permutation: &[usize; N],
     power_challenge: F,
 ) -> [F; N] {
-    // power_vector[i] = x^π(i) in base field
-    // Note: permutation contains 1-indexed values
+    // power_vector[i] = x^{π(i)} in base field
     std::array::from_fn(|i| power_challenge.pow(&[permutation[i] as u64]))
 }
 
-/// Compute the power permutation vector b = (x^{π(0)+1}, ..., x^{π(N-1)+1})
+/// Compute the power permutation vector b = (x^{π(0)}, ..., x^{π(N-1)})
 ///
 /// Given a permutation π and a challenge x, this computes the power vector
-/// where the i-th element is x raised to the power of (π(i) + 1).
-/// This uses 1-based indexing for the powers.
+/// where the i-th element is x raised to the power of π(i).
+/// This uses 0-based indexing for the powers.
 ///
 /// # Parameters
 /// - `permutation`: The permutation π (0-indexed array with 0-indexed values)
 /// - `perm_power_challenge`: The challenge x derived from Fiat-Shamir (in scalar field)
 ///
 /// # Returns
-/// An array where `b[i] = x^{π(i)+1}` for i = 0..N-1
+/// An array where `b[i] = x^{π(i)}` for i = 0..N-1
 #[cfg(test)]
 pub(crate) fn compute_power_permutation_vector<F: PrimeField, const N: usize>(
     permutation: &[usize; N],
     perm_power_challenge: F,
 ) -> [F; N] {
-    // b[i] = x^{π(i)+1} with 1-based indexing
-    std::array::from_fn(|i| perm_power_challenge.pow(&[(permutation[i] + 1) as u64]))
+    // b[i] = x^{π(i)} with 0-based indexing
+    std::array::from_fn(|i| perm_power_challenge.pow(&[permutation[i] as u64]))
 }
 
 /// Helper function to verify the shuffle relation:
-/// ∏_j C_j^{x^{j+1}} = E_pk(0; -ρ) · ∏_i (C'_i)^{b_i}
+/// ∏_j C_j^{x^{j}} = E_pk(0; -ρ) · ∏_i (C'_i)^{b_i}
 /// where ρ = ∑_i b_i * ρ_i
 #[cfg(test)]
 pub(crate) fn verify_shuffle_relation<G: CurveGroup, const N: usize>(
@@ -157,8 +155,8 @@ pub(crate) fn verify_shuffle_relation<G: CurveGroup, const N: usize>(
 ) -> bool {
     const LOG_TARGET: &str = "test::shuffle_relation";
 
-    // Compute left side: ∏_j C_j^{x^{j+1}}
-    let powers = compute_powers_sequence_with_index_1::<G::ScalarField, N>(x);
+    // Compute left side: ∏_j C_j^{x^{j}}
+    let powers = compute_powers_sequence::<G::ScalarField, N>(x);
     let input_aggregator = msm_ciphertexts(input_ciphertexts, &powers);
 
     // Compute aggregate rerandomizer: ρ = ∑_i b_i * ρ_i

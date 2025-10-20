@@ -60,13 +60,13 @@ pub struct RSShuffleTrace<T, const N: usize, const LEVELS: usize> {
 }
 
 impl<T, const N: usize, const LEVELS: usize> RSShuffleTrace<T, N, LEVELS> {
-    /// Extract the permutation array (1-indexed) from the witness trace
+    /// Extract the permutation array (0-indexed) from the witness trace
     /// This is useful for protocols that need the explicit permutation mapping
     pub fn extract_permutation_array(&self) -> [usize; N] {
         let final_sorted = &self.witness_trace.next_levels[LEVELS - 1];
         std::array::from_fn(|i| {
-            // The permutation is 1-indexed, convert from u16 to usize
-            final_sorted[i].idx as usize + 1
+            // The permutation is 0-indexed, convert from u16 to usize
+            final_sorted[i].idx as usize
         })
     }
 }

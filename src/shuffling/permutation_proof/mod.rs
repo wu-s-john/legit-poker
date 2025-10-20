@@ -4,7 +4,7 @@
 //! - VRF-derived randomness binds the RS shuffle bit matrix (via two Poseidon squeezes)
 //! - The public Bayer–Groth power challenge `x` (power_challenge) is derived from `c_perm`
 //! - The Pedersen commitment `c_power` opens to the permuted power vector `b = [x^π(i)]`,
-//!   where `b` is proven to be a permutation of `a = [x, x^2, …, x^N]` via a scalar-field
+//!   where `b` is proven to be a permutation of `a = [1, x, …, x^{N-1}]` via a scalar-field
 //!   grand-product equality check.
 //!
 //! Design notes:
@@ -26,10 +26,13 @@ use ark_crypto_primitives::sponge::poseidon::constraints::PoseidonSpongeVar;
 // use ark_crypto_primitives::sponge::poseidon::PoseidonSponge; // used in tests
 use ark_crypto_primitives::sponge::{Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
-use ark_ff::{PrimeField, UniformRand};
-use ark_r1cs_std::eq::EqGadget;
-use ark_r1cs_std::fields::{emulated_fp::EmulatedFpVar, fp::FpVar};
+use ark_ff::{One, PrimeField, UniformRand};
 use ark_r1cs_std::groups::CurveVar;
+use ark_r1cs_std::{
+    alloc::AllocVar,
+    eq::EqGadget,
+    fields::{emulated_fp::EmulatedFpVar, fp::FpVar},
+};
 use ark_relations::gr1cs::{ConstraintSystemRef, SynthesisError}; // trait bound needed by BG and opening
 
 use crate::shuffling::bayer_groth_permutation::bg_setup_gadget::new_bayer_groth_transcript_gadget_with_poseidon;
@@ -145,7 +148,7 @@ where
     let input: [usize; N] = std::array::from_fn(|i| i);
     let rs_trace = run_rs_shuffle_permutation::<C::BaseField, usize, N, LEVELS>(vrf_value, &input);
 
-    // Extract 1-indexed permutation in scalar field
+    // Extract 0-indexed permutation in scalar field
     let permutation_vec: [C::ScalarField; N] = rs_trace
         .extract_permutation_array()
         .into_iter()
@@ -291,11 +294,11 @@ where
     x_from_commit.enforce_equal(power_challenge_public)?;
 
     // 5) Efficient power-permutation check via paired multiset equality.
-    // Build base powers a = [x, x^2, ..., x^N] efficiently in base field
+    // Build base powers a = [1, x, ..., x^{N-1}] efficiently in base field
     let a_powers: Vec<FpVar<ConstraintF<C>>> = {
         let mut powers = Vec::with_capacity(N);
         if N > 0 {
-            let mut current = power_challenge_public.clone();
+            let mut current = FpVar::new_constant(cs.clone(), ConstraintF::<C>::one())?;
             powers.push(current.clone());
             for _ in 1..N {
                 current *= power_challenge_public;
@@ -305,7 +308,7 @@ where
         powers
     };
 
-    // Construct pair lists: left = [(i, x^(i+1))], right = [(π[i], b_i)]
+    // Construct pair lists: left = [(i, x^i)], right = [(π[i], b_i)]
     let left_pairs: Vec<IndexPositionPair<ConstraintF<C>>> = (0..N)
         .map(|i| IndexPositionPair::new(indices_init[i].clone(), a_powers[i].clone()))
         .collect();
@@ -397,8 +400,8 @@ mod tests {
         let power_params =
             PedersenCommitment::<G1Projective, ReencryptionWindow>::setup(&mut rng).unwrap();
 
-        // Simple permutation 1..=N
-        let perm: [usize; N] = std::array::from_fn(|i| i + 1);
+        // Simple permutation 0..N-1
+        let perm: [usize; N] = std::array::from_fn(|i| i);
 
         // BG setup (native)
         let mut tr = new_bayer_groth_transcript_with_poseidon::<BaseField>(b"test");

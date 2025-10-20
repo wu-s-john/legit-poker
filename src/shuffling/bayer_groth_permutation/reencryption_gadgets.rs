@@ -12,7 +12,7 @@
 use crate::shuffling::curve_absorb::CurveAbsorbGadget;
 use crate::shuffling::data_structures::ElGamalCiphertextVar;
 use ark_ec::CurveGroup;
-use ark_ff::PrimeField;
+use ark_ff::{One, PrimeField};
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
     boolean::Boolean,
@@ -265,14 +265,12 @@ where
 {
     tracing::debug!(target: LOG_TARGET, N = N, "Starting non-interactive verification");
 
-    // Compute powers sequence [x^1, x^2, ..., x^N] matching native implementation
+    // Compute powers sequence [x^0, x^1, ..., x^{N-1}] matching native implementation
     let mut powers = Vec::with_capacity(N);
-    let mut current = perm_power_challenge.clone();
-    powers.push(current.clone());
-
-    for _ in 1..N {
-        current = &current * perm_power_challenge;
+    let mut current = FV::constant(G::ScalarField::one());
+    for _ in 0..N {
         powers.push(current.clone());
+        current = &current * perm_power_challenge;
     }
     let powers: [FV; N] = powers.try_into().unwrap();
 
@@ -291,7 +289,7 @@ where
         );
     }
 
-    // Compute input aggregator C^a where a_i = x^(i+1)
+    // Compute input aggregator C^a where a_i = x^i
     for (i, ct) in input_ciphertexts.iter().enumerate() {
         tracing::trace!(
             target: LOG_TARGET,
@@ -609,7 +607,7 @@ mod tests {
         // FS exponent x and vectors a,b (we only need b and rho here)
         let x = Fr::from(1000u64);
 
-        // NEW algorithm: b[i] = x^{π(i)+1} (output-aligned with 1-based indexing)
+        // NEW algorithm: b[i] = x^{π(i)} (output-aligned with 0-based indexing)
         let b = crate::shuffling::bayer_groth_permutation::utils::compute_power_permutation_vector::<
             Fr,
             N,

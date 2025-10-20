@@ -124,7 +124,7 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
     /// Parameters:
     /// - perm_params: DeckHashWindow parameters for permutation commitment
     /// - power_params: ReencryptionWindow parameters for power vector commitment
-    /// - permutation: The permutation values (1-indexed)
+    /// - permutation: The permutation values (0-indexed)
     /// - prover_blinding_r: Blinding factor for c_perm
     /// - prover_blinding_s: Blinding factor for c_power
     ///
@@ -221,7 +221,7 @@ impl<F: PrimeField, RO: CryptographicSponge> BayerGrothTranscript<F, RO> {
     ///
     /// Parameters:
     /// - generator: The generator point for commitments (typically G::generator())
-    /// - permutation: The permutation values (1-indexed)
+    /// - permutation: The permutation values (0-indexed)
     /// - prover_blinding_r: Prover-provided blinding factor for c_perm (scalar field)
     /// - prover_blinding_s: Prover-provided blinding factor for c_power (scalar field)
     ///
@@ -550,7 +550,7 @@ mod tests {
         use ark_r1cs_std::groups::curves::short_weierstrass::ProjectiveVar;
 
         // Create test permutation
-        let mut perm: [usize; N] = std::array::from_fn(|i| i + 1);
+        let mut perm: [usize; N] = std::array::from_fn(|i| i);
         // Shuffle it randomly
         for i in (1..N).rev() {
             let j = (rng.next_u32() as usize) % (i + 1);
@@ -706,7 +706,7 @@ mod tests {
         let n = 52; // Standard deck size
 
         // Generate random permutation (shuffle)
-        let mut perm_vec: Vec<usize> = (1..=n).collect();
+        let mut perm_vec: Vec<usize> = (0..n).collect();
         // Fisher-Yates shuffle
         for i in (1..n).rev() {
             let j = (rng.next_u32() as usize) % (i + 1);
