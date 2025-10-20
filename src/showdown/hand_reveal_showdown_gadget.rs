@@ -6,7 +6,7 @@
 //! - Scoring the selected poker hand
 
 use crate::logup::{uint_to_field, verify_lookup};
-use crate::showdown::gadget::{uint8_sub, Best5HandVar};
+use crate::showdown::gadget::Best5HandVar;
 use crate::shuffling::player_decryption_gadget::{
     recover_card_point_gadget, PartialUnblindingShareVar, PlayerAccessibleCiphertextVar,
 };
@@ -79,7 +79,7 @@ where
 /// * `player_secret` - Player's secret key as emulated field element
 /// * `unblinding_shares` - Committee unblinding shares for decryption
 /// * `expected_members` - Expected number of committee members
-/// * `best5` - The selected best 5-card hand (category + 1-based indices)
+/// * `best5` - The selected best 5-card hand (category + zero-based indices)
 /// * `alpha` - LogUp challenge point
 ///
 /// # Returns
@@ -174,11 +174,9 @@ where
         .chain(hidden_cards.iter().map(|hidden| hidden.count.clone()))
         .collect();
 
-    // Convert chosen 1-based indices to 0-based field elements for LogUp
-    let selected_cards: [FpVar<C::BaseField>; 5] = std::array::from_fn(|i| {
-        let idx0 = uint8_sub(&best5.idx5[i], &UInt8::constant(1)).unwrap();
-        uint_to_field(&idx0).unwrap()
-    });
+    // Convert chosen zero-based indices to field elements for LogUp
+    let selected_cards: [FpVar<C::BaseField>; 5] =
+        std::array::from_fn(|i| uint_to_field(&best5.idx5[i]).unwrap());
 
     // Verify lookup - ensures selected cards come from table and respects multiplicities
     verify_lookup(
@@ -259,31 +257,30 @@ mod tests {
         // Use 0-based indices for consistency with encryption
         let community_cards = [
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(10, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(10, Suit::Spades) as u64)),
                 count: UInt8::constant(1), // Player 1 uses this
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(11, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(11, Suit::Spades) as u64)),
                 count: UInt8::constant(1), // Player 1 uses this
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(12, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(12, Suit::Spades) as u64)),
                 count: UInt8::constant(1), // Player 1 uses this
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(9, Suit::Diamonds) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(9, Suit::Diamonds) as u64)),
                 count: UInt8::constant(0), // Not used by Player 1
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(2, Suit::Clubs) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(2, Suit::Clubs) as u64)),
                 count: UInt8::constant(0), // Not used by Player 1
             },
         ];
 
         // Player 1 hidden cards: K♠, A♠ (for Royal Flush)
-        // Note: idx_of returns 1-based indices (1-52), but encryption uses 0-based (0-51)
-        let king_spades_idx = idx_of(13, Suit::Spades) - 1;
-        let ace_spades_idx = idx_of(14, Suit::Spades) - 1;
+        let king_spades_idx = idx_of(13, Suit::Spades);
+        let ace_spades_idx = idx_of(14, Suit::Spades);
 
         // For testing, we create a simplified PlayerAccessibleCiphertext
         // that works with our test setup (no committee members, no real shuffling)
@@ -583,7 +580,7 @@ mod tests {
         ];
 
         // Player 1's selected cards for Royal Flush: A♠, K♠, Q♠, J♠, 10♠
-        // Best 5 cards for Player 1 (1-based indices)
+        // Best 5 cards for Player 1 (zero-based indices)
         let best5_p1 = crate::showdown::gadget::Best5HandVar::new(
             crate::showdown::gadget::HandCategoryVar::constant(HandCategory::StraightFlush),
             [
@@ -596,15 +593,15 @@ mod tests {
         );
 
         // Compute expected native score for Player 1's Royal Flush
-        // Note: native function expects 1-based indices (1-52)
+        // Native function expects zero-based indices (0-51)
         use crate::showdown::native::verify_and_score_from_indices as native_verify;
         // Native verification expects cards sorted in descending order by rank
         let player1_cards_native = [
-            idx_of(14, Suit::Spades) as u8, // Ace (1-based)
-            idx_of(13, Suit::Spades) as u8, // King (1-based)
-            idx_of(12, Suit::Spades) as u8, // Queen (1-based)
-            idx_of(11, Suit::Spades) as u8, // Jack (1-based)
-            idx_of(10, Suit::Spades) as u8, // 10 (1-based)
+            idx_of(14, Suit::Spades) as u8, // Ace (zero-based)
+            idx_of(13, Suit::Spades) as u8, // King (zero-based)
+            idx_of(12, Suit::Spades) as u8, // Queen (zero-based)
+            idx_of(11, Suit::Spades) as u8, // Jack (zero-based)
+            idx_of(10, Suit::Spades) as u8, // 10 (zero-based)
         ];
 
         let (score_u32, tiebreak_native, score_native) =
@@ -679,31 +676,31 @@ mod tests {
         // Use 0-based indices
         let community_cards_p2 = [
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(10, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(10, Suit::Spades) as u64)),
                 count: UInt8::constant(0), // Not used by Player 2
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(11, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(11, Suit::Spades) as u64)),
                 count: UInt8::constant(1), // Player 2 uses as kicker
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(12, Suit::Spades) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(12, Suit::Spades) as u64)),
                 count: UInt8::constant(1), // Player 2 uses as kicker
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(9, Suit::Diamonds) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(9, Suit::Diamonds) as u64)),
                 count: UInt8::constant(1), // Player 2 uses for trips
             },
             CommunityCardVar {
-                value: FpVar::constant(Fq::from((idx_of(2, Suit::Clubs) - 1) as u64)),
+                value: FpVar::constant(Fq::from(idx_of(2, Suit::Clubs) as u64)),
                 count: UInt8::constant(0), // Not used
             },
         ];
 
         // Player 2 hidden cards: 9♠, 9♣
-        // Use 0-based indices for encryption
-        let nine_spades_idx = idx_of(9, Suit::Spades) - 1;
-        let nine_clubs_idx = idx_of(9, Suit::Clubs) - 1;
+        // Use zero-based indices for encryption
+        let nine_spades_idx = idx_of(9, Suit::Spades);
+        let nine_clubs_idx = idx_of(9, Suit::Clubs);
 
         // Create simplified ciphertexts for Player 2 (same approach as Player 1)
         let delta_9s = Fr::rand(&mut rng);
@@ -770,7 +767,7 @@ mod tests {
             },
         ];
 
-        // Best 5 for Player 2 (1-based indices): 9♦, 9♠, 9♣, Q♠, J♠
+        // Best 5 for Player 2 (zero-based indices): 9♦, 9♠, 9♣, Q♠, J♠
         let best5_p2 = crate::showdown::gadget::Best5HandVar::new(
             crate::showdown::gadget::HandCategoryVar::constant(HandCategory::ThreeOfAKind),
             [

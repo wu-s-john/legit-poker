@@ -1,4 +1,4 @@
-//! R1CS gadget: verify 5-card hand (indices 1..52) matches a claimed category
+//! R1CS gadget: verify 5-card hand (indices 0..51) matches a claimed category
 //! in canonical layout and pack score into a field element using constant multipliers.
 
 use ark_ff::PrimeField;
@@ -73,21 +73,16 @@ impl<F: PrimeField> AllocVar<HandCategory, F> for HandCategoryVar<F> {
     }
 }
 
-/// Decode index (1..52) -> (rank 2..14, suit 0..3) using divmod by 13 with constraints:
-/// j = idx-1 = 13*q + r,  q in [0..3], r in [0..12]
+/// Decode index (0..51) -> (rank 2..14, suit 0..3) using divmod by 13 with constraints:
+/// idx = 13*q + r,  q in [0..3], r in [0..12]
 fn decode_card_var<F: PrimeField>(idx: &UInt8<F>) -> Result<(UInt8<F>, UInt8<F>), SynthesisError> {
-    // Range: 1..52
-    let is_ge_1 = uint8_is_greater_or_equal(idx, &UInt8::constant(1))?;
-    let is_le_52 = uint8_is_less_or_equal(idx, &UInt8::constant(52))?;
-    assert_true(&is_ge_1)?;
-    assert_true(&is_le_52)?;
-
-    // j = idx - 1
-    let j = uint8_sub(idx, &UInt8::constant(1))?;
+    // Range: 0..51
+    let is_le_51 = uint8_is_less_or_equal(idx, &UInt8::constant(51))?;
+    assert_true(&is_le_51)?;
 
     // Witness or constant q, r depending on whether idx has a constraint system
-    let q_val = idx.value().map(|v| (v - 1) / 13).unwrap_or(0);
-    let r_val = idx.value().map(|v| (v - 1) % 13).unwrap_or(0);
+    let q_val = idx.value().map(|v| v / 13).unwrap_or(0);
+    let r_val = idx.value().map(|v| v % 13).unwrap_or(0);
     let cs: ConstraintSystemRef<F> = idx.cs();
     let (q, r) = if cs.is_none() {
         (UInt8::constant(q_val), UInt8::constant(r_val))
@@ -102,16 +97,16 @@ fn decode_card_var<F: PrimeField>(idx: &UInt8<F>) -> Result<(UInt8<F>, UInt8<F>)
     assert_true(&uint8_is_less_or_equal(&q, &UInt8::constant(3))?)?;
     assert_true(&uint8_is_less_or_equal(&r, &UInt8::constant(12))?)?;
 
-    // Enforce j == 13*q + r using bit-shifts into UInt16:
+    // Enforce idx == 13*q + r using bit-shifts into UInt16:
     // 13 = 8 + 4 + 1
-    let j16 = u8_to_u16(&j)?;
+    let idx16 = u8_to_u16(idx)?;
     let q8 = shift_left_u8_to_u16(&q, 3)?; // q << 3
     let q4 = shift_left_u8_to_u16(&q, 2)?; // q << 2
     let q1 = u8_to_u16(&q)?; // q
     let sum = uint16_add(&q8, &q4)?;
     let sum = uint16_add(&sum, &q1)?;
     let sum = uint16_add(&sum, &u8_to_u16(&r)?)?;
-    sum.enforce_equal(&j16)?;
+    sum.enforce_equal(&idx16)?;
 
     // rank = r + 2; suit = q
     let rank = uint8_add(&r, &UInt8::constant(2))?;
@@ -170,7 +165,7 @@ fn tiebreak_vector_var<F: PrimeField>(
     Ok(out)
 }
 
-/// Gadget: given claimed category & 5 indices (1..52), verify category/canonical
+/// Gadget: given claimed category & 5 indices (0..51), verify category/canonical
 /// and output packed score (FpVar) + tie-break digits (UInt8^5).
 pub fn verify_and_score_from_indices<F: PrimeField>(
     claimed_cat: HandCategoryVar<F>,
@@ -305,7 +300,7 @@ pub fn verify_and_score_from_indices<F: PrimeField>(
 #[derive(Clone)]
 pub struct Best5HandVar<F: PrimeField> {
     pub category: HandCategoryVar<F>,
-    pub idx5: [UInt8<F>; 5], // 1..52 canonical indices
+    pub idx5: [UInt8<F>; 5], // 0..51 canonical indices
 }
 
 impl<F: PrimeField> Best5HandVar<F> {
@@ -471,13 +466,6 @@ fn uint8_is_less_or_equal<F: PrimeField>(
     let less = uint8_is_less_than(a, b)?;
     let equal = a.is_eq(b)?;
     Ok(&less | &equal)
-}
-
-fn uint8_is_greater_or_equal<F: PrimeField>(
-    a: &UInt8<F>,
-    b: &UInt8<F>,
-) -> Result<Boolean<F>, SynthesisError> {
-    uint8_is_less_or_equal(b, a)
 }
 
 fn uint8_is_greater_than<F: PrimeField>(

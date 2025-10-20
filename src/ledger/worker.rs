@@ -294,7 +294,7 @@ mod tests {
     use ark_ff::Zero;
     use sea_orm::{
         ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction,
-        DbBackend, Statement, TryGetable, Value,
+        DbBackend, Statement, Value,
     };
     use std::{env, sync::Arc, time::Duration as StdDuration};
     use tokio::sync::mpsc;
@@ -545,8 +545,10 @@ mod tests {
             .context("failed to lookup test hand config")?;
 
         let hand_config_id = if let Some(row) = existing_config {
-            row.try_get("", "id")
-                .context("hand config row missing id")?
+            let id: i64 = row
+                .try_get("", "id")
+                .context("hand config row missing id")?;
+            id
         } else {
             let inserted = conn
                 .query_one(Statement::from_sql_and_values(
