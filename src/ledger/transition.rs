@@ -2,10 +2,11 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL, Transition};
-use crate::engine::nl::types::{PlayerStatus, Street as EngineStreet};
+use crate::engine::nl::types::{PlayerId, PlayerStatus, Street as EngineStreet};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::messages::{
     EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage,
@@ -14,8 +15,8 @@ use crate::ledger::messages::{
 use crate::ledger::snapshot::{
     build_default_card_plan, build_initial_betting_state, AnyPlayerActionMsg, AnyTableSnapshot,
     BettingSnapshot, CardDestination, CardPlan, DealingSnapshot, DealtCard, PhaseBetting,
-    PhaseShowdown, PhaseShuffling, RevealedHand, RevealsSnapshot, SeatingMap, ShufflingStep,
-    SnapshotStatus, TableSnapshot,
+    PhaseShowdown, PhaseShuffling, PlayerIdentity, RevealedHand, RevealsSnapshot, SeatingMap,
+    ShufflingStep, SnapshotStatus, TableSnapshot,
 };
 use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::poseidon_config;
@@ -28,7 +29,7 @@ use tracing::warn;
 
 pub trait TransitionHandler<C>: GameMessage<C> + Signable
 where
-    C: CurveGroup,
+    C: CurveGroup + CanonicalSerialize,
 {
     fn apply_transition<H>(
         snapshot: TableSnapshot<Self::Phase, C>,
@@ -60,6 +61,30 @@ fn empty_player_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
         player_unblinding_helper: C::zero(),
         shuffler_proofs: Vec::new(),
     }
+}
+
+fn curve_hex<C>(value: &C) -> Result<String>
+where
+    C: CurveGroup + CanonicalSerialize,
+{
+    let mut bytes = Vec::new();
+    value
+        .serialize_compressed(&mut bytes)
+        .map_err(|err| anyhow!("curve serialization failed: {err}"))?;
+    Ok(format!("0x{}", hex::encode(bytes)))
+}
+
+fn roster_keys_hex<C>(players: &BTreeMap<PlayerId, PlayerIdentity<C>>) -> Result<Vec<String>>
+where
+    C: CurveGroup + CanonicalSerialize,
+{
+    players
+        .iter()
+        .map(|(player_id, identity)| {
+            let key_hex = curve_hex(&identity.public_key)?;
+            Ok(format!("{player_id}:{key_hex}"))
+        })
+        .collect()
 }
 
 fn initialize_dealing_state<C: CurveGroup>(
@@ -259,7 +284,7 @@ where
 
 impl<C> TransitionHandler<C> for GameBlindingDecryptionMessage<C>
 where
-    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField>,
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
@@ -308,6 +333,9 @@ where
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
 
         if player_identity.public_key != target_player_public_key {
+            let expected_hex = curve_hex(&player_identity.public_key)?;
+            let actual_hex = curve_hex(&target_player_public_key)?;
+            let roster_keys = roster_keys_hex(&snapshot.players)?;
             warn!(
                 target = "ledger::transition",
                 game_id = snapshot.game_id,
@@ -315,19 +343,12 @@ where
                 shuffler_id,
                 seat,
                 hole_index,
-                expected = ?player_identity.public_key,
-                actual = ?target_player_public_key,
+                expected = %expected_hex,
+                actual = %actual_hex,
                 "blinding contribution player key mismatch"
             );
-            let roster_keys: Vec<String> = snapshot
-                .players
-                .iter()
-                .map(|(player_id, identity)| format!("{}:{:?}", player_id, identity.public_key))
-                .collect();
             bail!(
-                "blinding contribution targets unexpected player key (seat {seat}, hole {hole_index}): expected {:?}, actual {:?}, roster {{{}}}",
-                player_identity.public_key,
-                target_player_public_key,
+                "blinding contribution targets unexpected player key (seat {seat}, hole {hole_index}): expected {expected_hex}, actual {actual_hex}, roster {{{}}}",
                 roster_keys.join(", ")
             );
         }
@@ -442,7 +463,7 @@ where
 
 impl<C> TransitionHandler<C> for GamePartialUnblindingShareMessage<C>
 where
-    C: CurveGroup,
+    C: CurveGroup + CanonicalSerialize,
 {
     fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
@@ -483,25 +504,21 @@ where
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
 
         if player_identity.public_key != target_player_public_key {
+            let expected_hex = curve_hex(&player_identity.public_key)?;
+            let actual_hex = curve_hex(&target_player_public_key)?;
+            let roster_keys = roster_keys_hex(&snapshot.players)?;
             warn!(
                 target = "ledger::transition",
                 game_id = snapshot.game_id,
                 hand_id = snapshot.hand_id,
                 seat,
                 hole_index,
-                expected = ?player_identity.public_key,
-                actual = ?target_player_public_key,
+                expected = %expected_hex,
+                actual = %actual_hex,
                 "partial unblinding share player key mismatch"
             );
-            let roster_keys: Vec<String> = snapshot
-                .players
-                .iter()
-                .map(|(player_id, identity)| format!("{}:{:?}", player_id, identity.public_key))
-                .collect();
             bail!(
-                "partial unblinding share targets unexpected player key (seat {seat}, hole {hole_index}): expected {:?}, actual {:?}, roster {{{}}}",
-                player_identity.public_key,
-                target_player_public_key,
+                "partial unblinding share targets unexpected player key (seat {seat}, hole {hole_index}): expected {expected_hex}, actual {actual_hex}, roster {{{}}}",
                 roster_keys.join(", ")
             );
         }

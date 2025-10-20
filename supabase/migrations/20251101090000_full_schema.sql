@@ -190,6 +190,12 @@ CREATE TABLE public.hand_configs (
 CREATE INDEX idx_hand_configs_game_created_at
     ON public.hand_configs(game_id, created_at DESC);
 
+ALTER TABLE public.games
+    ADD COLUMN default_hand_config_id BIGINT REFERENCES public.hand_configs(id);
+
+ALTER TABLE public.hands
+    ADD COLUMN hand_config_id BIGINT NOT NULL REFERENCES public.hand_configs(id);
+
 CREATE TABLE public.phases (
     hash BYTEA PRIMARY KEY,
     phase_type public.phase_kind NOT NULL,
@@ -210,7 +216,7 @@ CREATE TABLE public.table_snapshots (
     sequence INT NOT NULL CHECK (sequence >= 0),
     state_hash BYTEA NOT NULL,
     previous_hash BYTEA REFERENCES public.table_snapshots(snapshot_hash) ON DELETE SET NULL,
-    hand_config_id BIGINT REFERENCES public.hand_configs(id) ON DELETE SET NULL,
+    hand_config_id BIGINT NOT NULL REFERENCES public.hand_configs(id),
     player_stacks JSONB NOT NULL,
     shuffling_hash BYTEA REFERENCES public.phases(hash) ON DELETE SET NULL,
     dealing_hash BYTEA REFERENCES public.phases(hash) ON DELETE SET NULL,

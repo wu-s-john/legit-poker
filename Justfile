@@ -286,6 +286,19 @@ pg-logs:
 game:
     RUST_LOG={{ RUST_LOG }} cargo run --bin game_demo
 
+# Debug helper to dump a game's hand archive
+debug-ledger-hand game hand include-events="true" include-snapshots="true":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmd=(cargo run --bin debug_ledger_hand -- --game {{ game }} --hand {{ hand }})
+    if [[ "{{ include-events }}" != "true" ]]; then
+        cmd+=(--no-include-events)
+    fi
+    if [[ "{{ include-snapshots }}" != "true" ]]; then
+        cmd+=(--no-include-snapshots)
+    fi
+    RUST_LOG={{ RUST_LOG }} "${cmd[@]}"
+
 # --- SeaORM entities ---
 
 # Install SeaORM generator CLI

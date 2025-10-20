@@ -17,6 +17,7 @@ pub mod signing;
 pub mod vrf;
 
 pub mod db;
+pub mod debugging_tools;
 
 #[cfg(test)]
 pub mod test_utils;

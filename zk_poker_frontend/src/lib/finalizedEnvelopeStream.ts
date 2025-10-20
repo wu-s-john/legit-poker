@@ -17,16 +17,17 @@ export interface FinalizedEnvelopeStream {
 
 export function listenToGameFinalizedEnvelopes(
   gameId: number | string,
+  handId: number | string,
   handlers: ListenHandlers = {}
 ): FinalizedEnvelopeStream {
   const supabase = getSupabaseClient();
   const subject = new Subject<FinalizedAnyMessageEnvelope>();
 
   const channel = supabase
-    .channel(`events:game:${gameId}`)
+    .channel(`events:game:${gameId}:hand:${handId}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'events', filter: `game_id=eq.${gameId}` },
+      { event: '*', schema: 'public', table: 'events', filter: `game_id=eq.${gameId},hand_id=eq.${handId}` },
       (payload) => {
         const record = payload.new ?? payload.old;
         if (!record) {
