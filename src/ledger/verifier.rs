@@ -660,8 +660,8 @@ where
         return Err(VerifyError::InvalidMessage);
     }
     seven_cards[..5].copy_from_slice(&board[..5]);
-    seven_cards[5] = seen_cards[0] + 1;
-    seven_cards[6] = seen_cards[1] + 1;
+    seven_cards[5] = seen_cards[0];
+    seven_cards[6] = seen_cards[1];
     let _ = choose_best5_from7(seven_cards);
 
     Ok(())

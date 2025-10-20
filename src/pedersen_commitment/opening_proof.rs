@@ -1019,7 +1019,7 @@ mod tests {
     fn test_size_4_edge_case() {
         let _guard = setup_test_tracing();
 
-        let m: [Fr; 4] = std::array::from_fn(|i| Fr::from((i + 1) as u64));
+        let m: [Fr; 4] = std::array::from_fn(|i| Fr::from(i as u64));
 
         let proof = test_pedersen_opening_with_values(&m);
 
@@ -1057,7 +1057,7 @@ mod tests {
         );
 
         // Test with sequential values
-        let m_sequential: [Fr; 8] = std::array::from_fn(|i| Fr::from((i + 1) as u64));
+        let m_sequential: [Fr; 8] = std::array::from_fn(|i| Fr::from(i as u64));
         let proof_sequential = test_pedersen_opening_with_values(&m_sequential);
         assert_eq!(
             proof_sequential.folding_challenge_commitment_rounds.len(),
@@ -1106,10 +1106,10 @@ mod tests {
         const DECK_SIZE: usize = 52;
         const PADDED_SIZE: usize = 64;
 
-        // Create array with first 52 elements as card values (1-52), rest as zeros
+        // Create array with first 52 elements as card values (0-51), rest as zeros
         let m: [Fr; PADDED_SIZE] = std::array::from_fn(|i| {
             if i < DECK_SIZE {
-                Fr::from((i + 1) as u64) // Card values 1-52
+                Fr::from(i as u64) // Card values 0-51
             } else {
                 Fr::from(0u64) // Padding with zeros
             }

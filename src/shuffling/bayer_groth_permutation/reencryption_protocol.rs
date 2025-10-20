@@ -996,7 +996,7 @@ mod tests {
             let r = Fr::rand(&mut rng);
             ElGamalCiphertext {
                 c1: g * r,
-                c2: g * Fr::from((i + 1) as u64) + g * r,
+                c2: g * Fr::from(i as u64) + g * r,
             }
         });
 

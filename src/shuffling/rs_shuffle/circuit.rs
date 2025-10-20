@@ -594,7 +594,7 @@ mod tests {
         // Create 52 ciphertexts with distinct messages
         let ct_init: Vec<ElGamalCiphertext<GrumpkinProjective>> = (0..N)
             .map(|i| {
-                let message = <GrumpkinConfig as CurveConfig>::ScalarField::from((i + 1) as u64);
+                let message = <GrumpkinConfig as CurveConfig>::ScalarField::from(i as u64);
                 let randomness = <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng);
                 ElGamalCiphertext::encrypt_scalar(message, randomness, public_key)
             })
@@ -782,7 +782,7 @@ mod tests {
 
         // Create N ciphertexts with distinct messages
         let ct_init: [ElGamalCiphertext<GrumpkinProjective>; N] = std::array::from_fn(|i| {
-            let message = <GrumpkinConfig as CurveConfig>::ScalarField::from((i + 1) as u64);
+            let message = <GrumpkinConfig as CurveConfig>::ScalarField::from(i as u64);
             let randomness = <GrumpkinConfig as CurveConfig>::ScalarField::rand(&mut rng);
             ElGamalCiphertext::encrypt_scalar(message, randomness, shuffler_public_key)
         });

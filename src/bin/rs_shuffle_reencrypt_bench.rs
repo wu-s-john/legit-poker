@@ -216,7 +216,7 @@ where
     // Create initial encrypted deck
     println!("  Generating {} encrypted cards...", N);
     let ct_init: [ElGamalCiphertext<C>; N] = std::array::from_fn(|i| {
-        let message = <C::Config as CurveConfig>::ScalarField::from((i + 1) as u64);
+        let message = <C::Config as CurveConfig>::ScalarField::from(i as u64);
         let randomness = <C::Config as CurveConfig>::ScalarField::rand(rng);
         ElGamalCiphertext::encrypt_scalar(message, randomness, shuffler_pk)
     });

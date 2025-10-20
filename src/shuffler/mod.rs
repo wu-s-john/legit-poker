@@ -1459,8 +1459,8 @@ mod tests {
             deck = next_deck;
         }
 
-        // Choose a safe card index (avoid last which could map to 52)
-        let card_index = 10usize; // expected value = 11
+        // Choose an arbitrary card index (0-based deck encoding)
+        let card_index = 10usize;
         let card_ct = deck[card_index].clone();
 
         // Player keys

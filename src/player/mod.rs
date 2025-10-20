@@ -225,7 +225,7 @@ where
             ctx.expected_members,
         )
         .map_err(|e| anyhow::anyhow!(e))?;
-        let hole: [Index; 2] = [v0 + 1, v1 + 1];
+        let hole: [Index; 2] = [v0, v1];
         let idx7 = [
             hole[0],
             hole[1],

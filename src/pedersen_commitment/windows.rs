@@ -17,7 +17,7 @@ impl PedersenWindow for PedersenWin {
 }
 
 /// Window configuration for hashing a deck of 52 cards
-/// Each card is represented by a byte (values 1-52), requiring 52 windows
+/// Each card is represented by a byte (values 0-51), requiring 52 windows
 /// This allows hashing a complete deck in a single operation (bytes-only)
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct DeckHashWindow;

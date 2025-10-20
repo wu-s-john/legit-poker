@@ -58,7 +58,7 @@ pub use player_decryption::*;
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand};
 
-/// Generate N random ElGamal ciphertexts with sequential message values (1, 2, ..., N).
+/// Generate N random ElGamal ciphertexts with sequential message values (0, 1, ..., N-1).
 ///
 /// This is the standard pattern for creating an initial deck of encrypted cards.
 ///
@@ -92,7 +92,7 @@ where
 
     let ciphertexts = core::array::from_fn(|i| {
         let r = randomness[i];
-        let message = g * C::ScalarField::from((i + 1) as u64); // Card value i+1
+        let message = g * C::ScalarField::from(i as u64); // Card value = index (0-based)
         ElGamalCiphertext {
             c1: g * r,
             c2: message + *public_key * r,
@@ -234,8 +234,8 @@ mod tests {
         let g = G1Projective::generator();
         for i in 0..N {
             assert_eq!(ciphertexts[i].c1, g * randomness[i]);
-            // c2 = message + pk * r, where message = g * (i+1)
-            let expected_c2 = g * Fr::from((i + 1) as u64) + keys.public_key * randomness[i];
+            // c2 = message + pk * r, where message = g * i (0-based)
+            let expected_c2 = g * Fr::from(i as u64) + keys.public_key * randomness[i];
             assert_eq!(ciphertexts[i].c2, expected_c2);
         }
     }
