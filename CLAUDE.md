@@ -342,9 +342,9 @@ let (ciphertexts, randomness) = generate_random_ciphertexts::<G1Projective, 52>(
 ```
 
 This function:
-- Creates N ciphertexts with sequential message values (1, 2, ..., N)
+- Creates N ciphertexts with sequential message values (0, 1, ..., N - 1)
 - Returns both the ciphertexts and their corresponding randomness values
-- Ensures consistent card encoding across all tests (card value = index + 1)
+- Ensures consistent card encoding across all tests (card value = index)
 - Is optimized for the poker domain where cards have distinct integer values
 
 **Important**: Never manually create test ciphertexts for card games. Always use this standardized function to ensure:

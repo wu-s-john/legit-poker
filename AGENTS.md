@@ -31,7 +31,7 @@
 ## Testing Guidelines
 - Rust: Unit tests are colocated (e.g., `mod tests {}`) and in files like `src/vrf/tests.rs`; E2E in `src/showdown/e2e.rs`. Make tests deterministic (fixed RNG seeds), prefer small fixtures. Run: `RUST_LOG=info cargo test -- --nocapture` and avoid `--release` to keep iteration fast.
 - No Mocks: Avoid mocking frameworks. Use trait-based interfaces with test implementations for stubbing dependencies. This ensures type safety and clearer test intent.
-- Card Game Test Data: When generating ElGamal ciphertexts for card games (especially 52-card decks), always use `shuffling::generate_random_ciphertexts::<C, 52>(&public_key, &mut rng)` from `src/shuffling/mod.rs`. This ensures consistent card encoding (value = index + 1) and proper ElGamal structure across all tests.
+- Card Game Test Data: When generating ElGamal ciphertexts for card games (especially 52-card decks), always use `shuffling::generate_random_ciphertexts::<C, 52>(&public_key, &mut rng)` from `src/shuffling/mod.rs`. This keeps the 0-based card encoding consistent (card value = index) and preserves the expected ElGamal structure across all tests.
 - Circuit debugging: use namespaces with `ark_relations::ns!` for clear constraint names; debug with `if !cs.is_satisfied()? { cs.which_is_unsatisfied()?; }`. Track size via `cs.num_constraints()`.
 - Frontend: No test runner configured; rely on `npm run check` and manual verification. If adding tests, propose tooling in PR.
 
