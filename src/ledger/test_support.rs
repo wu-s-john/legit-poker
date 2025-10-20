@@ -238,7 +238,7 @@ fn zero_player_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
 }
 
 fn card_value_for_ref(card_ref: u8) -> u8 {
-    card_ref.saturating_sub(1)
+    card_ref
 }
 
 fn board_cards_in_order(
@@ -302,13 +302,13 @@ where
     let card_plan = build_default_card_plan(ctx.cfg.as_ref(), ctx.seating.as_ref());
 
     for (&card_ref, destination) in card_plan.iter() {
-        let index = (card_ref.saturating_sub(1)) as usize;
+        let index = card_ref as usize;
         let cipher = ctx.initial_deck[index].clone();
         assignments.insert(
             card_ref,
             DealtCard {
                 cipher,
-                source_index: Some((card_ref - 1) as u8),
+                source_index: Some(card_ref),
             },
         );
 

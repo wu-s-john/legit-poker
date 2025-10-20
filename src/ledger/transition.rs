@@ -98,7 +98,7 @@ fn initialize_dealing_state<C: CurveGroup>(
     let mut community_cards = BTreeMap::new();
 
     for (&card_ref, destination) in card_plan.iter() {
-        let deck_idx = card_ref.saturating_sub(1) as usize;
+        let deck_idx = card_ref as usize;
         if let Some(cipher) = final_deck.get(deck_idx) {
             assignments.insert(
                 card_ref,
@@ -125,7 +125,7 @@ fn initialize_dealing_state<C: CurveGroup>(
                 }
             }
             CardDestination::Board { .. } => {
-                community_cards.insert(card_ref, card_ref.saturating_sub(1));
+                community_cards.insert(card_ref, card_ref);
             }
             CardDestination::Burn | CardDestination::Unused => {}
         }
@@ -299,9 +299,7 @@ where
     {
         let shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
-        let card_ref = card_pos
-            .checked_add(1)
-            .context("deck position overflowed when computing card reference")?;
+        let card_ref = card_pos;
 
         let shuffler = snapshot
             .shufflers
@@ -475,9 +473,7 @@ where
     {
         let _shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
-        let card_ref = card_pos
-            .checked_add(1)
-            .context("deck position overflowed when computing card reference")?;
+        let card_ref = card_pos;
 
         let destination = snapshot
             .dealing
@@ -1118,10 +1114,7 @@ where
 
             let card_value = decode_card_from_point::<C>(&recovered_point)
                 .context("unrecognized decrypted card")?;
-            let card_index = card_value
-                .checked_add(1)
-                .context("card index overflow when converting decrypted card")?;
-            revealed_hole_cards[hole_idx] = card_index;
+            revealed_hole_cards[hole_idx] = card_value;
         }
 
         let board_slice = snapshot.reveals.board.as_slice();

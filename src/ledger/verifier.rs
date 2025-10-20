@@ -451,9 +451,7 @@ fn validate_blinding<C: CurveGroup>(
     actor: &ShufflerActor,
     message: &GameBlindingDecryptionMessage<C>,
 ) -> Result<(), VerifyError> {
-    let Some(card_ref) = message.card_in_deck_position.checked_add(1) else {
-        return Err(VerifyError::InvalidMessage);
-    };
+    let card_ref = message.card_in_deck_position;
     let destination = table
         .dealing
         .card_plan
@@ -491,9 +489,7 @@ fn validate_partial_unblinding<C: CurveGroup>(
     message: &GamePartialUnblindingShareMessage<C>,
     actor: &ShufflerActor,
 ) -> Result<(), VerifyError> {
-    let Some(card_ref) = message.card_in_deck_position.checked_add(1) else {
-        return Err(VerifyError::InvalidMessage);
-    };
+    let card_ref = message.card_in_deck_position;
     let destination = table
         .dealing
         .card_plan
@@ -624,9 +620,7 @@ where
         .zip(message.hole_ciphertexts.iter())
         .enumerate()
     {
-        let Some(card_ref) = deck_pos.checked_add(1) else {
-            return Err(VerifyError::InvalidMessage);
-        };
+        let card_ref = deck_pos;
         let destination = table
             .dealing
             .card_plan
@@ -1122,7 +1116,7 @@ mod tests {
                             *k,
                             DealtCard {
                                 cipher: sample_cipher(),
-                                source_index: Some((k - 1) as u8),
+                                source_index: Some(*k),
                             },
                         )
                     })

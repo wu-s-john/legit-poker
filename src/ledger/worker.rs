@@ -294,7 +294,7 @@ mod tests {
     use ark_ff::Zero;
     use sea_orm::{
         ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction,
-        DbBackend, Statement, Value,
+        DbBackend, Statement, TryGetable, Value,
     };
     use std::{env, sync::Arc, time::Duration as StdDuration};
     use tokio::sync::mpsc;
@@ -535,6 +535,65 @@ mod tests {
             .await
             .context("failed to upsert test game")?;
 
+        let existing_config = conn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM public.hand_configs WHERE game_id = $1 LIMIT 1",
+                vec![Value::from(TEST_GAME_ID)],
+            ))
+            .await
+            .context("failed to lookup test hand config")?;
+
+        let hand_config_id = if let Some(row) = existing_config {
+            row.try_get("", "id")
+                .context("hand config row missing id")?
+        } else {
+            let inserted = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Postgres,
+                    "INSERT INTO public.hand_configs (
+                             game_id,
+                             small_blind,
+                             big_blind,
+                             ante,
+                             button_seat,
+                             small_blind_seat,
+                             big_blind_seat,
+                             check_raise_allowed
+                         )
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         RETURNING id",
+                    vec![
+                        Value::from(TEST_GAME_ID),
+                        Value::from(1i64),
+                        Value::from(2i64),
+                        Value::from(0i64),
+                        Value::from(0i16),
+                        Value::from(1i16),
+                        Value::from(2i16),
+                        Value::from(true),
+                    ],
+                ))
+                .await
+                .context("failed to insert test hand config")?;
+
+            let row = inserted.context("hand config insert returned no row")?;
+            let id: i64 = row
+                .try_get("", "id")
+                .context("failed to read inserted hand_config id")?;
+
+            let update_game = Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE public.games SET default_hand_config_id = $1 WHERE id = $2",
+                vec![Value::from(id), Value::from(TEST_GAME_ID)],
+            );
+            conn.execute(update_game)
+                .await
+                .context("failed to set default hand config for test game")?;
+
+            id
+        };
+
         for hand_id in hand_ids {
             let insert_hand = Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -546,10 +605,11 @@ mod tests {
                      button_seat,
                      small_blind_seat,
                      big_blind_seat,
+                     hand_config_id,
                      deck_commitment,
                      status
                  )
-                 VALUES ($1, $2, NOW(), $3, $4, $5, $6, NULL, $7::hand_status)
+                 VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, NULL, $8::hand_status)
                  ON CONFLICT (id) DO NOTHING",
                 vec![
                     Value::from(hand_id),
@@ -558,6 +618,7 @@ mod tests {
                     Value::from(0i16),
                     Value::from(1i16),
                     Value::from(2i16),
+                    Value::from(hand_config_id),
                     Value::from("shuffling"),
                 ],
             );

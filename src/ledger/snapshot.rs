@@ -178,7 +178,7 @@ pub fn build_default_card_plan(cfg: &HandConfig, seating: &SeatingMap) -> CardPl
         }
     }
 
-    let mut next_card: u8 = 1;
+    let mut next_card: u8 = 0;
     for hole_index in 0..2 {
         for &seat in &active_seats {
             plan.insert(next_card, CardDestination::Hole { seat, hole_index });
@@ -204,7 +204,7 @@ pub fn build_default_card_plan(cfg: &HandConfig, seating: &SeatingMap) -> CardPl
     push_burn(&mut plan, &mut next_card);
     push_board(&mut plan, &mut next_card, 4);
 
-    while (next_card as usize) <= DECK_SIZE {
+    while (next_card as usize) < DECK_SIZE {
         plan.insert(next_card, CardDestination::Unused);
         next_card += 1;
     }

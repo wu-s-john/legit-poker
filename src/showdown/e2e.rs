@@ -7,8 +7,8 @@ use crate::showdown::{
 
 #[test]
 fn e2e_three_players_random_showdown() {
-    // Build a shuffled deck of 1..52
-    let mut deck: Vec<Index> = (1..=52u8).collect();
+    // Build a shuffled deck of 0..51
+    let mut deck: Vec<Index> = (0..52u8).collect();
     deck.shuffle(&mut thread_rng());
 
     // Deal: 5 community + 3 players * 2 hole

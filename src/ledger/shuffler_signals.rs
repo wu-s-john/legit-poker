@@ -652,7 +652,7 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
         let seat = first_active_seat(&ctx);
-        isolate_player_card(&mut snapshot, 1, seat, 0);
+        isolate_player_card(&mut snapshot, 0, seat, 0);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -676,7 +676,7 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
         let seat = first_active_seat(&ctx);
-        isolate_player_card(&mut snapshot, 1, seat, 0);
+        isolate_player_card(&mut snapshot, 0, seat, 0);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -695,7 +695,7 @@ mod tests {
             DealShufflerRequest::Player(req) => {
                 assert_eq!(req.seat, seat);
                 assert_eq!(req.hole_index, 0);
-                assert_eq!(req.deal_index, 1);
+                assert_eq!(req.deal_index, 0);
             }
             _ => panic!("expected player request"),
         }
@@ -706,7 +706,7 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
         let seat = first_active_seat(&ctx);
-        isolate_player_card(&mut snapshot, 1, seat, 0);
+        isolate_player_card(&mut snapshot, 0, seat, 0);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -730,8 +730,8 @@ mod tests {
     async fn emits_board_request_for_flop_card() {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
-        // First flop card lives at card_ref 8 in the default plan.
-        isolate_board_card(&mut snapshot, 8, 0);
+        // First flop card lives at card_ref 7 in the default plan.
+        isolate_board_card(&mut snapshot, 7, 0);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -748,7 +748,7 @@ mod tests {
         assert_eq!(requests.len(), 1, "expected one board request");
         match &requests[0] {
             DealShufflerRequest::Board(req) => {
-                assert_eq!(req.deal_index, 8);
+                assert_eq!(req.deal_index, 7);
                 assert!(matches!(req.slot, BoardCardSlot::Flop(0)));
             }
             _ => panic!("expected board request"),
@@ -760,14 +760,14 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let full = fixture_dealing_snapshot(&ctx);
 
-        let dest1 = full.dealing.card_plan.get(&1).expect("card 1").clone();
-        let dest2 = full.dealing.card_plan.get(&2).expect("card 2").clone();
+        let dest1 = full.dealing.card_plan.get(&0).expect("card 0").clone();
+        let dest2 = full.dealing.card_plan.get(&1).expect("card 1").clone();
 
         let mut first = full.clone();
-        isolate_cards(&mut first, &[(1, dest1.clone())]);
+        isolate_cards(&mut first, &[(0, dest1.clone())]);
 
         let mut second = full.clone();
-        isolate_cards(&mut second, &[(1, dest1), (2, dest2.clone())]);
+        isolate_cards(&mut second, &[(0, dest1), (1, dest2.clone())]);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -797,7 +797,7 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
         let seat = first_active_seat(&ctx);
-        isolate_player_card(&mut snapshot, 1, seat, 0);
+        isolate_player_card(&mut snapshot, 0, seat, 0);
 
         let router = Arc::new(MockRouter::<Curve>::default());
         let dispatcher = ShufflerDealSignalDispatcher::new(
@@ -849,7 +849,7 @@ mod tests {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[0]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);
         let seat = first_active_seat(&ctx);
-        isolate_player_card(&mut snapshot, 1, seat, 0);
+        isolate_player_card(&mut snapshot, 0, seat, 0);
         let snapshot_retry = snapshot.clone();
 
         let router = Arc::new(FlakyRouter::<Curve>::fail_request_once());

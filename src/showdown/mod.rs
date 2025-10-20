@@ -3,7 +3,7 @@
 use core::cmp::Ordering;
 
 pub type Rank = u8; // 2..14 (A=14)
-pub type Index = u8; // 1..52 (1-based)
+pub type Index = u8; // 0..51 (zero-based)
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -64,22 +64,21 @@ pub const M2: u32 = 256; // 16^2
 pub const M1: u32 = 16; // 16^1
 pub const M0: u32 = 1; // 16^0
 
-/// Deterministic 1..52 -> Card mapping; 0=C,1=D,2=H,3=S; rank 2..14
+/// Deterministic 0..51 -> Card mapping; 0=C,1=D,2=H,3=S; rank 2..14
 #[inline]
 pub fn decode_card(i: Index) -> Card {
-    assert!((1..=52).contains(&i), "index out of range");
-    let j = i - 1; // 0..51
-    let suit = Suit::from_u8(j / 13);
-    let r0 = j % 13;
+    assert!(i < 52, "index out of range");
+    let suit = Suit::from_u8(i / 13);
+    let r0 = i % 13;
     let rank = r0 + 2;
     Card { rank, suit }
 }
 
-/// Inverse helper for tests: (rank,suit) -> 1..52
+/// Inverse helper for tests: (rank,suit) -> 0..51
 #[inline]
 pub fn idx_of(rank: Rank, suit: Suit) -> Index {
     assert!((2..=14).contains(&rank));
-    13 * suit.as_u8() + (rank - 2) + 1
+    13 * suit.as_u8() + (rank - 2)
 }
 
 /// Deterministic sort-by-rank-desc, then suit-desc

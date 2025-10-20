@@ -1644,7 +1644,7 @@ mod tests {
         let request = PlayerCardShufflerRequest {
             game_id: key.0,
             hand_id: key.1,
-            deal_index: 1,
+            deal_index: 0,
             seat: 3,
             hole_index: 0,
             player_public_key: Curve::generator(),
@@ -1750,7 +1750,7 @@ mod tests {
         let board_request = BoardCardShufflerRequest {
             game_id: key.0,
             hand_id: key.1,
-            deal_index: 8,
+            deal_index: 7,
             slot: BoardCardSlot::Flop(0),
             ciphertext: ElGamalCiphertext::new(Curve::generator(), Curve::generator()),
         };
