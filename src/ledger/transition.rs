@@ -22,7 +22,7 @@ use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::poseidon_config;
 use crate::showdown::{choose_best5_from7, idx_of};
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
-use crate::shuffling::player_decryption::{combine_unblinding_shares, PlayerAccessibleCiphertext};
+use crate::shuffling::player_decryption::combine_unblinding_shares;
 use crate::signing::Signable;
 use std::collections::BTreeMap;
 use tracing::warn;
@@ -54,15 +54,6 @@ where
     <M as TransitionHandler<C>>::apply_transition(snapshot, envelope, hasher)
 }
 
-fn empty_player_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
-    PlayerAccessibleCiphertext {
-        blinded_base: C::zero(),
-        blinded_message_with_player_key: C::zero(),
-        player_unblinding_helper: C::zero(),
-        shuffler_proofs: Vec::new(),
-    }
-}
-
 fn curve_hex<C>(value: &C) -> Result<String>
 where
     C: CurveGroup + CanonicalSerialize,
@@ -90,12 +81,12 @@ where
 fn initialize_dealing_state<C: CurveGroup>(
     final_deck: &[ElGamalCiphertext<C>; DECK_SIZE],
     card_plan: CardPlan,
-    seating: &SeatingMap,
+    _seating: &SeatingMap,
 ) -> DealingSnapshot<C> {
     let mut assignments = BTreeMap::new();
-    let mut player_ciphertexts = BTreeMap::new();
-    let mut player_unblinding_combined = BTreeMap::new();
-    let mut community_cards = BTreeMap::new();
+    let player_ciphertexts = BTreeMap::new();
+    let player_unblinding_combined = BTreeMap::new();
+    let community_cards = BTreeMap::new();
 
     for (&card_ref, destination) in card_plan.iter() {
         let deck_idx = card_ref as usize;
@@ -110,23 +101,8 @@ fn initialize_dealing_state<C: CurveGroup>(
         }
 
         match destination {
-            CardDestination::Hole { seat, hole_index } => {
-                if seating
-                    .get(seat)
-                    .map(|maybe_player| maybe_player.is_some())
-                    .unwrap_or(false)
-                {
-                    player_ciphertexts
-                        .entry((*seat, *hole_index))
-                        .or_insert_with(empty_player_ciphertext);
-                    player_unblinding_combined
-                        .entry((*seat, *hole_index))
-                        .or_insert_with(C::zero);
-                }
-            }
-            CardDestination::Board { .. } => {
-                community_cards.insert(card_ref, card_ref);
-            }
+            CardDestination::Hole { .. } => {}
+            CardDestination::Board { .. } => {}
             CardDestination::Burn | CardDestination::Unused => {}
         }
     }
@@ -1216,7 +1192,7 @@ mod tests {
     use crate::ledger::test_support::{
         active_seats, fixture_dealing_snapshot, fixture_flop_snapshot, fixture_preflop_snapshot,
         fixture_river_snapshot, fixture_showdown_snapshot, fixture_shuffling_snapshot,
-        fixture_turn_snapshot, FixtureContext,
+        fixture_turn_snapshot, populate_board_cards_upto, FixtureContext,
     };
     use crate::ledger::types::ShufflerId;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
@@ -1535,13 +1511,7 @@ mod tests {
             AnyTableSnapshot::Dealing(next) => {
                 assert_eq!(next.dealing.card_plan.len(), DECK_SIZE);
                 assert_eq!(next.dealing.assignments.len(), DECK_SIZE);
-                let hole_slots = next
-                    .dealing
-                    .card_plan
-                    .values()
-                    .filter(|destination| matches!(destination, CardDestination::Hole { .. }))
-                    .count();
-                assert_eq!(next.dealing.player_ciphertexts.len(), hole_slots);
+                assert!(next.dealing.player_ciphertexts.is_empty());
                 assert_eq!(next.shuffling.final_deck, final_deck);
                 assert_eq!(
                     next.shuffling.steps.len(),
@@ -1750,6 +1720,8 @@ mod tests {
             }
         }
 
+        populate_board_cards_upto(&mut snapshot.dealing, 3);
+
         let envelope = build_player_envelope::<PreflopStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<PreflopStreet, Curve>::apply_transition(
             snapshot,
@@ -1807,6 +1779,8 @@ mod tests {
                 player.committed_this_round = 0;
             }
         }
+
+        populate_board_cards_upto(&mut snapshot.dealing, 3);
 
         let envelope = build_player_envelope::<PreflopStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<PreflopStreet, Curve>::apply_transition(
@@ -1927,6 +1901,8 @@ mod tests {
             }
         }
 
+        populate_board_cards_upto(&mut snapshot.dealing, 4);
+
         let envelope = build_player_envelope::<FlopStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<FlopStreet, Curve>::apply_transition(
             snapshot,
@@ -1980,6 +1956,8 @@ mod tests {
                 player.committed_this_round = 0;
             }
         }
+
+        populate_board_cards_upto(&mut snapshot.dealing, 4);
 
         let envelope = build_player_envelope::<FlopStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<FlopStreet, Curve>::apply_transition(
@@ -2086,6 +2064,8 @@ mod tests {
             }
         }
 
+        populate_board_cards_upto(&mut snapshot.dealing, 5);
+
         let envelope = build_player_envelope::<TurnStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<TurnStreet, Curve>::apply_transition(
             snapshot,
@@ -2135,6 +2115,8 @@ mod tests {
                 player.committed_this_round = 0;
             }
         }
+
+        populate_board_cards_upto(&mut snapshot.dealing, 5);
 
         let envelope = build_player_envelope::<TurnStreet>(&ctx, seat, PlayerBetAction::Check);
         let result = GamePlayerMessage::<TurnStreet, Curve>::apply_transition(

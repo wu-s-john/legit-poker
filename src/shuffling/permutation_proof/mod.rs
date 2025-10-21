@@ -61,8 +61,7 @@ pub struct PermutationParameters<'a, C: CurveGroup, R: rand::RngCore> {
 }
 
 /// In-circuit parameters for the permutation proof gadgets
-// Removed PermutationGadgetParameters; its fields are now inlined into function parameters
-
+/// Removed `PermutationGadgetParameters`; its fields are now inlined into function parameters.
 /// Prepared witnesses from the native prover for driving the permutation gadget
 pub struct PreparedPermutationWitness<C: CurveGroup, const N: usize, const LEVELS: usize>
 where

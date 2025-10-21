@@ -585,6 +585,7 @@ mod tests {
     fn decode_event_row_decodes_hex_bytea() {
         let raw = json!({
             "id": 1,
+            "game_id": 3,
             "hand_id": 7,
             "entity_kind": 2,
             "entity_id": 3,
@@ -594,6 +595,10 @@ mod tests {
             "public_key": "\\x010203",
             "nonce": 42,
             "phase": "shuffling",
+            "snapshot_number": 9,
+            "is_successful": true,
+            "failure_message": null,
+            "resulting_phase": "shuffling",
             "message_type": "shuffle",
             "payload": {"foo": "bar"},
             "signature": "\\x0a0b0c",
@@ -606,6 +611,10 @@ mod tests {
         assert_eq!(model.public_key, vec![1, 2, 3]);
         assert_eq!(model.signature, vec![10, 11, 12]);
         assert_eq!(model.phase, EventPhase::Shuffling);
+        assert_eq!(model.snapshot_number, 9);
+        assert!(model.is_successful);
+        assert!(model.failure_message.is_none());
+        assert_eq!(model.resulting_phase, EventPhase::Shuffling);
         assert_eq!(model.message_type, "shuffle");
         assert_eq!(model.payload, json!({"foo": "bar"}));
         assert_eq!(

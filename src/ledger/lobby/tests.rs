@@ -37,7 +37,7 @@ use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{convert::TryFrom, time::Duration as StdDuration};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 #[tokio::test]
 async fn host_game_creates_new_game_and_host() -> Result<()> {
@@ -804,14 +804,24 @@ async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<Test
     let state = Arc::new(LedgerState::<TestCurve>::new());
     let verifier = Arc::new(LedgerVerifier::new(Arc::clone(&state)));
     let (tx, rx) = mpsc::channel(32);
+    let (events_tx, _) = broadcast::channel(16);
+    let (snapshots_tx, _) = broadcast::channel(16);
+    let operator = LedgerOperator::new(
+        verifier,
+        tx,
+        Arc::clone(&event_store),
+        Arc::clone(&state),
+        events_tx.clone(),
+        snapshots_tx.clone(),
+    );
     let worker = LedgerWorker::new(
         rx,
         Arc::clone(&event_store),
         Arc::clone(&snapshot_store),
         Arc::clone(&state),
-        None,
+        events_tx,
+        snapshots_tx,
     );
-    let operator = LedgerOperator::new(verifier, tx, Arc::clone(&event_store), Arc::clone(&state));
     if let Err(err) = operator.start(worker).await {
         eprintln!("skipping lobby test: failed to start operator ({err})");
         return None;

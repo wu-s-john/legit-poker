@@ -256,6 +256,7 @@ where
 /// where C^a = ∏_j C_j^{x^j} is the input ciphertext aggregator.
 ///
 /// **Returns:** true iff both hold.
+#[allow(clippy::multiple_bound_locations)]
 pub fn verify<G: CurveGroup, RO, const N: usize>(
     public_key: &G,
     pedersen_params: &Parameters<G>,
@@ -452,6 +453,7 @@ where
     result
 }
 
+#[allow(clippy::multiple_bound_locations)]
 fn absorb_public_inputs<G: CurveGroup, RO>(
     transcript: &mut RO,
     c_aggregator: &ElGamalCiphertext<G>,
@@ -481,7 +483,6 @@ fn absorb_public_inputs<G: CurveGroup, RO>(
 }
 
 /// Absorb a curve point using the CurveAbsorb trait.
-
 #[cfg(test)]
 mod tests {
     use super::*;

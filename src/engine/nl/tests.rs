@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::engine::nl::{BettingState, InvariantCheck};
 
 use super::actions::PlayerBetAction;

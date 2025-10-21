@@ -194,10 +194,10 @@ where
 
         // Accumulate values
         acc_z += rho * proofs[i].z;
-        acc_tg = acc_tg + proofs[i].t_g * rho;
-        acc_th = acc_th + proofs[i].t_h * rho;
-        acc_alpha = acc_alpha + alphas[i] * (rho * challenge);
-        acc_beta = acc_beta + betas[i] * (rho * challenge);
+        acc_tg += proofs[i].t_g * rho;
+        acc_th += proofs[i].t_h * rho;
+        acc_alpha += alphas[i] * (rho * challenge);
+        acc_beta += betas[i] * (rho * challenge);
     }
 
     // Batch verify equation 1: g^(Σρ_i·z_i) = Π(T_g,i^ρ_i) · Π(α_i^(ρ_i·c_i))

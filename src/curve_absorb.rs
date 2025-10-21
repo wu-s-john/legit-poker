@@ -109,8 +109,8 @@ where
 // Implement CurveAbsorbGadget for references to ProjectiveVar
 // ============================================================================
 
-impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fq, ROVar>
-    for &'a ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>
+impl<ROVar> CurveAbsorbGadget<ark_bn254::Fq, ROVar>
+    for &ProjectiveVar<ark_bn254::g1::Config, FpVar<ark_bn254::Fq>>
 where
     ROVar: CryptographicSpongeVar<ark_bn254::Fq, PoseidonSponge<ark_bn254::Fq>>,
 {
@@ -123,8 +123,8 @@ where
     }
 }
 
-impl<'a, ROVar> CurveAbsorbGadget<ark_bn254::Fr, ROVar>
-    for &'a ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
+impl<ROVar> CurveAbsorbGadget<ark_bn254::Fr, ROVar>
+    for &ProjectiveVar<ark_grumpkin::GrumpkinConfig, FpVar<ark_bn254::Fr>>
 where
     ROVar: CryptographicSpongeVar<ark_bn254::Fr, PoseidonSponge<ark_bn254::Fr>>,
 {

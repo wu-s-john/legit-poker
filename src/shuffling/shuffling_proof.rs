@@ -507,7 +507,7 @@ mod tests {
             prove_shuffling::<Bn254, G, GVar, N, LEVELS>(&config, &ct_input, nonce, &mut rng)
                 .expect("prove_shuffling");
 
-        let ok = verify_shuffling::<Bn254, G, N>(&config, &bg_setup, &ct_input, &ct_output, &proof)
+        let ok = verify_shuffling::<Bn254, G, N>(&config, &ct_input, &ct_output, &proof, &bg_setup)
             .expect("verify_shuffling call");
         assert!(ok, "shuffling proof should verify");
         tracing::info!(
@@ -587,7 +587,7 @@ mod tests {
                 .expect("prove_shuffling");
 
         let ok =
-            verify_shuffling::<E, GCurve, N>(&config, &bg_setup, &ct_input, &ct_output, &proof)
+            verify_shuffling::<E, GCurve, N>(&config, &ct_input, &ct_output, &proof, &bg_setup)
                 .expect("verify_shuffling call");
         assert!(ok, "shuffling proof should verify");
     }

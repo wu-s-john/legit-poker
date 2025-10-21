@@ -21,9 +21,7 @@ pub struct MaybeSaved<Id> {
 impl DbRowStatus for NotSaved {
     type DbId = ();
 
-    fn id(&self) -> Self::DbId {
-        ()
-    }
+    fn id(&self) -> Self::DbId {}
 }
 
 impl<Id: Copy> DbRowStatus for Saved<Id> {

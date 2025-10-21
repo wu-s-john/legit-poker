@@ -249,6 +249,7 @@ impl<C: CurveGroup> Clone for CardValueMap<C> {
 /// * `aggregated_public_key` - The aggregated public key from all shufflers
 /// * `player_public_key` - The target player's public key
 #[instrument(skip(initial_ciphertext, blinding_contributions), level = "trace")]
+#[allow(clippy::multiple_bound_locations)]
 pub fn combine_blinding_contributions_for_player<C: CurveGroup>(
     initial_ciphertext: &ElGamalCiphertext<C>,
     blinding_contributions: &[PlayerTargetedBlindingContribution<C>],

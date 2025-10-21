@@ -277,7 +277,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
 
     static NEXT_KEY_SEED: AtomicU64 = AtomicU64::new(0);
     type BaseField = <Curve as ark_ec::CurveGroup>::BaseField;
@@ -400,11 +400,15 @@ mod tests {
         let event_store = Arc::new(SeaOrmEventStore::new(conn.clone()));
 
         let (tx, _rx) = mpsc::channel(4);
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
             Arc::clone(&event_store) as Arc<dyn EventStore<Curve>>,
             Arc::clone(&state),
+            events_tx,
+            snapshots_tx,
         );
 
         let host_keys = TestKeys::new();

@@ -1,4 +1,3 @@
-#![cfg(test)]
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -27,7 +26,7 @@ use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
 const FIXTURE_GAME_ID: GameId = 42;
 const FIXTURE_HAND_ID: HandId = 7;
 const FIXTURE_STACK: u64 = 1_000;
-const FIXTURE_SEED: u64 = 0x5eed_f1c;
+const FIXTURE_SEED: u64 = 0x05ee_df1c;
 
 pub struct FixtureContext<C: CurveGroup> {
     pub game_id: GameId,
@@ -241,6 +240,18 @@ fn card_value_for_ref(card_ref: u8) -> u8 {
     card_ref
 }
 
+pub fn populate_board_cards_upto<C: CurveGroup>(dealing: &mut DealingSnapshot<C>, limit: usize) {
+    for (&card_ref, destination) in dealing.card_plan.iter() {
+        if let CardDestination::Board { board_index } = destination {
+            if (*board_index as usize) < limit {
+                dealing
+                    .community_cards
+                    .insert(card_ref, card_value_for_ref(card_ref));
+            }
+        }
+    }
+}
+
 fn board_cards_in_order(
     card_plan: &CardPlan,
     community_cards: &BTreeMap<u8, u8>,
@@ -298,7 +309,7 @@ where
     let mut assignments = BTreeMap::new();
     let mut player_ciphertexts = BTreeMap::new();
     let mut player_unblinding_combined = BTreeMap::new();
-    let mut community_cards = BTreeMap::new();
+    let community_cards = BTreeMap::new();
     let card_plan = build_default_card_plan(ctx.cfg.as_ref(), ctx.seating.as_ref());
 
     for (&card_ref, destination) in card_plan.iter() {
@@ -319,9 +330,7 @@ where
                     .entry((*seat, *hole_index))
                     .or_insert_with(C::zero);
             }
-            CardDestination::Board { .. } => {
-                community_cards.insert(card_ref, card_value_for_ref(card_ref));
-            }
+            CardDestination::Board { .. } => {}
             _ => {}
         }
     }
@@ -434,13 +443,14 @@ where
         seating,
         stacks,
         shuffling,
-        dealing,
+        mut dealing,
         mut betting,
         mut reveals,
         ..
     } = preflop;
 
     EngineNL::advance_street(&mut betting.state).expect("fixture flop advance failed unexpectedly");
+    populate_board_cards_upto(&mut dealing, 3);
 
     reveals.board = board_cards_in_order(&dealing.card_plan, &dealing.community_cards, Some(3));
 
@@ -479,13 +489,14 @@ where
         seating,
         stacks,
         shuffling,
-        dealing,
+        mut dealing,
         mut betting,
         mut reveals,
         ..
     } = flop;
 
     EngineNL::advance_street(&mut betting.state).expect("fixture turn advance failed unexpectedly");
+    populate_board_cards_upto(&mut dealing, 4);
     reveals.board = board_cards_in_order(&dealing.card_plan, &dealing.community_cards, Some(4));
 
     let mut snapshot: TableAtTurn<C> = TableSnapshot {
@@ -523,7 +534,7 @@ where
         seating,
         stacks,
         shuffling,
-        dealing,
+        mut dealing,
         mut betting,
         mut reveals,
         ..
@@ -531,6 +542,7 @@ where
 
     EngineNL::advance_street(&mut betting.state)
         .expect("fixture river advance failed unexpectedly");
+    populate_board_cards_upto(&mut dealing, 5);
     reveals.board = board_cards_in_order(&dealing.card_plan, &dealing.community_cards, Some(5));
 
     let mut snapshot: TableAtRiver<C> = TableSnapshot {

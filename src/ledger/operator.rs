@@ -4,15 +4,15 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 
-use super::messages::AnyMessageEnvelope;
+use super::messages::{AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
+use super::snapshot::{AnyTableSnapshot, Shared};
 use super::state::LedgerState;
 use super::store::EventStore;
 use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
-use super::worker::LedgerWorker;
-use super::worker::WorkerError;
+use super::worker::{LedgerWorker, WorkerError};
 use crate::curve_absorb::CurveAbsorb;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, info, instrument, Span};
 
@@ -30,6 +30,8 @@ where
     sender: mpsc::Sender<AnyMessageEnvelope<C>>,
     event_store: Arc<dyn EventStore<C>>,
     state: Arc<LedgerState<C>>,
+    events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
+    snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
 }
 
 impl<C> LedgerOperator<C>
@@ -44,12 +46,16 @@ where
         sender: mpsc::Sender<AnyMessageEnvelope<C>>,
         event_store: Arc<dyn EventStore<C>>,
         state: Arc<LedgerState<C>>,
+        events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
+        snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
     ) -> Self {
         Self {
             verifier,
             sender,
             event_store,
             state,
+            events_tx,
+            snapshots_tx,
         }
     }
 
@@ -98,6 +104,22 @@ where
     pub fn state(&self) -> Arc<LedgerState<C>> {
         self.state.clone()
     }
+
+    pub fn event_updates(&self) -> broadcast::Receiver<FinalizedAnyMessageEnvelope<C>> {
+        self.events_tx.subscribe()
+    }
+
+    pub fn snapshot_updates(&self) -> broadcast::Receiver<Shared<AnyTableSnapshot<C>>> {
+        self.snapshots_tx.subscribe()
+    }
+
+    pub fn event_sender(&self) -> broadcast::Sender<FinalizedAnyMessageEnvelope<C>> {
+        self.events_tx.clone()
+    }
+
+    pub fn snapshot_sender(&self) -> broadcast::Sender<Shared<AnyTableSnapshot<C>>> {
+        self.snapshots_tx.clone()
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +137,7 @@ mod tests {
     use std::env;
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
 
     fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
         let message = AnyGameMessage::PlayerPreflop(
@@ -196,11 +218,15 @@ mod tests {
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
             Arc::clone(&store) as Arc<dyn EventStore<Curve>>,
             Arc::clone(&state),
+            events_tx,
+            snapshots_tx,
         );
         assert!(state.hands().is_empty());
         let _ = operator;
@@ -220,18 +246,23 @@ mod tests {
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
             Arc::clone(&event_store_trait),
             Arc::clone(&state),
+            events_tx.clone(),
+            snapshots_tx.clone(),
         );
         let worker = LedgerWorker::new(
             rx,
             Arc::clone(&event_store_trait),
             Arc::clone(&snapshot_store),
             Arc::clone(&state),
-            None,
+            events_tx,
+            snapshots_tx,
         );
         let handle = operator.start(worker).await.unwrap();
         handle.abort();
@@ -249,7 +280,16 @@ mod tests {
         let verifier = Arc::new(NoopVerifier {
             _state: Arc::clone(&state),
         });
-        let operator = LedgerOperator::new(verifier, tx, event_store_trait, Arc::clone(&state));
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
+        let operator = LedgerOperator::new(
+            verifier,
+            tx,
+            event_store_trait,
+            Arc::clone(&state),
+            events_tx,
+            snapshots_tx,
+        );
         let envelope = sample_verified_envelope(10);
         operator.submit(0, envelope).await.unwrap();
         let received = rx.recv().await.expect("message enqueued");

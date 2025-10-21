@@ -6,14 +6,15 @@ use ark_ff::PrimeField;
 use thiserror::Error;
 
 use super::messages::{AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
-use super::shuffler_signals::ShufflerDealSignalDispatcher;
 use super::state::LedgerState;
 use super::store::{EventStore, SnapshotStore};
 use crate::curve_absorb::CurveAbsorb;
-use crate::ledger::snapshot::{clone_snapshot_for_failure, SnapshotStatus};
+use crate::ledger::snapshot::{
+    clone_snapshot_for_failure, AnyTableSnapshot, Shared, SnapshotStatus,
+};
 use crate::ledger::store::snapshot::prepare_snapshot;
 use sea_orm::TransactionTrait;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info, instrument, warn};
 
 const LOG_TARGET: &str = "legit_poker::ledger::worker";
@@ -29,7 +30,8 @@ where
     event_store: Arc<dyn EventStore<C>>,
     snapshot_store: Arc<dyn SnapshotStore<C>>,
     state: Arc<LedgerState<C>>,
-    signal_dispatcher: Option<Arc<ShufflerDealSignalDispatcher<C>>>,
+    events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
+    snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
     _marker: std::marker::PhantomData<C>,
 }
 
@@ -45,14 +47,16 @@ where
         event_store: Arc<dyn EventStore<C>>,
         snapshot_store: Arc<dyn SnapshotStore<C>>,
         state: Arc<LedgerState<C>>,
-        signal_dispatcher: Option<Arc<ShufflerDealSignalDispatcher<C>>>,
+        events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
+        snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
     ) -> Self {
         Self {
             receiver,
             event_store,
             snapshot_store,
             state,
-            signal_dispatcher,
+            events_tx,
+            snapshots_tx,
             _marker: std::marker::PhantomData,
         }
     }
@@ -233,20 +237,29 @@ where
 
         self.state.upsert_snapshot(hand_id, snapshot.clone(), true);
 
+        if let Err(err) = self.events_tx.send(finalized_event.clone()) {
+            warn!(
+                target: LOG_TARGET,
+                error = %err,
+                hand_id,
+                nonce,
+                "failed to broadcast finalized event"
+            );
+        }
+
+        let shared_snapshot: Shared<AnyTableSnapshot<C>> = Arc::new(snapshot.clone());
+        if let Err(err) = self.snapshots_tx.send(shared_snapshot) {
+            warn!(
+                target: LOG_TARGET,
+                error = %err,
+                hand_id,
+                nonce,
+                "failed to broadcast snapshot"
+            );
+        }
+
         match apply_error {
             None => {
-                if let Some(dispatcher) = &self.signal_dispatcher {
-                    if let Err(err) = dispatcher.observe_snapshot(&snapshot).await {
-                        warn!(
-                            target: LOG_TARGET,
-                            error = ?err,
-                            hand_id,
-                            nonce,
-                            "failed to dispatch shuffler signals"
-                        );
-                    }
-                }
-
                 info!(
                     target: LOG_TARGET,
                     hand_id,
@@ -297,7 +310,7 @@ mod tests {
         DbBackend, Statement, Value,
     };
     use std::{env, sync::Arc, time::Duration as StdDuration};
-    use tokio::sync::mpsc;
+    use tokio::sync::{broadcast, mpsc};
     use tokio::time::{sleep, timeout, Duration};
     use tracing::{info, Level};
     use tracing_subscriber::{filter, fmt, prelude::*};
@@ -643,12 +656,15 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
-            None,
+            events_tx,
+            snapshots_tx,
         );
         assert!(state.hands().is_empty());
         let _ = worker;
@@ -666,12 +682,15 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
-            None,
+            events_tx,
+            snapshots_tx,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -700,12 +719,15 @@ mod tests {
             .await
             .expect("seed worker hand");
         let state = Arc::new(LedgerState::<Curve>::new());
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
-            None,
+            events_tx,
+            snapshots_tx,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -733,12 +755,15 @@ mod tests {
             .expect("seed worker hands");
         let state = Arc::new(LedgerState::<Curve>::new());
 
+        let (events_tx, _) = broadcast::channel(16);
+        let (snapshots_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
             Arc::new(NoopSnapshotStore::<Curve>::default()),
             state.clone(),
-            None,
+            events_tx,
+            snapshots_tx,
         );
         let runner = tokio::spawn(async move { worker.run().await.unwrap() });
 
