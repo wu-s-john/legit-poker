@@ -188,7 +188,7 @@ where
 
     // Verify proof
     let is_valid =
-        verify_shuffling::<E, G, N>(config, &bg_setup, current_deck, &shuffled_deck, &proof)?;
+        verify_shuffling::<E, G, N>(config, current_deck, &shuffled_deck, &proof, &bg_setup)?;
 
     if !is_valid {
         return Err("Shuffle proof verification failed".into());

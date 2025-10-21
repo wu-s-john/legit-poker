@@ -33,8 +33,8 @@ use async_trait::async_trait;
 use rand::{rngs::StdRng, SeedableRng};
 use sea_orm::DbErr;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
-    DbBackend, EntityTrait, PaginatorTrait, QueryFilter, Set, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    PaginatorTrait, QueryFilter, Set, TransactionTrait,
 };
 use std::collections::BTreeMap;
 use std::convert::{TryFrom, TryInto};
