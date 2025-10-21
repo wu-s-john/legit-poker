@@ -3,7 +3,6 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use ark_serialize::CanonicalSerialize;
-use hex::encode;
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
@@ -25,6 +24,7 @@ use crate::engine::nl::types::{
     PlayerStatus as EnginePlayerStatus, Pot as EnginePot, Pots as EnginePots, Street,
 };
 use crate::ledger::hash::LedgerHasher;
+use crate::ledger::serialization::canonical_serialize_hex_prefixed;
 use crate::ledger::snapshot::{
     AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, CardDestination, PhaseBetting,
     PhaseComplete, PlayerStacks, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, SnapshotStatus,
@@ -688,11 +688,7 @@ fn serialize_hex<T>(value: &T) -> anyhow::Result<String>
 where
     T: CanonicalSerialize,
 {
-    let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .map_err(|err| anyhow!("serialization failed: {err}"))?;
-    Ok(format!("0x{}", encode(buf)))
+    canonical_serialize_hex_prefixed(value).map_err(|err| anyhow!("serialization failed: {err}"))
 }
 
 fn ciphertext_to_json<C>(ciphertext: &ElGamalCiphertext<C>) -> anyhow::Result<JsonValue>

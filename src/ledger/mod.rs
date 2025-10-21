@@ -4,6 +4,7 @@ pub mod lobby;
 pub mod messages;
 mod operator;
 pub mod query;
+pub mod serialization;
 pub mod snapshot;
 pub mod state;
 pub mod store;

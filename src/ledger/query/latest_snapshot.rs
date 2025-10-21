@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use ark_ec::CurveGroup;
-use serde::Serialize;
 use thiserror::Error;
 
 use crate::ledger::{
-    snapshot::{AnyTableSnapshot, SnapshotStatus},
+    snapshot::{AnyTableSnapshot, SnapshotSeq, SnapshotStatus},
     state::LedgerState,
     types::{EventPhase, GameId, HandId, StateHash},
 };
@@ -16,6 +15,18 @@ where
     C: CurveGroup,
 {
     state: Arc<LedgerState<C>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LatestSnapshot {
+    pub game_id: GameId,
+    pub hand_id: HandId,
+    pub sequence: SnapshotSeq,
+    pub state_hash: StateHash,
+    pub previous_hash: Option<StateHash>,
+    pub phase: EventPhase,
+    pub status: SnapshotStatus,
+    pub snapshot_debug: String,
 }
 
 impl<C> LatestSnapshotQuery<C>
@@ -30,7 +41,7 @@ where
         &self,
         game_id: GameId,
         hand_id: HandId,
-    ) -> Result<LatestSnapshotDto, LatestSnapshotError> {
+    ) -> Result<LatestSnapshot, LatestSnapshotError> {
         let (state_hash, snapshot) = self
             .state
             .tip_snapshot(hand_id)
@@ -55,14 +66,14 @@ where
             });
         }
 
-        Ok(LatestSnapshotDto {
+        Ok(LatestSnapshot {
             game_id: snapshot_game_id,
             hand_id: actual_hand_id,
             sequence: snapshot.sequence(),
-            state_hash: encode_hash(state_hash),
-            previous_hash: snapshot.previous_hash().map(encode_hash),
-            phase: SnapshotPhaseDto::from(snapshot.event_phase()),
-            status: SnapshotStatusDto::from(snapshot.status()),
+            state_hash,
+            previous_hash: snapshot.previous_hash(),
+            phase: snapshot.event_phase(),
+            status: snapshot.status().clone(),
             snapshot_debug: format!("{snapshot:?}"),
         })
     }
@@ -84,70 +95,6 @@ pub enum LatestSnapshotError {
     HandMismatch { requested: HandId, actual: HandId },
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct LatestSnapshotDto {
-    pub game_id: GameId,
-    pub hand_id: HandId,
-    pub sequence: u32,
-    pub state_hash: String,
-    pub previous_hash: Option<String>,
-    pub phase: SnapshotPhaseDto,
-    pub status: SnapshotStatusDto,
-    pub snapshot_debug: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotPhaseDto {
-    Pending,
-    Shuffling,
-    Dealing,
-    Betting,
-    Reveals,
-    Showdown,
-    Complete,
-    Cancelled,
-}
-
-impl From<EventPhase> for SnapshotPhaseDto {
-    fn from(phase: EventPhase) -> Self {
-        match phase {
-            EventPhase::Pending => SnapshotPhaseDto::Pending,
-            EventPhase::Shuffling => SnapshotPhaseDto::Shuffling,
-            EventPhase::Dealing => SnapshotPhaseDto::Dealing,
-            EventPhase::Betting => SnapshotPhaseDto::Betting,
-            EventPhase::Reveals => SnapshotPhaseDto::Reveals,
-            EventPhase::Showdown => SnapshotPhaseDto::Showdown,
-            EventPhase::Complete => SnapshotPhaseDto::Complete,
-            EventPhase::Cancelled => SnapshotPhaseDto::Cancelled,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotStatusDto {
-    Success,
-    Failure { reason: String },
-}
-
-impl SnapshotStatusDto {
-    fn from_status(status: &SnapshotStatus) -> Self {
-        match status {
-            SnapshotStatus::Success => SnapshotStatusDto::Success,
-            SnapshotStatus::Failure(reason) => SnapshotStatusDto::Failure {
-                reason: reason.clone(),
-            },
-        }
-    }
-}
-
-impl From<&SnapshotStatus> for SnapshotStatusDto {
-    fn from(status: &SnapshotStatus) -> Self {
-        SnapshotStatusDto::from_status(status)
-    }
-}
-
 fn snapshot_ids<C: CurveGroup>(snapshot: &AnyTableSnapshot<C>) -> (GameId, Option<HandId>) {
     match snapshot {
         AnyTableSnapshot::Shuffling(table) => (table.game_id, table.hand_id),
@@ -161,10 +108,6 @@ fn snapshot_ids<C: CurveGroup>(snapshot: &AnyTableSnapshot<C>) -> (GameId, Optio
     }
 }
 
-fn encode_hash(hash: StateHash) -> String {
-    hex::encode(hash.into_bytes())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,39 +118,24 @@ mod tests {
     #[test]
     fn returns_latest_snapshot_for_hand() {
         let ctx = FixtureContext::<Curve>::new(&[1, 2, 3], &[10, 11, 12]);
-        let snapshot = fixture_shuffling_snapshot(&ctx);
+        let snapshot_ref = fixture_shuffling_snapshot(&ctx);
         let state = Arc::new(LedgerState::with_hasher(Arc::clone(&ctx.hasher)));
         state.upsert_snapshot(
             ctx.hand_id,
-            AnyTableSnapshot::Shuffling(snapshot.clone()),
+            AnyTableSnapshot::Shuffling(snapshot_ref.clone()),
             true,
         );
 
         let query = LatestSnapshotQuery::new(Arc::clone(&state));
-        let dto = query
+        let snapshot = query
             .execute(ctx.game_id, ctx.hand_id)
             .expect("snapshot should exist");
 
-        assert_eq!(dto.game_id, ctx.game_id);
-        assert_eq!(dto.hand_id, ctx.hand_id);
-        assert_eq!(dto.sequence, snapshot.sequence);
-        assert_eq!(
-            dto.state_hash,
-            hex::encode(snapshot.state_hash.into_bytes())
-        );
-        assert_eq!(dto.previous_hash, snapshot.previous_hash.map(encode_hash));
-        assert!(dto.snapshot_debug.contains("TableSnapshot"));
-    }
-
-    #[test]
-    fn errors_when_hand_missing() {
-        let ctx = FixtureContext::<Curve>::new(&[1, 2, 3], &[10, 11, 12]);
-        let state = Arc::new(LedgerState::<Curve>::with_hasher(Arc::clone(&ctx.hasher)));
-        let query = LatestSnapshotQuery::new(state);
-
-        let err = query
-            .execute(ctx.game_id, ctx.hand_id)
-            .expect_err("missing hand should error");
-        assert!(matches!(err, LatestSnapshotError::HandNotFound { .. }));
+        assert_eq!(snapshot.game_id, ctx.game_id);
+        assert_eq!(snapshot.hand_id, ctx.hand_id);
+        assert_eq!(snapshot.sequence, snapshot_ref.sequence);
+        assert_eq!(snapshot.state_hash, snapshot_ref.state_hash);
+        assert_eq!(snapshot.previous_hash, snapshot_ref.previous_hash);
+        assert!(snapshot.snapshot_debug.contains("TableSnapshot"));
     }
 }

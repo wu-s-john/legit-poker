@@ -1,28 +1,17 @@
-use std::env;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use anyhow::{anyhow, Context, Result};
 use ark_bn254::{Fr as Scalar, G1Projective as Curve};
 use ark_ff::{PrimeField, UniformRand};
 use clap::Parser;
 use rand::{rngs::StdRng, SeedableRng};
-use sea_orm::{ConnectOptions, Database, DatabaseConnection};
-use tokio::net::TcpListener;
-use tracing::{info, warn};
+use std::env;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
 
-use zk_poker::game::coordinator::{
-    load_shuffler_secrets_from_env, GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig,
-    SupabaseRealtimeClientConfig,
-};
-use zk_poker::ledger::state::LedgerState;
-use zk_poker::ledger::store::{SeaOrmEventStore, SeaOrmSnapshotStore};
-use zk_poker::ledger::verifier::{LedgerVerifier, Verifier};
-use zk_poker::ledger::{EventStore, SnapshotStore};
-use zk_poker::server::LegitPokerServer;
+use zk_poker::game::coordinator::{load_shuffler_secrets_from_env, ShufflerSecretConfig};
+use zk_poker::server::{run_server as run_http_server, ServerConfig};
 
 use serde_json::Value as JsonValue;
 
@@ -74,7 +63,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     init_tracing(args.json)?;
     let config = build_config(args).context("failed to build server config")?;
-    run_server(config).await
+    run_http_server(config).await
 }
 
 fn load_dotenv() {
@@ -97,16 +86,7 @@ fn init_tracing(json: bool) -> Result<()> {
     Ok(())
 }
 
-struct Config {
-    bind: SocketAddr,
-    database_url: String,
-    supabase_realtime: Url,
-    supabase_anon_key: String,
-    shufflers: Vec<ShufflerSecretConfig<Curve>>,
-    rng_seed: Option<[u8; 32]>,
-}
-
-fn build_config(args: Args) -> Result<Config> {
+fn build_config(args: Args) -> Result<ServerConfig<Curve>> {
     let realtime_url = match args.supabase_realtime_url {
         Some(url) => Url::parse(&url).context("invalid SUPABASE_REALTIME_URL")?,
         None => derive_realtime_url(&args.supabase_url)?,
@@ -127,7 +107,7 @@ fn build_config(args: Args) -> Result<Config> {
         ));
     }
 
-    Ok(Config {
+    Ok(ServerConfig {
         bind: args.bind,
         database_url: args.database_url,
         supabase_realtime: realtime_url,
@@ -233,74 +213,4 @@ fn seed_to_array(seed: u64) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     bytes[..8].copy_from_slice(&seed.to_le_bytes());
     bytes
-}
-
-async fn run_server(config: Config) -> Result<()> {
-    let db = connect_database(&config.database_url).await?;
-    let event_store: Arc<dyn EventStore<Curve>> =
-        Arc::new(SeaOrmEventStore::<Curve>::new(db.clone()));
-    let snapshot_store: Arc<dyn SnapshotStore<Curve>> =
-        Arc::new(SeaOrmSnapshotStore::<Curve>::new(db.clone()));
-    let state = Arc::new(LedgerState::<Curve>::new());
-
-    let verifier: Arc<dyn Verifier<Curve> + Send + Sync> =
-        Arc::new(LedgerVerifier::new(Arc::clone(&state)));
-
-    let supabase_cfg = SupabaseRealtimeClientConfig::new(
-        config.supabase_realtime.clone(),
-        &config.supabase_anon_key,
-    );
-
-    let coordinator_config = GameCoordinatorConfig::<Curve> {
-        verifier,
-        event_store,
-        snapshot_store,
-        state: Arc::clone(&state),
-        supabase: supabase_cfg,
-        shufflers: config.shufflers,
-        submit_channel_capacity: 256,
-        rng_seed: config.rng_seed,
-    };
-
-    let coordinator = GameCoordinator::spawn(coordinator_config)
-        .await
-        .context("failed to spawn game coordinator")?;
-    let coordinator = Arc::new(coordinator);
-
-    let server = LegitPokerServer::new(Arc::clone(&coordinator));
-    let router = server.into_router();
-    let make_service = router.into_make_service();
-
-    let listener = TcpListener::bind(config.bind)
-        .await
-        .with_context(|| format!("failed to bind {}", config.bind))?;
-    let local_addr = listener.local_addr()?;
-    info!(
-        target = LOG_TARGET,
-        %local_addr,
-        realtime = %config.supabase_realtime,
-        "legit poker server listening"
-    );
-
-    axum::serve(listener, make_service)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("server exited with error")
-}
-
-async fn connect_database(database_url: &str) -> Result<DatabaseConnection> {
-    let mut opts = ConnectOptions::new(database_url.to_owned());
-    opts.max_connections(5)
-        .min_connections(1)
-        .sqlx_logging(true);
-    Database::connect(opts)
-        .await
-        .with_context(|| format!("failed to connect to database at {}", database_url))
-}
-
-async fn shutdown_signal() {
-    if let Err(err) = tokio::signal::ctrl_c().await {
-        warn!(target = LOG_TARGET, error = %err, "failed to install ctrl-c handler");
-    }
-    info!(target = LOG_TARGET, "shutdown signal received");
 }
