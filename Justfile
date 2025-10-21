@@ -56,6 +56,10 @@ build-gpu:
 run BIN *ARGS:
     RUST_LOG={{ RUST_LOG }} cargo run --bin {{ BIN }} -- {{ ARGS }}
 
+# Start the Axum coordinator server (pass additional args after `--`)
+server *ARGS:
+    RUST_LOG={{ RUST_LOG }} cargo run --bin legit_poker_server -- {{ ARGS }}
+
 # Optimized Bayer-Groth demo (release build)
 demo:
     echo "Running optimized bayer_groth_demo (release)"

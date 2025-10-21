@@ -3,6 +3,7 @@ pub mod hash;
 pub mod lobby;
 pub mod messages;
 mod operator;
+pub mod query;
 pub mod shuffler_signals;
 pub mod snapshot;
 pub mod state;

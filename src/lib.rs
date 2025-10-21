@@ -10,6 +10,7 @@ pub mod logup;
 pub mod macros;
 pub mod pedersen_commitment;
 pub mod player;
+pub mod server;
 pub mod showdown;
 pub mod shuffler;
 pub mod shuffling;
