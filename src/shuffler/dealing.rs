@@ -4,9 +4,73 @@ use anyhow::{anyhow, Result};
 use ark_ec::CurveGroup;
 
 use crate::engine::nl::types::SeatId;
-use crate::ledger::snapshot::{CardDestination, CardPlan, DealtCard, TableAtDealing};
+use crate::ledger::snapshot::{
+    CardDestination, CardPlan, DealingSnapshot, DealtCard, PlayerRoster, SeatingMap, Shared,
+    ShufflerRoster, TableAtDealing, TableAtPreflop,
+};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
+
+pub trait DealingTableView<C: CurveGroup> {
+    fn game_id(&self) -> GameId;
+    fn hand_id(&self) -> Option<HandId>;
+    fn shufflers(&self) -> &Shared<ShufflerRoster<C>>;
+    fn dealing(&self) -> &DealingSnapshot<C>;
+    fn players(&self) -> &Shared<PlayerRoster<C>>;
+    fn seating(&self) -> &Shared<SeatingMap>;
+}
+
+impl<C: CurveGroup> DealingTableView<C> for TableAtDealing<C> {
+    fn game_id(&self) -> GameId {
+        self.game_id
+    }
+
+    fn hand_id(&self) -> Option<HandId> {
+        self.hand_id
+    }
+
+    fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
+        &self.shufflers
+    }
+
+    fn dealing(&self) -> &DealingSnapshot<C> {
+        &self.dealing
+    }
+
+    fn players(&self) -> &Shared<PlayerRoster<C>> {
+        &self.players
+    }
+
+    fn seating(&self) -> &Shared<SeatingMap> {
+        &self.seating
+    }
+}
+
+impl<C: CurveGroup> DealingTableView<C> for TableAtPreflop<C> {
+    fn game_id(&self) -> GameId {
+        self.game_id
+    }
+
+    fn hand_id(&self) -> Option<HandId> {
+        self.hand_id
+    }
+
+    fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
+        &self.shufflers
+    }
+
+    fn dealing(&self) -> &DealingSnapshot<C> {
+        &self.dealing
+    }
+
+    fn players(&self) -> &Shared<PlayerRoster<C>> {
+        &self.players
+    }
+
+    fn seating(&self) -> &Shared<SeatingMap> {
+        &self.seating
+    }
+}
 
 /// Request emitted to shufflers when they must contribute shares for a specific card.
 #[derive(Clone, Debug)]
@@ -79,16 +143,19 @@ impl<C: CurveGroup> DealingHandState<C> {
         self.board_sent.clear();
     }
 
-    pub fn process_snapshot_and_make_responses(
+    pub fn process_snapshot_and_make_responses<T>(
         &mut self,
-        table: &TableAtDealing<C>,
+        table: &T,
         self_shuffler_id: ShufflerId,
         self_member_index: usize,
-    ) -> Result<Vec<DealShufflerRequest<C>>> {
+    ) -> Result<Vec<DealShufflerRequest<C>>>
+    where
+        T: DealingTableView<C>,
+    {
         if self.card_plan.is_none() {
-            self.card_plan = Some(table.dealing.card_plan.clone());
+            self.card_plan = Some(table.dealing().card_plan.clone());
         }
-        self.shufflers = table.shufflers.keys().copied().collect();
+        self.shufflers = table.shufflers().keys().copied().collect();
 
         let card_plan = self
             .card_plan
@@ -101,21 +168,22 @@ impl<C: CurveGroup> DealingHandState<C> {
             match destination {
                 CardDestination::Hole { seat, hole_index } => {
                     let player_public_key = player_public_key_for_seat(table, *seat)?;
-                    let already_blinded = table
-                        .dealing
-                        .player_blinding_contribs
-                        .contains_key(&(self_shuffler_id, *seat, *hole_index));
+                    let already_blinded = table.dealing().player_blinding_contribs.contains_key(&(
+                        self_shuffler_id,
+                        *seat,
+                        *hole_index,
+                    ));
                     if already_blinded {
                         self.blinding_sent.insert(deal_index);
                     } else if self.blinding_sent.insert(deal_index) {
                         let ciphertext = table
-                            .dealing
+                            .dealing()
                             .player_ciphertexts
                             .get(&(*seat, *hole_index))
                             .cloned();
                         requests.push(DealShufflerRequest::Player(PlayerCardShufflerRequest {
-                            game_id: table.game_id,
-                            hand_id: table.hand_id.expect("hand id for dealing snapshot"),
+                            game_id: table.game_id(),
+                            hand_id: table.hand_id().expect("hand id for dealing snapshot"),
                             deal_index,
                             seat: *seat,
                             hole_index: *hole_index,
@@ -129,7 +197,7 @@ impl<C: CurveGroup> DealingHandState<C> {
                     }
 
                     let already_unblinded = table
-                        .dealing
+                        .dealing()
                         .player_unblinding_shares
                         .get(&(*seat, *hole_index))
                         .map_or(false, |shares| shares.contains_key(&self_member_index));
@@ -139,14 +207,14 @@ impl<C: CurveGroup> DealingHandState<C> {
 
                     if !already_unblinded && !self.unblinding_sent.contains(&deal_index) {
                         if let Some(ciphertext) = table
-                            .dealing
+                            .dealing()
                             .player_ciphertexts
                             .get(&(*seat, *hole_index))
                             .cloned()
                         {
                             requests.push(DealShufflerRequest::Player(PlayerCardShufflerRequest {
-                                game_id: table.game_id,
-                                hand_id: table.hand_id.expect("hand id for dealing snapshot"),
+                                game_id: table.game_id(),
+                                hand_id: table.hand_id().expect("hand id for dealing snapshot"),
                                 deal_index,
                                 seat: *seat,
                                 hole_index: *hole_index,
@@ -162,15 +230,15 @@ impl<C: CurveGroup> DealingHandState<C> {
                     if self.board_sent.contains(&deal_index) {
                         continue;
                     }
-                    if !self.should_emit_board(*board_index, card_plan, table) {
+                    if !self.should_emit_board(*board_index, card_plan, table.dealing()) {
                         continue;
                     }
-                    if let Some(dealt) = table.dealing.assignments.get(&deal_index) {
+                    if let Some(dealt) = table.dealing().assignments.get(&deal_index) {
                         let slot = board_slot_from_index(*board_index)
                             .ok_or_else(|| anyhow!("invalid board index {board_index}"))?;
                         requests.push(DealShufflerRequest::Board(BoardCardShufflerRequest {
-                            game_id: table.game_id,
-                            hand_id: table.hand_id.expect("hand id for dealing snapshot"),
+                            game_id: table.game_id(),
+                            hand_id: table.hand_id().expect("hand id for dealing snapshot"),
                             deal_index,
                             slot,
                             ciphertext: dealt.clone(),
@@ -191,7 +259,7 @@ impl<C: CurveGroup> DealingHandState<C> {
         &self,
         board_index: u8,
         card_plan: &CardPlan,
-        table: &TableAtDealing<C>,
+        dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
     ) -> bool {
         if !self.all_hole_cards_served(card_plan) {
             return false;
@@ -199,8 +267,8 @@ impl<C: CurveGroup> DealingHandState<C> {
 
         match board_index {
             0 | 1 | 2 => true,
-            3 => self.flop_revealed(card_plan, table),
-            4 => self.turn_revealed(card_plan, table),
+            3 => self.flop_revealed(card_plan, dealing),
+            4 => self.turn_revealed(card_plan, dealing),
             _ => false,
         }
     }
@@ -215,18 +283,26 @@ impl<C: CurveGroup> DealingHandState<C> {
             .all(|deal_index| self.unblinding_sent.contains(&deal_index))
     }
 
-    fn flop_revealed(&self, card_plan: &CardPlan, table: &TableAtDealing<C>) -> bool {
+    fn flop_revealed(
+        &self,
+        card_plan: &CardPlan,
+        dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
+    ) -> bool {
         card_plan
             .iter()
             .filter_map(|(&deal_index, destination)| match destination {
                 CardDestination::Board { board_index } if *board_index < 3 => Some(deal_index),
                 _ => None,
             })
-            .all(|deal_index| table.dealing.community_cards.contains_key(&deal_index))
+            .all(|deal_index| dealing.community_cards.contains_key(&deal_index))
     }
 
-    fn turn_revealed(&self, card_plan: &CardPlan, table: &TableAtDealing<C>) -> bool {
-        if !self.flop_revealed(card_plan, table) {
+    fn turn_revealed(
+        &self,
+        card_plan: &CardPlan,
+        dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
+    ) -> bool {
+        if !self.flop_revealed(card_plan, dealing) {
             return false;
         }
 
@@ -236,20 +312,23 @@ impl<C: CurveGroup> DealingHandState<C> {
                 CardDestination::Board { board_index } if *board_index == 3 => Some(deal_index),
                 _ => None,
             })
-            .map(|deal_index| table.dealing.community_cards.contains_key(&deal_index))
+            .map(|deal_index| dealing.community_cards.contains_key(&deal_index))
             .unwrap_or(false)
     }
 }
 
-fn player_public_key_for_seat<C: CurveGroup>(table: &TableAtDealing<C>, seat: SeatId) -> Result<C> {
+fn player_public_key_for_seat<C: CurveGroup, T>(table: &T, seat: SeatId) -> Result<C>
+where
+    T: DealingTableView<C>,
+{
     let player_id = table
-        .seating
+        .seating()
         .get(&seat)
         .copied()
         .flatten()
         .ok_or_else(|| anyhow!("no player seated at seat {seat}"))?;
     let identity = table
-        .players
+        .players()
         .get(&player_id)
         .ok_or_else(|| anyhow!("missing player identity for seat {seat}"))?;
     Ok(identity.public_key.clone())

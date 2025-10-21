@@ -1412,7 +1412,37 @@ where
                                     {
                                         continue;
                                     }
-                                    runtime.dealing.lock().reset();
+                                    let shuffler_id = runtime.shuffler_id;
+                                    let shuffler_index = runtime.shuffler_index;
+                                    let mut state = runtime.dealing.lock();
+                                    match state.process_snapshot_and_make_responses(
+                                        table,
+                                        shuffler_id,
+                                        shuffler_index,
+                                    ) {
+                                        Ok(requests) => {
+                                            for request in requests {
+                                                if let Err(err) = deal_tx.send(request) {
+                                                    warn!(
+                                                        target = LOG_TARGET,
+                                                        game_id = runtime.game_id,
+                                                        hand_id = runtime.hand_id,
+                                                        error = %err,
+                                                        "failed to broadcast dealing request"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(err) => {
+                                            warn!(
+                                                target = LOG_TARGET,
+                                                game_id = runtime.game_id,
+                                                hand_id = runtime.hand_id,
+                                                error = %err,
+                                                "failed to process preflop snapshot"
+                                            );
+                                        }
+                                    }
                                 }
                                 AnyTableSnapshot::Flop(table) => {
                                     if table.game_id != runtime.game_id
@@ -1544,18 +1574,20 @@ mod tests {
     use super::*;
     use crate::chaum_pedersen::ChaumPedersenProof;
     use crate::ledger::snapshot::{CardDestination, DealtCard};
-    use crate::ledger::test_support::{fixture_dealing_snapshot, FixtureContext};
+    use crate::ledger::test_support::{
+        fixture_dealing_snapshot, fixture_preflop_snapshot, FixtureContext,
+    };
     use crate::shuffler::BoardCardSlot;
+    use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
     use crate::shuffling::{
         combine_blinding_contributions_for_player, decrypt_community_card,
         generate_random_ciphertexts, make_global_public_keys, recover_card_value,
         PartialUnblindingShare, PlayerTargetedBlindingContribution,
     };
-    use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
     use ark_ec::AffineRepr;
     use ark_ec::PrimeGroup;
-    use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_ff::Zero;
+    use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
     use tokio::time::{timeout, Duration};
 
@@ -1980,10 +2012,10 @@ mod tests {
                 z: <Curve as PrimeGroup>::ScalarField::zero(),
             },
         };
-        table.dealing.player_blinding_contribs.insert(
-            (shuffler_id, seat, hole_index),
-            faux_contribution,
-        );
+        table
+            .dealing
+            .player_blinding_contribs
+            .insert((shuffler_id, seat, hole_index), faux_contribution);
 
         let faux_share = PartialUnblindingShare {
             share: Curve::zero(),
@@ -2005,6 +2037,65 @@ mod tests {
                 DealShufflerRequest::Player(player)
                     if player.deal_index == deal_index)),
             "expected no duplicate requests for prior contributions"
+        );
+    }
+
+    #[test]
+    fn dealing_state_processes_preflop_snapshot() {
+        type Curve = GrumpkinProjective;
+
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0]);
+        let mut table = fixture_preflop_snapshot(&ctx);
+        let mut state = DealingHandState::<Curve>::new();
+
+        let (seat, hole_index) = table
+            .dealing
+            .card_plan
+            .values()
+            .find_map(|destination| match destination {
+                CardDestination::Hole { seat, hole_index } => Some((*seat, *hole_index)),
+                _ => None,
+            })
+            .expect("preflop hole card");
+
+        let shuffler_id = 17;
+        let member_index = 2;
+
+        let faux_contribution = PlayerTargetedBlindingContribution {
+            blinding_base_contribution: Curve::zero(),
+            blinding_combined_contribution: Curve::zero(),
+            proof: ChaumPedersenProof {
+                t_g: Curve::zero(),
+                t_h: Curve::zero(),
+                z: <Curve as PrimeGroup>::ScalarField::zero(),
+            },
+        };
+        table
+            .dealing
+            .player_blinding_contribs
+            .insert((shuffler_id, seat, hole_index), faux_contribution);
+
+        table.dealing.player_ciphertexts.insert(
+            (seat, hole_index),
+            PlayerAccessibleCiphertext {
+                blinded_base: Curve::zero(),
+                blinded_message_with_player_key: Curve::zero(),
+                player_unblinding_helper: Curve::zero(),
+                shuffler_proofs: Vec::new(),
+            },
+        );
+
+        let requests = state
+            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .expect("process preflop snapshot");
+
+        assert!(
+            requests.iter().any(|req| matches!(
+                req,
+                DealShufflerRequest::Player(player)
+                    if !player.needs_blinding && player.ciphertext.is_some()
+            )),
+            "expected unblinding request to be emitted from preflop snapshot"
         );
     }
 
@@ -2069,10 +2160,7 @@ mod tests {
         for (&deal_index, destination) in table.dealing.card_plan.iter() {
             if let CardDestination::Board { board_index } = destination {
                 if *board_index < 3 {
-                    table
-                        .dealing
-                        .community_cards
-                        .insert(deal_index, deal_index);
+                    table.dealing.community_cards.insert(deal_index, deal_index);
                 }
             }
         }
@@ -2082,17 +2170,21 @@ mod tests {
             .expect("process snapshot");
         let turn_count = third
             .iter()
-            .filter(|req| matches!(
-                req,
-                DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::Turn)
-            ))
+            .filter(|req| {
+                matches!(
+                    req,
+                    DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::Turn)
+                )
+            })
             .count();
         let river_count = third
             .iter()
-            .filter(|req| matches!(
-                req,
-                DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::River)
-            ))
+            .filter(|req| {
+                matches!(
+                    req,
+                    DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::River)
+                )
+            })
             .count();
         assert_eq!(turn_count, 1);
         assert_eq!(river_count, 0);
@@ -2101,10 +2193,7 @@ mod tests {
         for (&deal_index, destination) in table.dealing.card_plan.iter() {
             if let CardDestination::Board { board_index } = destination {
                 if *board_index == 3 {
-                    table
-                        .dealing
-                        .community_cards
-                        .insert(deal_index, deal_index);
+                    table.dealing.community_cards.insert(deal_index, deal_index);
                 }
             }
         }
@@ -2114,10 +2203,12 @@ mod tests {
             .expect("process snapshot");
         let river_count = fourth
             .iter()
-            .filter(|req| matches!(
-                req,
-                DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::River)
-            ))
+            .filter(|req| {
+                matches!(
+                    req,
+                    DealShufflerRequest::Board(board) if matches!(board.slot, BoardCardSlot::River)
+                )
+            })
             .count();
         assert_eq!(river_count, 1);
 
