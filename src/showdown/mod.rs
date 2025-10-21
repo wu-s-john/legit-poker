@@ -1,6 +1,7 @@
 //! showdown: shared types, constants, helpers
 
 use core::cmp::Ordering;
+use serde::{Deserialize, Serialize};
 
 pub type Rank = u8; // 2..14 (A=14)
 pub type Index = u8; // 0..51 (zero-based)
@@ -37,7 +38,8 @@ pub struct Card {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HandCategory {
     HighCard = 0,
     OnePair = 1,

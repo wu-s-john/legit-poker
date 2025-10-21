@@ -8,6 +8,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::{collections::HashMap, sync::Mutex};
+use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 use tracing::{instrument, warn};
 
@@ -17,11 +18,19 @@ const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption";
 
 /// Player-targeted blinding contribution from a single shuffler
 /// Each shuffler contributes their secret δ_j to add blinding specifically allowing the target player access
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+    )
+)]
 pub struct PlayerTargetedBlindingContribution<C: CurveGroup> {
     /// g^δ_j - shuffler's blinding contribution to the base element
+    #[serde(with = "crate::crypto_serde::curve")]
     pub blinding_base_contribution: C,
     /// (aggregated_public_key·player_public_key)^δ_j - shuffler's blinding contribution combined with player key
+    #[serde(with = "crate::crypto_serde::curve")]
     pub blinding_combined_contribution: C,
     /// Proof that the same δ_j was used for both contributions
     pub proof: ChaumPedersenProof<C>,
@@ -121,13 +130,22 @@ where
 /// Player-accessible ciphertext for a specific card
 /// This is the complete public transcript that gets posted on-chain,
 /// specifically structured so only the target player can access the card value
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+    )
+)]
 pub struct PlayerAccessibleCiphertext<C: CurveGroup> {
     /// g^(r+Δ) where r is initial randomness and Δ = Σδ_j - the blinded base element
+    #[serde(with = "crate::crypto_serde::curve")]
     pub blinded_base: C,
     /// pk^(r+Δ) * g^m_i * y_u^Δ where m_i is the card value - includes player-specific term
+    #[serde(with = "crate::crypto_serde::curve")]
     pub blinded_message_with_player_key: C,
     /// g^Δ = g^(Σδ_j) - helper element allowing player to remove their specific blinding
+    #[serde(with = "crate::crypto_serde::curve")]
     pub player_unblinding_helper: C,
     /// All Chaum-Pedersen proofs from each shuffler, proving correct blinding
     pub shuffler_proofs: Vec<ChaumPedersenProof<C>>,
@@ -154,9 +172,16 @@ where
 
 /// Partial unblinding share from a single committee member
 /// Each committee member j provides their portion of unblinding: blinded_base^x_j where x_j is their secret share
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize"
+    )
+)]
 pub struct PartialUnblindingShare<C: CurveGroup> {
     /// blinded_base^x_j - the partial unblinding from committee member j
+    #[serde(with = "crate::crypto_serde::curve")]
     pub share: C,
     /// Index of the committee member providing this share
     pub member_index: usize,

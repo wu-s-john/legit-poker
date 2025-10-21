@@ -26,9 +26,17 @@ where
     BaseField::deserialize_uncompressed(&mut &bytes[..]).unwrap_or(BaseField::zero())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize"
+    )
+)]
 pub struct ElGamalCiphertext<C: CurveGroup> {
+    #[serde(with = "crate::crypto_serde::curve")]
     pub c1: C,
+    #[serde(with = "crate::crypto_serde::curve")]
     pub c2: C,
 }
 
@@ -91,11 +99,19 @@ impl<C: CurveGroup> ElGamalKeys<C> {
     }
 }
 
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+    )
+)]
 pub struct ShuffleProof<C: CurveGroup> {
     pub input_deck: Vec<ElGamalCiphertext<C>>,
     /// Sorted list of (encrypted card, random value) pairs, sorted by random value in ascending order
+    #[serde(with = "crate::crypto_serde::shuffle_sorted_deck")]
     pub sorted_deck: Vec<(ElGamalCiphertext<C>, C::BaseField)>, // Not: That the sorted deck has not been reencrypted yet
+    #[serde(with = "crate::crypto_serde::field_vec")]
     pub rerandomization_values: Vec<C::ScalarField>,
 }
 

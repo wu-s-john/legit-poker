@@ -2,8 +2,9 @@ use super::errors::{InvariantCheck, StateError};
 use super::events::GameEvent;
 use super::seating::Seating;
 use super::types::{ActionLog, Chips, HandConfig, PlayerState, PlayerStatus, Pots, SeatId, Street};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BettingState {
     // Street and turn order:
     pub street: Street,

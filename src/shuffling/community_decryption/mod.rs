@@ -8,6 +8,7 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::{collections::HashMap, sync::Mutex};
+use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
 use tracing::{instrument, warn};
 
@@ -15,9 +16,16 @@ const LOG_TARGET: &str = "legit_poker::shuffling::community_decryption";
 
 /// Community card decryption share from a single committee member
 /// Each committee member provides c1^x_j where x_j is their secret share
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+    )
+)]
 pub struct CommunityDecryptionShare<C: CurveGroup> {
     /// c1^x_j - committee member j's partial decryption share
+    #[serde(with = "crate::crypto_serde::curve")]
     pub share: C,
     /// Proof that log_g(pk_j) = log_c1(share_j)
     pub proof: ChaumPedersenProof<C>,

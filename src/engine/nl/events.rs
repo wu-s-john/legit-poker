@@ -1,6 +1,8 @@
 use super::types::{Chips, SeatId, Street};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum NormalizedAction {
     Fold,
     Check,

@@ -1,5 +1,6 @@
 pub mod chaum_pedersen;
 pub mod config;
+pub mod crypto_serde;
 pub mod curve_absorb;
 pub mod engine;
 pub mod field_conversion;

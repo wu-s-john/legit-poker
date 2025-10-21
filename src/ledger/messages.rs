@@ -2,7 +2,7 @@ use anyhow::Result;
 use ark_crypto_primitives::signature::{schnorr::Signature as SchnorrSignature, SignatureScheme};
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::marker::PhantomData;
 
 use crate::chaum_pedersen::ChaumPedersenProof;
@@ -31,13 +31,13 @@ pub trait Street: Clone + Default + Serialize {
     fn transcript_kind() -> &'static str;
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PreflopStreet;
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FlopStreet;
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TurnStreet;
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RiverStreet;
 
 impl Street for PreflopStreet {

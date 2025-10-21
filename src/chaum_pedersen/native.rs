@@ -8,19 +8,29 @@ use ark_ff::{BigInteger, PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::Zero;
+use serde::{Deserialize, Serialize};
 
 const LOG_TARGET: &str = "legit_poker::shuffling::chaum_pedersen";
 
 /// Chaum-Pedersen proof for proving equality of discrete logarithms
 /// Proves that the same secret was used to compute α = g^secret and β = H^secret
 /// This is a non-interactive proof using the Fiat-Shamir heuristic
-#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[serde(
+    bound(
+        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+    )
+)]
 pub struct ChaumPedersenProof<C: CurveGroup> {
     /// First commitment: T_g = g^w
+    #[serde(with = "crate::crypto_serde::curve")]
     pub t_g: C,
     /// Second commitment: T_H = H^w
+    #[serde(with = "crate::crypto_serde::curve")]
     pub t_h: C,
     /// Response: z = w + c·secret
+    #[serde(with = "crate::crypto_serde::field")]
     pub z: C::ScalarField,
 }
 

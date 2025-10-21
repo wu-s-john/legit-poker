@@ -1,8 +1,10 @@
 use std::marker::PhantomData;
 
 use ark_ec::CurveGroup;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 use super::{BettingSnapshot, DealingSnapshot, RevealsSnapshot, ShufflingSnapshot};
+use serde::{Deserialize, Serialize};
 
 /// Trait implemented by each hand phase, exposing the snapshot types stored in `TableSnapshot`.
 pub trait HandPhase<C: CurveGroup> {
@@ -65,7 +67,16 @@ impl<C: CurveGroup> HandPhase<C> for PhaseComplete {
     type RevealsS = RevealsSnapshot<C>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(
+    tag = "phase",
+    content = "payload",
+    rename_all = "snake_case",
+    bound(
+        serialize = "C: CanonicalSerialize",
+        deserialize = "C: CanonicalDeserialize"
+    )
+)]
 pub enum AnyPhase<C: CurveGroup> {
     Shuffling(ShufflingSnapshot<C>),
     Dealing(DealingSnapshot<C>),

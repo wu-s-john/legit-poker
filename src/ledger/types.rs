@@ -4,13 +4,13 @@ pub type GameId = i64;
 pub type HandId = i64;
 pub type ShufflerId = i64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EntityKind {
     Player,
     Shuffler,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HandStatus {
     Pending,
     Shuffling,
@@ -21,7 +21,7 @@ pub enum HandStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EventPhase {
     Pending,
     Shuffling,
@@ -33,7 +33,7 @@ pub enum EventPhase {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NonceKey {
     pub hand_id: HandId,
     pub entity_kind: EntityKind,
