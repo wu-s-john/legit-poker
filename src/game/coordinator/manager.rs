@@ -265,6 +265,7 @@ where
 {
     operator: Arc<LedgerOperator<C>>,
     state: Arc<LedgerState<C>>,
+    event_store: Arc<dyn EventStore<C>>,
     updates_tx: broadcast::Sender<EnvelopedMessage<C, GameShuffleMessage<C>>>,
     realtime_stop: CancellationToken,
     realtime_handle: Option<JoinHandle<anyhow::Result<()>>>,
@@ -368,6 +369,7 @@ where
         Ok(Self {
             operator,
             state: Arc::clone(&config.state),
+            event_store: Arc::clone(&config.event_store),
             updates_tx,
             realtime_stop,
             realtime_handle,
@@ -384,6 +386,10 @@ where
 
     pub fn operator(&self) -> Arc<LedgerOperator<C>> {
         Arc::clone(&self.operator)
+    }
+
+    pub fn event_store(&self) -> Arc<dyn EventStore<C>> {
+        Arc::clone(&self.event_store)
     }
 
     pub async fn attach_hand(&self, outcome: CommenceGameOutcome<C>) -> Result<()> {

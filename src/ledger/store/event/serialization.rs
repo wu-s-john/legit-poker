@@ -14,6 +14,7 @@ use crate::ledger::messages::{
     GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage, GamePlayerMessage,
     GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
 };
+use crate::ledger::serialization::canonical_serialize_hex;
 use crate::ledger::snapshot::SnapshotStatus;
 use crate::ledger::types::{EventPhase, GameId};
 use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
@@ -23,14 +24,14 @@ use crate::shuffling::player_decryption::{
 use crate::signing::{Signable, WithSignature};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct StoredEnvelopePayload {
+pub(crate) struct StoredEnvelopePayload {
     pub(super) game_id: GameId,
     pub(super) message: StoredGameMessage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub(super) enum StoredGameMessage {
+pub(crate) enum StoredGameMessage {
     Shuffle {
         turn_index: u16,
         deck_in: Vec<String>,
@@ -80,7 +81,7 @@ impl StoredGameMessage {
         }
     }
 
-    pub(super) fn from_any<C>(message: &AnyGameMessage<C>) -> anyhow::Result<Self>
+    pub(crate) fn from_any<C>(message: &AnyGameMessage<C>) -> anyhow::Result<Self>
     where
         C: CurveGroup + CanonicalSerialize,
     {
@@ -89,17 +90,17 @@ impl StoredGameMessage {
                 turn_index: inner.turn_index,
                 deck_in: encode_ciphertexts(&inner.deck_in)?,
                 deck_out: encode_ciphertexts(&inner.deck_out)?,
-                proof: encode_hex(&inner.proof)?,
+                proof: canonical_serialize_hex(&inner.proof)?,
             }),
             AnyGameMessage::Blinding(inner) => Ok(StoredGameMessage::Blinding {
                 card_in_deck_position: inner.card_in_deck_position,
-                share: encode_hex(&inner.share)?,
-                target_player_public_key: encode_hex(&inner.target_player_public_key)?,
+                share: canonical_serialize_hex(&inner.share)?,
+                target_player_public_key: canonical_serialize_hex(&inner.target_player_public_key)?,
             }),
             AnyGameMessage::PartialUnblinding(inner) => Ok(StoredGameMessage::PartialUnblinding {
                 card_in_deck_position: inner.card_in_deck_position,
-                share: encode_hex(&inner.share)?,
-                target_player_public_key: encode_hex(&inner.target_player_public_key)?,
+                share: canonical_serialize_hex(&inner.share)?,
+                target_player_public_key: canonical_serialize_hex(&inner.target_player_public_key)?,
             }),
             AnyGameMessage::PlayerPreflop(inner) => Ok(StoredGameMessage::PlayerPreflop {
                 action: inner.action.clone(),
@@ -355,18 +356,7 @@ fn encode_many<T>(items: &[T]) -> anyhow::Result<Vec<String>>
 where
     T: CanonicalSerialize,
 {
-    items.iter().map(|item| encode_hex(item)).collect()
-}
-
-fn encode_hex<T>(value: &T) -> anyhow::Result<String>
-where
-    T: CanonicalSerialize,
-{
-    let mut buf = Vec::new();
-    value
-        .serialize_compressed(&mut buf)
-        .map_err(|err| anyhow!("canonical serialize failed: {err}"))?;
-    Ok(hex::encode(buf))
+    items.iter().map(canonical_serialize_hex).collect()
 }
 
 fn decode_many<T>(encoded: &[String]) -> anyhow::Result<Vec<T>>

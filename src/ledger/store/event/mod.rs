@@ -15,14 +15,13 @@ use tracing::{debug, Level};
 
 use crate::db::entity::events;
 use crate::ledger::messages::FinalizedAnyMessageEnvelope;
-use crate::ledger::snapshot::SnapshotStatus;
+use crate::ledger::snapshot::{SnapshotSeq, SnapshotStatus};
 use crate::ledger::types::HandId;
 
 pub use self::serialization::model_to_envelope;
+pub(crate) use self::serialization::StoredGameMessage;
 
-use self::serialization::{
-    encode_actor, to_db_event_phase, StoredEnvelopePayload, StoredGameMessage,
-};
+use self::serialization::{encode_actor, to_db_event_phase, StoredEnvelopePayload};
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
 
@@ -125,6 +124,12 @@ where
     async fn load_hand_events(
         &self,
         hand_id: HandId,
+    ) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>>;
+    async fn load_hand_events_in_sequence_range(
+        &self,
+        hand_id: HandId,
+        from: Option<SnapshotSeq>,
+        to: Option<SnapshotSeq>,
     ) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>>;
     fn connection(&self) -> &DatabaseConnection;
 }
@@ -229,6 +234,38 @@ where
             .all(&self.connection)
             .await
             .context("failed to load events for hand")?;
+
+        rows.into_iter().map(model_to_envelope).collect()
+    }
+
+    async fn load_hand_events_in_sequence_range(
+        &self,
+        hand_id: HandId,
+        from: Option<SnapshotSeq>,
+        to: Option<SnapshotSeq>,
+    ) -> anyhow::Result<Vec<FinalizedAnyMessageEnvelope<C>>> {
+        let mut query = events::Entity::find().filter(events::Column::HandId.eq(hand_id));
+
+        if let Some(start) = from {
+            let snapshot_start = i32::try_from(start).map_err(|_| {
+                anyhow!("snapshot sequence {start} exceeds i32::MAX and cannot be queried")
+            })?;
+            query = query.filter(events::Column::SnapshotNumber.gte(snapshot_start));
+        }
+
+        if let Some(end) = to {
+            let snapshot_end = i32::try_from(end).map_err(|_| {
+                anyhow!("snapshot sequence {end} exceeds i32::MAX and cannot be queried")
+            })?;
+            query = query.filter(events::Column::SnapshotNumber.lte(snapshot_end));
+        }
+
+        let rows = query
+            .order_by_asc(events::Column::SnapshotNumber)
+            .order_by_asc(events::Column::Nonce)
+            .all(&self.connection)
+            .await
+            .context("failed to load events for hand in sequence range")?;
 
         rows.into_iter().map(model_to_envelope).collect()
     }
