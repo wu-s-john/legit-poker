@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use ark_ec::CurveGroup;
 use ark_serialize::CanonicalSerialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engine::nl::types::{PlayerId, SeatId};
 use crate::ledger::actor::AnyActor;
@@ -11,6 +11,23 @@ use crate::ledger::serialization::{encode_state_hash, serialize_curve_hex};
 use crate::ledger::snapshot::{SnapshotSeq, SnapshotStatus};
 use crate::ledger::store::event::StoredGameMessage;
 use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId};
+
+#[derive(Deserialize)]
+pub struct DemoCreateRequest {
+    pub public_key: String,
+}
+
+#[derive(Serialize)]
+pub struct DemoCreateResponse {
+    pub game_id: GameId,
+    pub hand_id: HandId,
+    pub player_count: usize,
+}
+
+#[derive(Serialize)]
+pub struct DemoStartResponse {
+    pub status: &'static str,
+}
 
 #[derive(Serialize)]
 pub struct LatestSnapshotResponse {

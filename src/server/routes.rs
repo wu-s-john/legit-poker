@@ -6,18 +6,22 @@ use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use axum::extract::{Path, Query};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::game::coordinator::GameCoordinator;
+use crate::ledger::lobby::LedgerLobby;
 use crate::ledger::query::{HandMessagesQuery, LatestSnapshotQuery, SequenceBounds};
 use crate::ledger::snapshot::SnapshotSeq;
-use crate::ledger::store::EventStore;
 use crate::ledger::types::{GameId, HandId};
 
-use super::dto::{HandMessagesResponse, LatestSnapshotResponse};
+use super::demo::{parse_viewer_public_key, rehydrate_commence_outcome, seed_demo_hand};
+use super::dto::{
+    DemoCreateRequest, DemoCreateResponse, DemoStartResponse, HandMessagesResponse,
+    LatestSnapshotResponse,
+};
 use super::error::ApiError;
 
 #[derive(Clone)]
@@ -35,7 +39,7 @@ where
     C::Affine: Absorb,
 {
     pub coordinator: Arc<GameCoordinator<C>>,
-    pub event_store: Arc<dyn EventStore<C>>,
+    pub lobby: Arc<dyn LedgerLobby<C> + Send + Sync>,
 }
 
 pub struct LegitPokerServer<C>
@@ -68,13 +72,18 @@ where
     C::BaseField: PrimeField + Send + Sync,
     C::Affine: Absorb,
 {
-    pub fn new(coordinator: Arc<GameCoordinator<C>>, event_store: Arc<dyn EventStore<C>>) -> Self {
-        let context = Arc::new(ServerContext {
-            coordinator,
-            event_store,
-        });
+    pub fn new(
+        coordinator: Arc<GameCoordinator<C>>,
+        lobby: Arc<dyn LedgerLobby<C> + Send + Sync>,
+    ) -> Self {
+        let context = Arc::new(ServerContext { coordinator, lobby });
 
         let router = Router::new()
+            .route("/game/demo", post(create_demo_game::<C>))
+            .route(
+                "/game/demo/:game_id/hand/:hand_id",
+                post(start_demo_hand::<C>),
+            )
             .route(
                 "/game/:game_id/hand/:hand_id/snapshot",
                 get(get_hand_snapshot::<C>),
@@ -159,7 +168,8 @@ where
     )
     .map_err(|err| ApiError::bad_request(err.to_string()))?;
 
-    let messages_query = HandMessagesQuery::new(Arc::clone(&ctx.event_store));
+    let event_store = ctx.coordinator.event_store();
+    let messages_query = HandMessagesQuery::new(event_store);
     let events = messages_query
         .execute(path.hand_id, &bounds)
         .await
@@ -169,6 +179,74 @@ where
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
     Ok(Json(response))
+}
+
+async fn create_demo_game<C>(
+    Extension(ctx): Extension<Arc<ServerContext<C>>>,
+    Json(payload): Json<DemoCreateRequest>,
+) -> Result<Json<DemoCreateResponse>, ApiError>
+where
+    C: CurveGroup
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + CurveAbsorb<C::BaseField>
+        + Send
+        + Sync
+        + 'static,
+    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
+    C::BaseField: PrimeField + Send + Sync,
+    C::Affine: Absorb,
+{
+    let viewer_key = parse_viewer_public_key::<C>(&payload.public_key)
+        .map_err(|err| ApiError::bad_request(err.to_string()))?;
+
+    let result = seed_demo_hand(Arc::clone(&ctx.lobby), &ctx.coordinator, viewer_key)
+        .await
+        .map_err(|err| ApiError::internal(err.to_string()))?;
+
+    Ok(Json(DemoCreateResponse {
+        game_id: result.game_id,
+        hand_id: result.hand_id,
+        player_count: result.player_count,
+    }))
+}
+
+async fn start_demo_hand<C>(
+    Extension(ctx): Extension<Arc<ServerContext<C>>>,
+    Path(path): Path<HandPath>,
+) -> Result<Json<DemoStartResponse>, ApiError>
+where
+    C: CurveGroup
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + CurveAbsorb<C::BaseField>
+        + Send
+        + Sync
+        + 'static,
+    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
+    C::BaseField: PrimeField + Send + Sync,
+    C::Affine: Absorb,
+{
+    let outcome =
+        match rehydrate_commence_outcome(&ctx.coordinator, path.game_id, path.hand_id).await {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("hand not found") || message.contains("belongs to game") {
+                    return Err(ApiError::NotFound);
+                }
+                return Err(ApiError::internal(message));
+            }
+        };
+
+    let coordinator = Arc::clone(&ctx.coordinator);
+    tokio::spawn(async move {
+        if let Err(err) = coordinator.attach_hand(outcome).await {
+            tracing::error!(target = "server::demo", %err, "failed to start demo hand");
+        }
+    });
+
+    Ok(Json(DemoStartResponse { status: "started" }))
 }
 
 #[inline]
