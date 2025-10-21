@@ -14,6 +14,7 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
+use crate::ledger::lobby::{LedgerLobby, SeaOrmLobby};
 use crate::ledger::state::LedgerState;
 use crate::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
 use crate::ledger::verifier::{LedgerVerifier, Verifier};
@@ -74,7 +75,10 @@ where
         .context("failed to spawn game coordinator")?;
     let coordinator = Arc::new(coordinator);
 
-    let server = LegitPokerServer::new(Arc::clone(&coordinator), Arc::clone(&event_store));
+    let lobby: Arc<SeaOrmLobby> = Arc::new(SeaOrmLobby::new(db.clone()));
+    let lobby_trait: Arc<dyn LedgerLobby<C> + Send + Sync> = lobby;
+
+    let server = LegitPokerServer::new(Arc::clone(&coordinator), Arc::clone(&lobby_trait));
     let router = server.into_router();
     let make_service = router.into_make_service();
 

@@ -43,6 +43,14 @@ pub struct ShufflerSecretConfig<C: CurveGroup> {
 }
 
 #[derive(Clone)]
+pub struct ShufflerDescriptor<C: CurveGroup> {
+    pub shuffler_id: ShufflerId,
+    pub turn_index: usize,
+    pub public_key: C,
+    pub aggregated_public_key: C,
+}
+
+#[derive(Clone)]
 pub struct GameCoordinatorConfig<C: CurveGroup>
 where
     C::ScalarField: PrimeField + UniformRand + CanonicalSerialize,
@@ -124,6 +132,7 @@ where
     operator: Arc<LedgerOperator<C>>,
     state: Arc<LedgerState<C>>,
     event_store: Arc<dyn EventStore<C>>,
+    snapshot_store: Arc<dyn SnapshotStore<C>>,
     updates_tx: broadcast::Sender<EnvelopedMessage<C, GameShuffleMessage<C>>>,
     _event_broadcast: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
     _snapshot_broadcast: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
@@ -229,6 +238,7 @@ where
             operator,
             state: Arc::clone(&config.state),
             event_store: Arc::clone(&config.event_store),
+            snapshot_store: Arc::clone(&config.snapshot_store),
             updates_tx,
             _event_broadcast: events_tx,
             _snapshot_broadcast: snapshots_tx,
@@ -250,6 +260,28 @@ where
 
     pub fn event_store(&self) -> Arc<dyn EventStore<C>> {
         Arc::clone(&self.event_store)
+    }
+
+    pub fn snapshot_store(&self) -> Arc<dyn SnapshotStore<C>> {
+        Arc::clone(&self.snapshot_store)
+    }
+
+    pub fn shuffler_descriptors(&self) -> Vec<ShufflerDescriptor<C>>
+    where
+        C: Clone,
+    {
+        let mut descriptors = self
+            .shufflers
+            .values()
+            .map(|shuffler| ShufflerDescriptor {
+                shuffler_id: shuffler.shuffler_id(),
+                turn_index: shuffler.index(),
+                public_key: shuffler.public_key(),
+                aggregated_public_key: shuffler.aggregated_public_key(),
+            })
+            .collect::<Vec<_>>();
+        descriptors.sort_by_key(|descriptor| descriptor.turn_index);
+        descriptors
     }
 
     pub async fn attach_hand(&self, outcome: CommenceGameOutcome<C>) -> Result<()> {

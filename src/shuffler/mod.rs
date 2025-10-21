@@ -336,6 +336,20 @@ where
         self.index
     }
 
+    pub fn public_key(&self) -> C
+    where
+        C: Clone,
+    {
+        self.public_key.clone()
+    }
+
+    pub fn aggregated_public_key(&self) -> C
+    where
+        C: Clone,
+    {
+        self.api.aggregated_public_key.clone()
+    }
+
     pub fn cancel_all(&self) {
         let mut keys = Vec::new();
         for entry in self.states.iter() {
