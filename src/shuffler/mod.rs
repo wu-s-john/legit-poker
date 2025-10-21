@@ -258,6 +258,8 @@ impl<C: CurveGroup> ShufflingHandState<C> {
 struct HandRuntime<C: CurveGroup> {
     pub game_id: GameId,
     pub hand_id: HandId,
+    pub shuffler_id: ShufflerId,
+    pub shuffler_index: usize,
     pub cancel: CancellationToken,
     pub shuffling: Mutex<ShufflingHandState<C>>,
     pub dealing: Mutex<DealingHandState<C>>,
@@ -411,6 +413,8 @@ where
         let runtime = Arc::new(HandRuntime {
             game_id,
             hand_id,
+            shuffler_id: self.shuffler_id,
+            shuffler_index: self.index,
             cancel: cancel.clone(),
             shuffling: Mutex::new(state),
             dealing: Mutex::new(DealingHandState::new()),
@@ -1370,8 +1374,14 @@ where
                                     {
                                         continue;
                                     }
+                                    let shuffler_id = runtime.shuffler_id;
+                                    let shuffler_index = runtime.shuffler_index;
                                     let mut state = runtime.dealing.lock();
-                                    match state.process_snapshot_and_make_responses(table) {
+                                    match state.process_snapshot_and_make_responses(
+                                        table,
+                                        shuffler_id,
+                                        shuffler_index,
+                                    ) {
                                         Ok(requests) => {
                                             for request in requests {
                                                 if let Err(err) = deal_tx.send(request) {
@@ -1532,17 +1542,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chaum_pedersen::ChaumPedersenProof;
     use crate::ledger::snapshot::{CardDestination, DealtCard};
     use crate::ledger::test_support::{fixture_dealing_snapshot, FixtureContext};
     use crate::shuffler::BoardCardSlot;
     use crate::shuffling::{
         combine_blinding_contributions_for_player, decrypt_community_card,
         generate_random_ciphertexts, make_global_public_keys, recover_card_value,
+        PartialUnblindingShare, PlayerTargetedBlindingContribution,
     };
     use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
     use ark_ec::AffineRepr;
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
+    use ark_ff::Zero;
     use ark_std::test_rng;
     use tokio::time::{timeout, Duration};
 
@@ -1722,6 +1735,8 @@ mod tests {
         let runtime = Arc::new(HandRuntime {
             game_id: key.0,
             hand_id: key.1,
+            shuffler_id: 0,
+            shuffler_index: 0,
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1826,6 +1841,8 @@ mod tests {
         let runtime = Arc::new(HandRuntime {
             game_id: key.0,
             hand_id: key.1,
+            shuffler_id: 0,
+            shuffler_index: 0,
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1889,7 +1906,7 @@ mod tests {
         table.dealing.player_ciphertexts.clear();
 
         let requests = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         let mut player_requests: Vec<_> = requests
             .into_iter()
@@ -1918,7 +1935,7 @@ mod tests {
             .insert((first_player.seat, first_player.hole_index), cipher);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         let player_requests: Vec<_> = requests
             .into_iter()
@@ -1934,6 +1951,64 @@ mod tests {
     }
 
     #[test]
+    fn dealing_state_skips_cards_with_existing_contributions() {
+        type Curve = GrumpkinProjective;
+
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0]);
+        let mut table = fixture_dealing_snapshot(&ctx);
+        let mut state = DealingHandState::<Curve>::new();
+
+        let (deal_index, seat, hole_index) = table
+            .dealing
+            .card_plan
+            .iter()
+            .find_map(|(&idx, destination)| match destination {
+                CardDestination::Hole { seat, hole_index } => Some((idx, *seat, *hole_index)),
+                _ => None,
+            })
+            .expect("fixture hole card");
+
+        let shuffler_id = 42;
+        let member_index = 7;
+
+        let faux_contribution = PlayerTargetedBlindingContribution {
+            blinding_base_contribution: Curve::zero(),
+            blinding_combined_contribution: Curve::zero(),
+            proof: ChaumPedersenProof {
+                t_g: Curve::zero(),
+                t_h: Curve::zero(),
+                z: <Curve as PrimeGroup>::ScalarField::zero(),
+            },
+        };
+        table.dealing.player_blinding_contribs.insert(
+            (shuffler_id, seat, hole_index),
+            faux_contribution,
+        );
+
+        let faux_share = PartialUnblindingShare {
+            share: Curve::zero(),
+            member_index,
+        };
+        table
+            .dealing
+            .player_unblinding_shares
+            .entry((seat, hole_index))
+            .or_default()
+            .insert(member_index, faux_share);
+
+        let requests = state
+            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .expect("process snapshot");
+
+        assert!(
+            !requests.iter().any(|req| matches!(req,
+                DealShufflerRequest::Player(player)
+                    if player.deal_index == deal_index)),
+            "expected no duplicate requests for prior contributions"
+        );
+    }
+
+    #[test]
     fn dealing_state_emits_board_requests_in_stages() {
         type Curve = GrumpkinProjective;
 
@@ -1946,7 +2021,7 @@ mod tests {
 
         // Initial snapshot should only request player shares.
         let initial = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         assert!(initial
             .iter()
@@ -1971,7 +2046,7 @@ mod tests {
 
         // Flop requests should be emitted together once hole cards are ready.
         let second = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         let mut flop_slots: Vec<u8> = second
             .iter()
@@ -2003,7 +2078,7 @@ mod tests {
         }
 
         let third = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         let turn_count = third
             .iter()
@@ -2035,7 +2110,7 @@ mod tests {
         }
 
         let fourth = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         let river_count = fourth
             .iter()
@@ -2048,7 +2123,7 @@ mod tests {
 
         // Further snapshots should not emit additional board requests.
         let fifth = state
-            .process_snapshot_and_make_responses(&table)
+            .process_snapshot_and_make_responses(&table, 0, 0)
             .expect("process snapshot");
         assert!(fifth
             .iter()

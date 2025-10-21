@@ -82,6 +82,8 @@ impl<C: CurveGroup> DealingHandState<C> {
     pub fn process_snapshot_and_make_responses(
         &mut self,
         table: &TableAtDealing<C>,
+        self_shuffler_id: ShufflerId,
+        self_member_index: usize,
     ) -> Result<Vec<DealShufflerRequest<C>>> {
         if self.card_plan.is_none() {
             self.card_plan = Some(table.dealing.card_plan.clone());
@@ -99,7 +101,13 @@ impl<C: CurveGroup> DealingHandState<C> {
             match destination {
                 CardDestination::Hole { seat, hole_index } => {
                     let player_public_key = player_public_key_for_seat(table, *seat)?;
-                    if self.blinding_sent.insert(deal_index) {
+                    let already_blinded = table
+                        .dealing
+                        .player_blinding_contribs
+                        .contains_key(&(self_shuffler_id, *seat, *hole_index));
+                    if already_blinded {
+                        self.blinding_sent.insert(deal_index);
+                    } else if self.blinding_sent.insert(deal_index) {
                         let ciphertext = table
                             .dealing
                             .player_ciphertexts
@@ -120,7 +128,16 @@ impl<C: CurveGroup> DealingHandState<C> {
                         }
                     }
 
-                    if !self.unblinding_sent.contains(&deal_index) {
+                    let already_unblinded = table
+                        .dealing
+                        .player_unblinding_shares
+                        .get(&(*seat, *hole_index))
+                        .map_or(false, |shares| shares.contains_key(&self_member_index));
+                    if already_unblinded {
+                        self.unblinding_sent.insert(deal_index);
+                    }
+
+                    if !already_unblinded && !self.unblinding_sent.contains(&deal_index) {
                         if let Some(ciphertext) = table
                             .dealing
                             .player_ciphertexts
