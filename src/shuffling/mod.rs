@@ -11,6 +11,7 @@ pub mod error;
 pub use crate::field_conversion_gadget;
 pub use crate::pedersen_commitment;
 pub mod permutation_proof;
+pub mod permutation_serialization;
 pub mod player_decryption;
 pub use player_decryption::gadget as player_decryption_gadget;
 pub mod proof_system;

@@ -301,10 +301,10 @@ where
 #[tracing::instrument(skip(config, ct_input, ct_output, proof), target = LOG_TARGET)]
 pub fn verify_shuffling<E, G, const N: usize>(
     config: &ShufflingConfig<E, G>,
-    bg_setup: &BGPowerChallengeSetup<G::BaseField, G::ScalarField, G>,
     ct_input: &[ElGamalCiphertext<G>; N],
     ct_output: &[ElGamalCiphertext<G>; N],
     proof: &ShufflingProof<E, G, N>,
+    bg_setup: &BGPowerChallengeSetup<G::BaseField, G::ScalarField, G>,
 ) -> Result<bool, Box<dyn std::error::Error>>
 where
     E: Pairing<ScalarField = G::BaseField>,
