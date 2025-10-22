@@ -5,7 +5,8 @@ use serde::ser::Error as SerError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ledger::serialization::{
-    canonical_deserialize_hex, canonical_serialize_hex, deserialize_curve_hex, serialize_curve_hex,
+    canonical_deserialize_hex, canonical_serialize_hex_prefixed, deserialize_curve_hex,
+    serialize_curve_hex,
 };
 
 /// Serde helpers for encoding curve points as 0x-prefixed hex strings.
@@ -251,7 +252,7 @@ pub mod field {
         F: CanonicalSerialize,
         S: Serializer,
     {
-        let hex = canonical_serialize_hex(value).map_err(SerError::custom)?;
+        let hex = canonical_serialize_hex_prefixed(value).map_err(SerError::custom)?;
         serializer.serialize_str(&hex)
     }
 
@@ -375,7 +376,7 @@ pub mod field_vec {
     {
         let hexes: Vec<String> = value
             .iter()
-            .map(|item| canonical_serialize_hex(item).map_err(SerError::custom))
+            .map(|item| canonical_serialize_hex_prefixed(item).map_err(SerError::custom))
             .collect::<std::result::Result<_, _>>()?;
         hexes.serialize(serializer)
     }

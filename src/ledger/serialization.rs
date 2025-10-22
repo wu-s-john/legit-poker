@@ -43,7 +43,8 @@ pub fn serialize_curve_hex<C>(value: &C) -> Result<String>
 where
     C: CurveGroup + CanonicalSerialize,
 {
-    canonical_serialize_hex(value).map_err(|err| anyhow!("failed to serialize curve point: {err}"))
+    canonical_serialize_hex_prefixed(value)
+        .map_err(|err| anyhow!("failed to serialize curve point: {err}"))
 }
 
 /// Canonically serializes a curve point and returns the compressed bytes.

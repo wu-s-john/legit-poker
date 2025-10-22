@@ -6,14 +6,19 @@ use std::io::Write;
 use std::sync::Arc;
 
 use ark_bn254::G1Projective as Curve;
+use hex;
+use serde_json::{self, Value};
+use sha2::{Digest, Sha256};
 use zk_poker::db;
 use zk_poker::debugging_tools::fetch_hand_archive;
-use zk_poker::ledger::messages::FinalizedAnyMessageEnvelope;
+use zk_poker::ledger::actor::AnyActor;
+use zk_poker::ledger::messages::{AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
 use zk_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
-use zk_poker::ledger::snapshot::rehydrate_snapshot_by_hash;
+use zk_poker::ledger::snapshot::{rehydrate_snapshot_by_hash, SnapshotSeq, SnapshotStatus};
 use zk_poker::ledger::store::SeaOrmEventStore;
-use zk_poker::ledger::types::StateHash;
-use zk_poker::ledger::{GameId, HandId};
+use zk_poker::ledger::types::{EventPhase, StateHash};
+use zk_poker::ledger::{GameId, HandId, SignatureBytes};
+use zk_poker::signing::WithSignature;
 
 #[derive(Parser)]
 #[command(author, version, about = "Ledger debugging utilities", long_about = None)]
@@ -72,10 +77,10 @@ struct ArchiveOutput<T> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct LatestSnapshotOutput<T, M> {
-    snapshot: T,
+struct LatestSnapshotOutput {
+    snapshot: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
-    messages: Option<Vec<M>>,
+    messages: Option<Vec<FinalizedEnvelopeDisplay>>,
 }
 
 fn write_json<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
@@ -135,6 +140,9 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
     let snapshot =
         rehydrate_snapshot_by_hash::<Curve>(&conn, args.game, args.hand, state_hash).await?;
 
+    let mut snapshot_json = serde_json::to_value(&snapshot)?;
+    normalize_hash_fields(&mut snapshot_json);
+
     let messages = if args.include_messages {
         let store = SeaOrmEventStore::<Curve>::new(conn.clone());
         let query = HandMessagesQuery::new(Arc::new(store));
@@ -145,8 +153,13 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
         None
     };
 
-    let payload =
-        LatestSnapshotOutput::<_, FinalizedAnyMessageEnvelope<Curve>> { snapshot, messages };
+    let normalized_messages =
+        messages.map(|m| m.into_iter().map(FinalizedEnvelopeDisplay::from).collect());
+
+    let payload = LatestSnapshotOutput {
+        snapshot: snapshot_json,
+        messages: normalized_messages,
+    };
 
     write_json(&payload, pretty)
 }
@@ -184,12 +197,128 @@ fn state_hash_from_bytes(bytes: Vec<u8>) -> Result<StateHash> {
     Ok(StateHash::from(array))
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("0x{}", hex::encode(hasher.finalize()))
+}
+
+fn normalize_hash_fields(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            if let Some(hash) = map.get_mut("state_hash") {
+                if let Some(hex) = array_to_hex(hash) {
+                    *hash = Value::String(hex);
+                }
+            }
+            if let Some(prev) = map.get_mut("previous_hash") {
+                if let Some(hex) = array_to_hex(prev) {
+                    *prev = Value::String(hex);
+                }
+            }
+            for v in map.values_mut() {
+                normalize_hash_fields(v);
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                normalize_hash_fields(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn array_to_hex(value: &Value) -> Option<String> {
+    if let Value::Array(arr) = value {
+        if arr.len() == 32 {
+            let mut bytes = [0u8; 32];
+            for (i, v) in arr.iter().enumerate() {
+                let n = v.as_u64()?;
+                if n > 255 {
+                    return None;
+                }
+                bytes[i] = n as u8;
+            }
+            return Some(format!("0x{}", hex::encode(bytes)));
+        }
+    }
+    None
+}
+
+#[derive(Serialize, Deserialize)]
+struct FinalizedEnvelopeDisplay {
+    envelope: MessageEnvelopeDisplay,
+    snapshot_status: SnapshotStatus,
+    applied_phase: EventPhase,
+    snapshot_sequence_id: SnapshotSeq,
+}
+
+impl From<FinalizedAnyMessageEnvelope<Curve>> for FinalizedEnvelopeDisplay {
+    fn from(value: FinalizedAnyMessageEnvelope<Curve>) -> Self {
+        Self {
+            envelope: MessageEnvelopeDisplay::from(value.envelope),
+            snapshot_status: value.snapshot_status,
+            applied_phase: value.applied_phase,
+            snapshot_sequence_id: value.snapshot_sequence_id,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct MessageEnvelopeDisplay {
+    hand_id: HandId,
+    game_id: GameId,
+    actor: AnyActor,
+    nonce: u64,
+    #[serde(with = "zk_poker::crypto_serde::curve")]
+    public_key: Curve,
+    message: MessageWithSignatureDisplay,
+}
+
+impl From<AnyMessageEnvelope<Curve>> for MessageEnvelopeDisplay {
+    fn from(envelope: AnyMessageEnvelope<Curve>) -> Self {
+        Self {
+            hand_id: envelope.hand_id,
+            game_id: envelope.game_id,
+            actor: envelope.actor,
+            nonce: envelope.nonce,
+            public_key: envelope.public_key,
+            message: MessageWithSignatureDisplay::from(envelope.message),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct MessageWithSignatureDisplay {
+    value: AnyGameMessage<Curve>,
+    signature_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transcript_hex: Option<String>,
+}
+
+impl From<WithSignature<SignatureBytes, AnyGameMessage<Curve>>> for MessageWithSignatureDisplay {
+    fn from(with_sig: WithSignature<SignatureBytes, AnyGameMessage<Curve>>) -> Self {
+        let signature_hash = sha256_hex(&with_sig.signature);
+        let transcript_hex = if with_sig.transcript.is_empty() {
+            None
+        } else {
+            Some(format!("0x{}", hex::encode(&with_sig.transcript)))
+        };
+
+        Self {
+            value: with_sig.value,
+            signature_sha256: signature_hash,
+            transcript_hex,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::LatestSnapshotOutput;
     use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
-    use serde::{de::DeserializeOwned, Serialize};
     use serde_json;
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -209,17 +338,6 @@ mod tests {
     use zk_poker::signing::{Signable, WithSignature};
 
     type Curve = G1Projective;
-
-    fn assert_round_trip_json<T>(value: &T)
-    where
-        T: Serialize + DeserializeOwned,
-    {
-        let json = serde_json::to_value(value).expect("serialization should succeed");
-        let restored: T =
-            serde_json::from_value(json.clone()).expect("deserialization should succeed");
-        let json_after = serde_json::to_value(restored).expect("re-serialization should succeed");
-        assert_eq!(json_after, json, "serde_json round-trip altered payload");
-    }
 
     fn sample_ciphertext() -> ElGamalCiphertext<Curve> {
         let generator = Curve::generator();
@@ -302,6 +420,8 @@ mod tests {
         };
 
         let snapshot = AnyTableSnapshot::Shuffling(table);
+        let mut snapshot_json = serde_json::to_value(&snapshot).expect("serialize snapshot");
+        super::normalize_hash_fields(&mut snapshot_json);
 
         let game_message = AnyGameMessage::PlayerPreflop(
             GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Call),
@@ -330,10 +450,23 @@ mod tests {
         };
 
         let payload = LatestSnapshotOutput {
-            snapshot,
-            messages: Some(vec![finalized]),
+            snapshot: snapshot_json,
+            messages: Some(vec![finalized.into()]),
         };
 
-        assert_round_trip_json(&payload);
+        let json = serde_json::to_value(&payload).expect("serialization should succeed");
+        let messages = json
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages array serialized");
+        let message = messages.first().expect("at least one message serialized");
+        let signature = message
+            .get("envelope")
+            .and_then(|v| v.get("message"))
+            .and_then(|v| v.get("signature_sha256"))
+            .and_then(|v| v.as_str())
+            .expect("signature hash present");
+        assert!(signature.starts_with("0x"));
+        assert_eq!(signature.len(), 66, "expected 32-byte hash rendered as hex");
     }
 }
