@@ -188,11 +188,12 @@ where
     where
         C::ScalarField: PrimeField,
     {
-        // μ_{u,j} = A_u^{x_j}; index is self.index
+        // μ_{u,j} = A_u^{x_j}
+        let member_key = crate::ledger::CanonicalKey::new(self.public_key.clone());
         let share = crate::shuffling::generate_committee_decryption_share(
             player_ciphertext,
             self.secret_key,
-            self.index,
+            member_key,
         );
         Ok(share)
     }
@@ -207,10 +208,11 @@ where
         C::ScalarField: PrimeField + Absorb,
         C: CurveAbsorb<C::BaseField>,
     {
+        let member_key = crate::ledger::CanonicalKey::new(self.public_key.clone());
         let share = crate::shuffling::CommunityDecryptionShare::generate(
             ciphertext,
             self.secret_key,
-            self.index,
+            member_key,
             rng,
         );
         Ok(share)
@@ -260,6 +262,7 @@ struct HandRuntime<C: CurveGroup> {
     pub hand_id: HandId,
     pub shuffler_id: ShufflerId,
     pub shuffler_index: usize,
+    pub shuffler_key: crate::ledger::CanonicalKey<C>,
     pub cancel: CancellationToken,
     pub shuffling: Mutex<ShufflingHandState<C>>,
     pub dealing: Mutex<DealingHandState<C>>,
@@ -429,6 +432,7 @@ where
             hand_id,
             shuffler_id: self.shuffler_id,
             shuffler_index: self.index,
+            shuffler_key: crate::ledger::CanonicalKey::new(self.public_key.clone()),
             cancel: cancel.clone(),
             shuffling: Mutex::new(state),
             dealing: Mutex::new(DealingHandState::new()),
@@ -1406,12 +1410,11 @@ where
                                         continue;
                                     }
                                     let shuffler_id = runtime.shuffler_id;
-                                    let shuffler_index = runtime.shuffler_index;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
                                         shuffler_id,
-                                        shuffler_index,
+                                        &runtime.shuffler_key,
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
@@ -1444,12 +1447,11 @@ where
                                         continue;
                                     }
                                     let shuffler_id = runtime.shuffler_id;
-                                    let shuffler_index = runtime.shuffler_index;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
                                         shuffler_id,
-                                        shuffler_index,
+                                        &runtime.shuffler_key,
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
@@ -1800,6 +1802,7 @@ mod tests {
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
+            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1815,7 +1818,11 @@ mod tests {
         });
 
         let (deal_tx, deal_rx) = broadcast::channel(8);
-        let actor = ShufflerActor { shuffler_id: 0 };
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let actor = ShufflerActor {
+            shuffler_id: 0,
+            shuffler_key,
+        };
         let deal_handle = spawn_deal_loop_per_hand::<Curve, ShufflerScheme<Curve>>(
             0,
             Arc::clone(&runtime),
@@ -1825,7 +1832,7 @@ mod tests {
             Arc::clone(&shuffler.params),
             Arc::clone(&shuffler.secret_key),
             shuffler.public_key.clone(),
-            actor,
+            &actor,
         );
 
         let ciphertext = PlayerAccessibleCiphertext {
@@ -1906,6 +1913,7 @@ mod tests {
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
+            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1921,7 +1929,11 @@ mod tests {
         });
 
         let (deal_tx, deal_rx) = broadcast::channel(4);
-        let actor = ShufflerActor { shuffler_id: 0 };
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let actor = ShufflerActor {
+            shuffler_id: 0,
+            shuffler_key,
+        };
         let deal_handle = spawn_deal_loop_per_hand::<Curve, ShufflerScheme<Curve>>(
             0,
             Arc::clone(&runtime),
@@ -1931,7 +1943,7 @@ mod tests {
             Arc::clone(&shuffler.params),
             Arc::clone(&shuffler.secret_key),
             shuffler.public_key.clone(),
-            actor,
+            &actor,
         );
 
         let board_request = BoardCardShufflerRequest {
@@ -1969,7 +1981,7 @@ mod tests {
         table.dealing.player_ciphertexts.clear();
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let mut player_requests: Vec<_> = requests
             .into_iter()
@@ -1998,7 +2010,7 @@ mod tests {
             .insert((first_player.seat, first_player.hole_index), cipher);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let player_requests: Vec<_> = requests
             .into_iter()
@@ -2032,7 +2044,7 @@ mod tests {
             .expect("fixture hole card");
 
         let shuffler_id = 42;
-        let member_index = 7;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::generator());
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -2050,17 +2062,17 @@ mod tests {
 
         let faux_share = PartialUnblindingShare {
             share: Curve::zero(),
-            member_index,
+            member_key: test_key.clone(),
         };
         table
             .dealing
             .player_unblinding_shares
             .entry((seat, hole_index))
             .or_default()
-            .insert(member_index, faux_share);
+            .insert(test_key.clone(), faux_share);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
             .expect("process snapshot");
 
         assert!(
@@ -2090,7 +2102,7 @@ mod tests {
             .expect("preflop hole card");
 
         let shuffler_id = 17;
-        let member_index = 2;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::generator() + Curve::generator());
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -2117,7 +2129,7 @@ mod tests {
         );
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
             .expect("process preflop snapshot");
 
         assert!(
@@ -2143,7 +2155,7 @@ mod tests {
 
         // Initial snapshot should only request player shares.
         let initial = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         assert!(initial
             .iter()
@@ -2168,7 +2180,7 @@ mod tests {
 
         // Flop requests should be emitted together once hole cards are ready.
         let second = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let mut flop_slots: Vec<u8> = second
             .iter()
@@ -2197,7 +2209,7 @@ mod tests {
         }
 
         let third = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let turn_count = third
             .iter()
@@ -2230,7 +2242,7 @@ mod tests {
         }
 
         let fourth = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let river_count = fourth
             .iter()
@@ -2245,7 +2257,7 @@ mod tests {
 
         // Further snapshots should not emit additional board requests.
         let fifth = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         assert!(fifth
             .iter()

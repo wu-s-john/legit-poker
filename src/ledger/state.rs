@@ -324,6 +324,7 @@ mod tests {
             0,
             ShufflerIdentity {
                 public_key: C::zero(),
+                shuffler_key: crate::ledger::CanonicalKey::new(C::zero()),
                 aggregated_public_key: C::zero(),
             },
         );

@@ -240,10 +240,15 @@ where
     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     // Step 3: Generate unblinding shares from all shufflers
+    // For test code: derive public keys from secrets (in production, use actual public keys)
+    let generator = G::generator();
     let unblinding_shares = shuffler_secrets
         .iter()
-        .enumerate()
-        .map(|(idx, &secret)| generate_committee_decryption_share(&player_ciphertext, secret, idx))
+        .map(|&secret| {
+            let public_key = generator * secret;
+            let member_key = zk_poker::ledger::CanonicalKey::new(public_key);
+            generate_committee_decryption_share(&player_ciphertext, secret, member_key)
+        })
         .collect();
 
     // Step 4: Recover card value
@@ -309,8 +314,11 @@ where
     // Generate decryption shares from all committee members
     let shares: Vec<CommunityDecryptionShare<G>> = shuffler_secrets
         .iter()
-        .enumerate()
-        .map(|(idx, &secret)| CommunityDecryptionShare::generate(encrypted_card, secret, idx, rng))
+        .zip(shuffler_public_keys.iter())
+        .map(|(&secret, &public_key)| {
+            let member_key = zk_poker::ledger::CanonicalKey::new(public_key);
+            CommunityDecryptionShare::generate(encrypted_card, secret, member_key, rng)
+        })
         .collect();
 
     // Verify shares (optional but recommended for security)

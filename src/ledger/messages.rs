@@ -751,10 +751,10 @@ mod tests {
         }
     }
 
-    fn sample_partial_unblinding_share<C: CurveGroup>() -> PartialUnblindingShare<C> {
+    fn sample_partial_unblinding_share<C: CurveGroup + ark_serialize::CanonicalSerialize>() -> PartialUnblindingShare<C> {
         PartialUnblindingShare {
             share: C::zero(),
-            member_index: 0,
+            member_key: crate::ledger::CanonicalKey::new(C::zero()),
         }
     }
 

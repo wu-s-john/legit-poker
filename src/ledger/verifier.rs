@@ -534,30 +534,15 @@ fn validate_partial_unblinding<C: CurveGroup>(
         .player_unblinding_shares
         .get(&(*seat, hole_index))
     {
-        if existing.contains_key(&message.share.member_index)
+        if existing.contains_key(&actor.shuffler_key)
             || existing.len() >= table.shufflers.len()
         {
             return Err(VerifyError::InvalidMessage);
         }
     }
-    // Ensure member index within bounds
-    if message.share.member_index >= table.shufflers.len() {
-        return Err(VerifyError::InvalidMessage);
-    }
 
-    let expected_index = table
-        .shufflers
-        .keys()
-        .enumerate()
-        .find_map(|(idx, shuffler_id)| {
-            if *shuffler_id == actor.shuffler_id {
-                Some(idx)
-            } else {
-                None
-            }
-        })
-        .ok_or(VerifyError::InvalidMessage)?;
-    if expected_index != message.share.member_index {
+    // Verify that the member_key in the share matches the actor's shuffler_key
+    if message.share.member_key != actor.shuffler_key {
         return Err(VerifyError::InvalidMessage);
     }
 
@@ -703,6 +688,7 @@ mod tests {
     use crate::signing::Signable;
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
+    use ark_std::UniformRand;
     use std::collections::BTreeMap;
 
     const GAME_ID: GameId = 1;
@@ -725,9 +711,10 @@ mod tests {
     #[test]
     fn rejects_unauthorized_actors() {
         let mut harness = TestHarness::base(TestPhase::Preflop);
+        // Create the envelope before clearing players so we have the player_key
+        let envelope = harness.player_envelope();
         harness.players.clear();
         harness.push_snapshot();
-        let envelope = harness.player_envelope();
         let verifier = harness.verifier();
         let result = verifier.verify(HAND_ID, envelope);
         assert!(matches!(result, Err(VerifyError::Unauthorized)));
@@ -829,15 +816,38 @@ mod tests {
     #[test]
     fn rejects_partial_unblinding_from_wrong_member_index() {
         let mut harness = TestHarness::base(TestPhase::Dealing);
-        harness.shufflers.insert(
-            SECOND_SHUFFLER_ID,
-            ShufflerIdentity {
-                public_key: Curve::zero(),
-                aggregated_public_key: Curve::zero(),
-            },
-        );
         harness.push_snapshot();
-        let envelope = harness.partial_unblinding_envelope(SECOND_SHUFFLER_ID, 0, 0);
+
+        // Create an envelope from SHUFFLER_ID (who is authorized)
+        // but with a mismatched member_key in the share
+        let shuffler_identity = harness.shufflers.get(&SHUFFLER_ID).expect("shuffler identity");
+        let mut rng = ark_std::test_rng();
+        let wrong_key = Curve::rand(&mut rng);
+        let message =
+            AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
+                0,
+                PartialUnblindingShare {
+                    share: Curve::zero(),
+                    member_key: crate::ledger::CanonicalKey::new(wrong_key), // Wrong key!
+                },
+                harness
+                    .players
+                    .get(&PLAYER_ID)
+                    .expect("player identity")
+                    .public_key
+                    .clone(),
+            ));
+        let envelope = build_envelope(
+            HAND_ID,
+            message,
+            AnyActor::Shuffler {
+                shuffler_id: SHUFFLER_ID,
+                shuffler_key: shuffler_identity.shuffler_key.clone(),
+            },
+            Curve::zero(),
+            0,
+        );
+
         let verifier = harness.verifier();
         let result = verifier.verify(HAND_ID, envelope);
         assert!(matches!(result, Err(VerifyError::InvalidMessage)));
@@ -850,6 +860,7 @@ mod tests {
             SECOND_SHUFFLER_ID,
             ShufflerIdentity {
                 public_key: Curve::zero(),
+                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
                 aggregated_public_key: Curve::zero(),
             },
         );
@@ -867,6 +878,7 @@ mod tests {
             SECOND_SHUFFLER_ID,
             ShufflerIdentity {
                 public_key: Curve::zero(),
+                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
                 aggregated_public_key: Curve::zero(),
             },
         );
@@ -882,12 +894,11 @@ mod tests {
     fn rejects_shuffle_with_wrong_turn_index() {
         let mut harness = TestHarness::base(TestPhase::Shuffling);
         harness.push_snapshot();
-        let shuffler_identity = harness
+        let shuffler_identity_obj = harness
             .shufflers
             .get(&SHUFFLER_ID)
-            .expect("primary shuffler identity to exist")
-            .public_key
-            .clone();
+            .expect("primary shuffler identity to exist");
+        let shuffler_identity = shuffler_identity_obj.public_key.clone();
         let deck_in = sample_deck();
         let deck_out = deck_in.clone();
         let message = AnyGameMessage::Shuffle(GameShuffleMessage::new(
@@ -901,6 +912,7 @@ mod tests {
             message,
             AnyActor::Shuffler {
                 shuffler_id: SHUFFLER_ID,
+                shuffler_key: shuffler_identity_obj.shuffler_key.clone(),
             },
             shuffler_identity,
             0,
@@ -964,6 +976,7 @@ mod tests {
                 PLAYER_ID,
                 PlayerIdentity {
                     public_key: Curve::zero(),
+                    player_key: crate::ledger::CanonicalKey::new(Curve::zero()),
                     nonce: 0,
                     seat: PLAYER_SEAT,
                 },
@@ -973,6 +986,7 @@ mod tests {
                 SHUFFLER_ID,
                 ShufflerIdentity {
                     public_key: Curve::zero(),
+                    shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
                     aggregated_public_key: Curve::zero(),
                 },
             );
@@ -1008,6 +1022,7 @@ mod tests {
         }
 
         fn player_envelope(&self) -> AnyMessageEnvelope<Curve> {
+            let player_identity = self.players.get(&PLAYER_ID).expect("player identity");
             let message = AnyGameMessage::PlayerPreflop(
                 GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Check),
             );
@@ -1017,6 +1032,7 @@ mod tests {
                 AnyActor::Player {
                     seat_id: PLAYER_SEAT,
                     player_id: PLAYER_ID,
+                    player_key: player_identity.player_key.clone(),
                 },
                 Curve::zero(),
                 1,
@@ -1030,6 +1046,7 @@ mod tests {
                 .expect("player identity")
                 .public_key
                 .clone();
+            let shuffler_identity = self.shufflers.get(&SHUFFLER_ID).expect("shuffler identity");
             let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
                 0,
                 dummy_blinding_share(),
@@ -1040,6 +1057,7 @@ mod tests {
                 message,
                 AnyActor::Shuffler {
                     shuffler_id: SHUFFLER_ID,
+                    shuffler_key: shuffler_identity.shuffler_key.clone(),
                 },
                 Curve::zero(),
                 0,
@@ -1052,12 +1070,13 @@ mod tests {
             member_index: usize,
             nonce: u64,
         ) -> AnyMessageEnvelope<Curve> {
+            let shuffler_identity = self.shufflers.get(&shuffler_id).expect("shuffler identity");
             let message =
                 AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
                     0,
                     PartialUnblindingShare {
                         share: Curve::zero(),
-                        member_index,
+                        member_key: shuffler_identity.shuffler_key.clone(),
                     },
                     self.players
                         .get(&PLAYER_ID)
@@ -1068,7 +1087,10 @@ mod tests {
             build_envelope(
                 HAND_ID,
                 message,
-                AnyActor::Shuffler { shuffler_id },
+                AnyActor::Shuffler {
+                    shuffler_id,
+                    shuffler_key: shuffler_identity.shuffler_key.clone(),
+                },
                 Curve::zero(),
                 nonce,
             )
@@ -1261,7 +1283,10 @@ mod tests {
             build_envelope(
                 HAND_ID,
                 message,
-                AnyActor::Shuffler { shuffler_id },
+                AnyActor::Shuffler {
+                    shuffler_id,
+                    shuffler_key: identity.shuffler_key.clone(),
+                },
                 identity.public_key.clone(),
                 0,
             )
@@ -1335,7 +1360,7 @@ mod tests {
     fn build_envelope<C: CurveGroup>(
         hand_id: HandId,
         message: AnyGameMessage<C>,
-        actor: AnyActor,
+        actor: AnyActor<C>,
         public_key: C,
         nonce: u64,
     ) -> AnyMessageEnvelope<C> {

@@ -358,7 +358,7 @@ pub struct DealingSnapshot<C: CurveGroup> {
     pub player_blinding_contribs:
         BTreeMap<(ShufflerId, SeatId, u8), PlayerTargetedBlindingContribution<C>>,
     pub player_unblinding_shares:
-        BTreeMap<(SeatId, u8), BTreeMap<usize, PartialUnblindingShare<C>>>,
+        BTreeMap<(SeatId, u8), BTreeMap<crate::ledger::CanonicalKey<C>, PartialUnblindingShare<C>>>,
     #[serde(with = "crate::crypto_serde::curve_map")]
     pub player_unblinding_combined: BTreeMap<(SeatId, u8), C>,
     pub community_decryption_shares: BTreeMap<(ShufflerId, u8), CommunityDecryptionShare<C>>,

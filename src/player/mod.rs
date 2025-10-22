@@ -677,40 +677,45 @@ mod tests {
         player2.set_hole_ciphertexts([p2_ct0.clone(), p2_ct1.clone()]);
         player3.set_hole_ciphertexts([p3_ct0.clone(), p3_ct1.clone()]);
 
+        // Create canonical keys for committee members
+        let member_key1 = crate::ledger::CanonicalKey::new(shuffler_pk1);
+        let member_key2 = crate::ledger::CanonicalKey::new(shuffler_pk2);
+        let member_key3 = crate::ledger::CanonicalKey::new(shuffler_pk3);
+
         let p1_shares0 = vec![
-            generate_committee_decryption_share(&p1_ct0, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p1_ct0, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p1_ct0, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p1_ct0, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p1_ct0, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p1_ct0, shuffler_sk3, member_key3.clone()),
         ];
         tracing::info!(target = "player_test", shares = ?p1_shares0.iter().map(|s| &s.share).collect::<Vec<_>>(), "p1 first card shares");
         let p1_shares1 = vec![
-            generate_committee_decryption_share(&p1_ct1, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p1_ct1, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p1_ct1, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p1_ct1, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p1_ct1, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p1_ct1, shuffler_sk3, member_key3.clone()),
         ];
         player1.set_unblinding_context(p1_shares0, p1_shares1, 3);
 
         let p2_shares0 = vec![
-            generate_committee_decryption_share(&p2_ct0, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p2_ct0, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p2_ct0, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p2_ct0, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p2_ct0, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p2_ct0, shuffler_sk3, member_key3.clone()),
         ];
         let p2_shares1 = vec![
-            generate_committee_decryption_share(&p2_ct1, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p2_ct1, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p2_ct1, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p2_ct1, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p2_ct1, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p2_ct1, shuffler_sk3, member_key3.clone()),
         ];
         player2.set_unblinding_context(p2_shares0, p2_shares1, 3);
 
         let p3_shares0 = vec![
-            generate_committee_decryption_share(&p3_ct0, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p3_ct0, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p3_ct0, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p3_ct0, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p3_ct0, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p3_ct0, shuffler_sk3, member_key3.clone()),
         ];
         let p3_shares1 = vec![
-            generate_committee_decryption_share(&p3_ct1, shuffler_sk1, 0),
-            generate_committee_decryption_share(&p3_ct1, shuffler_sk2, 1),
-            generate_committee_decryption_share(&p3_ct1, shuffler_sk3, 2),
+            generate_committee_decryption_share(&p3_ct1, shuffler_sk1, member_key1.clone()),
+            generate_committee_decryption_share(&p3_ct1, shuffler_sk2, member_key2.clone()),
+            generate_committee_decryption_share(&p3_ct1, shuffler_sk3, member_key3.clone()),
         ];
         player3.set_unblinding_context(p3_shares0, p3_shares1, 3);
 

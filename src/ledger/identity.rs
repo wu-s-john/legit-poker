@@ -206,12 +206,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::CanonicalKey;
-    use ark_bls12_381::G1Projective;
+    use ark_bls12_381::{Fq, G1Affine, G1Projective};
     use ark_ec::CurveGroup;
+    use ark_std::UniformRand;
 
     #[test]
     fn round_trip_bytes() {
-        let point = G1Projective::generator();
+        let mut rng = ark_std::test_rng();
+        let point = G1Projective::rand(&mut rng);
         let key = CanonicalKey::new(point);
         let round_trip = CanonicalKey::<G1Projective>::from_bytes(key.bytes()).unwrap();
         assert_eq!(key, round_trip);
@@ -220,13 +222,21 @@ mod tests {
 
     #[test]
     fn ordering_matches_bytes() {
-        let p1 = G1Projective::generator();
-        let p2 = G1Projective::generator() + G1Projective::generator();
+        let mut rng = ark_std::test_rng();
+        let p1 = G1Projective::rand(&mut rng);
+        let p2 = G1Projective::rand(&mut rng);
         let k1 = CanonicalKey::new(p1);
         let k2 = CanonicalKey::new(p2);
+
+        // Sort keys and verify ordering is consistent with byte ordering
         let mut vec = vec![k2.clone(), k1.clone()];
         vec.sort();
-        assert_eq!(vec[0], k1);
-        assert_eq!(vec[1], k2);
+
+        // Verify that the sorted order matches byte lexicographic order
+        assert!(vec[0].bytes() <= vec[1].bytes());
+
+        // Also verify the original keys are present
+        assert!(vec.contains(&k1));
+        assert!(vec.contains(&k2));
     }
 }

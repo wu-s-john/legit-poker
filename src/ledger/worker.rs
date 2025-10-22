@@ -392,6 +392,7 @@ mod tests {
             0,
             ShufflerIdentity {
                 public_key: Curve::zero(),
+                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
                 aggregated_public_key: Curve::zero(),
             },
         );
@@ -440,7 +441,10 @@ mod tests {
         AnyMessageEnvelope {
             hand_id,
             game_id: TEST_GAME_ID,
-            actor: AnyActor::Shuffler { shuffler_id: 0 },
+            actor: AnyActor::Shuffler {
+                shuffler_id: 0,
+                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
+            },
             nonce,
             public_key: Curve::zero(),
             message: WithSignature {

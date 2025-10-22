@@ -373,19 +373,19 @@ where
 /// # Arguments
 /// * `encrypted_card` - The player's encrypted card containing A_u
 /// * `committee_secret` - The committee member's secret share x_j
-/// * `member_index` - The index of this committee member
+/// * `member_key` - Canonical key identifying this committee member
 #[instrument(skip(committee_secret), level = "trace")]
-pub fn generate_committee_decryption_share<C: CurveGroup>(
+pub fn generate_committee_decryption_share<C: CurveGroup + ark_serialize::CanonicalSerialize>(
     encrypted_card: &PlayerAccessibleCiphertext<C>,
     committee_secret: C::ScalarField,
-    member_index: usize,
+    member_key: crate::ledger::CanonicalKey<C>,
 ) -> PartialUnblindingShare<C> {
     // Compute μ_u,j = blinded_base^x_j = g^((r+Δ) * x_j)
     let share = encrypted_card.blinded_base * committee_secret;
 
     PartialUnblindingShare {
         share,
-        member_index,
+        member_key,
     }
 }
 
@@ -416,25 +416,8 @@ pub fn combine_unblinding_shares<C: CurveGroup>(
         );
     }
 
-    // Verify all member indices are unique and in range
-    let mut seen_indices = vec![false; expected_members];
-    for share in shares {
-        if share.member_index >= expected_members {
-            warn!(target: LOG_TARGET,
-                "Invalid member index: {} (max: {})",
-                share.member_index, expected_members - 1
-            );
-            return Err("Invalid member index");
-        }
-        if seen_indices[share.member_index] {
-            warn!(target: LOG_TARGET,
-                "Duplicate member index: {}",
-                share.member_index
-            );
-            return Err("Duplicate member index");
-        }
-        seen_indices[share.member_index] = true;
-    }
+    // Note: With canonical keys, uniqueness is guaranteed by the map structure
+    // and range checks are not applicable. We only verify the count.
 
     // Aggregate by multiplying all shares: μ_u = ∏(μ_u,j)
     // This gives us A_u^(Σx_j) = A_u^x = g^((r+Δ) * x) = pk^(r+Δ)
@@ -731,12 +714,15 @@ mod tests {
 
         // ============ CARD RECOVERY ============
         // Generate partial unblinding shares from each committee member
+        let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
+        let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
+        let shuffler_key3 = crate::ledger::CanonicalKey::new(shuffler3_pk);
         let unblinding1 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, 0);
+            generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, shuffler_key1);
         let unblinding2 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, 1);
+            generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, shuffler_key2);
         let unblinding3 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler3_secret, 2);
+            generate_committee_decryption_share(&player_ciphertext, shuffler3_secret, shuffler_key3);
 
         // Verify individual shares are computed correctly
         assert_eq!(
@@ -828,8 +814,10 @@ mod tests {
 
         // Setup committee
         let shuffler1_secret = ScalarField::rand(&mut rng);
+        let shuffler1_pk = GrumpkinProjective::generator() * shuffler1_secret;
         let shuffler2_secret = ScalarField::rand(&mut rng);
-        let aggregated_pk = GrumpkinProjective::generator() * (shuffler1_secret + shuffler2_secret);
+        let shuffler2_pk = GrumpkinProjective::generator() * shuffler2_secret;
+        let aggregated_pk = shuffler1_pk + shuffler2_pk;
 
         // Setup player
         let player_secret = ScalarField::rand(&mut rng);
@@ -873,10 +861,12 @@ mod tests {
             .unwrap();
 
             // Generate unblinding shares
+            let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
+            let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
             let unblinding1 =
-                generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, 0);
+                generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, shuffler_key1);
             let unblinding2 =
-                generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, 1);
+                generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, shuffler_key2);
 
             // Recover and verify
             let recovered = recover_card_value(

@@ -147,7 +147,7 @@ impl<C: CurveGroup> DealingHandState<C> {
         &mut self,
         table: &T,
         self_shuffler_id: ShufflerId,
-        self_member_index: usize,
+        self_member_key: &crate::ledger::CanonicalKey<C>,
     ) -> Result<Vec<DealShufflerRequest<C>>>
     where
         T: DealingTableView<C>,
@@ -200,7 +200,7 @@ impl<C: CurveGroup> DealingHandState<C> {
                         .dealing()
                         .player_unblinding_shares
                         .get(&(*seat, *hole_index))
-                        .map_or(false, |shares| shares.contains_key(&self_member_index));
+                        .map_or(false, |shares| shares.contains_key(self_member_key));
                     if already_unblinded {
                         self.unblinding_sent.insert(deal_index);
                     }
