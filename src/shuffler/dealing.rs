@@ -9,7 +9,11 @@ use crate::ledger::snapshot::{
     ShufflerRoster, TableAtDealing, TableAtPreflop,
 };
 use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::CanonicalKey;
 use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
+use tracing::debug;
+
+const LOG_TARGET: &str = "legit_poker::game::shuffler::deal";
 
 pub trait DealingTableView<C: CurveGroup> {
     fn game_id(&self) -> GameId;
@@ -116,7 +120,7 @@ pub enum BoardCardSlot {
 #[derive(Debug)]
 pub struct DealingHandState<C: CurveGroup> {
     card_plan: Option<CardPlan>,
-    shufflers: Vec<ShufflerId>,
+    shuffler_keys: Vec<CanonicalKey<C>>,
     blinding_sent: BTreeSet<u8>,
     unblinding_sent: BTreeSet<u8>,
     board_sent: BTreeSet<u8>,
@@ -127,7 +131,7 @@ impl<C: CurveGroup> DealingHandState<C> {
     pub fn new() -> Self {
         Self {
             card_plan: None,
-            shufflers: Vec::new(),
+            shuffler_keys: Vec::new(),
             blinding_sent: BTreeSet::new(),
             unblinding_sent: BTreeSet::new(),
             board_sent: BTreeSet::new(),
@@ -137,7 +141,7 @@ impl<C: CurveGroup> DealingHandState<C> {
 
     pub fn reset(&mut self) {
         self.card_plan = None;
-        self.shufflers.clear();
+        self.shuffler_keys.clear();
         self.blinding_sent.clear();
         self.unblinding_sent.clear();
         self.board_sent.clear();
@@ -155,7 +159,12 @@ impl<C: CurveGroup> DealingHandState<C> {
         if self.card_plan.is_none() {
             self.card_plan = Some(table.dealing().card_plan.clone());
         }
-        self.shufflers = table.shufflers().keys().copied().collect();
+        self.shuffler_keys = table
+            .shufflers()
+            .values()
+            .map(|identity| identity.shuffler_key.clone())
+            .collect();
+        let roster = table.shufflers();
 
         let card_plan = self
             .card_plan
@@ -168,14 +177,50 @@ impl<C: CurveGroup> DealingHandState<C> {
             match destination {
                 CardDestination::Hole { seat, hole_index } => {
                     let player_public_key = player_public_key_for_seat(table, *seat)?;
-                    let already_blinded = table.dealing().player_blinding_contribs.contains_key(&(
-                        self_shuffler_id,
-                        *seat,
-                        *hole_index,
-                    ));
+                    let already_blinded = table.dealing().player_blinding_contribs.iter().any(
+                        |((shuffler_id, s, h), _)| {
+                            *s == *seat
+                                && *h == *hole_index
+                                && roster
+                                    .get(shuffler_id)
+                                    .map(|identity| &identity.shuffler_key)
+                                    == Some(self_member_key)
+                        },
+                    );
                     if already_blinded {
                         self.blinding_sent.insert(deal_index);
                     } else if self.blinding_sent.insert(deal_index) {
+                        let expected_contribs = self.shuffler_keys.len();
+                        let contribution_count = table
+                            .dealing()
+                            .player_blinding_contribs
+                            .iter()
+                            .filter_map(|((shuffler_id, s, h), _)| {
+                                if *s == *seat && *h == *hole_index {
+                                    roster
+                                        .get(shuffler_id)
+                                        .map(|identity| identity.shuffler_key.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<BTreeSet<_>>()
+                            .len();
+                        let ciphertext_ready = table
+                            .dealing()
+                            .player_ciphertexts
+                            .contains_key(&(*seat, *hole_index));
+                        debug!(
+                            target = LOG_TARGET,
+                            game_id = table.game_id(),
+                            ?self_shuffler_id,
+                            seat = *seat,
+                            hole_index = *hole_index,
+                            contribution_count,
+                            expected_contribs,
+                            ciphertext_ready,
+                            "dispatching player blinding request"
+                        );
                         let ciphertext = table
                             .dealing()
                             .player_ciphertexts
@@ -206,6 +251,37 @@ impl<C: CurveGroup> DealingHandState<C> {
                     }
 
                     if !already_unblinded && !self.unblinding_sent.contains(&deal_index) {
+                        let expected_contribs = self.shuffler_keys.len();
+                        let contribution_count = table
+                            .dealing()
+                            .player_blinding_contribs
+                            .iter()
+                            .filter_map(|((shuffler_id, s, h), _)| {
+                                if *s == *seat && *h == *hole_index {
+                                    roster
+                                        .get(shuffler_id)
+                                        .map(|identity| identity.shuffler_key.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<BTreeSet<_>>()
+                            .len();
+                        let ciphertext_ready = table
+                            .dealing()
+                            .player_ciphertexts
+                            .contains_key(&(*seat, *hole_index));
+                        debug!(
+                            target = LOG_TARGET,
+                            game_id = table.game_id(),
+                            ?self_shuffler_id,
+                            seat = *seat,
+                            hole_index = *hole_index,
+                            contribution_count,
+                            expected_contribs,
+                            ciphertext_ready,
+                            "evaluating player unblinding readiness"
+                        );
                         if let Some(ciphertext) = table
                             .dealing()
                             .player_ciphertexts
@@ -223,6 +299,17 @@ impl<C: CurveGroup> DealingHandState<C> {
                                 ciphertext: Some(ciphertext),
                             }));
                             self.unblinding_sent.insert(deal_index);
+                        } else {
+                            debug!(
+                                target = LOG_TARGET,
+                                game_id = table.game_id(),
+                                ?self_shuffler_id,
+                                seat = *seat,
+                                hole_index = *hole_index,
+                                expected_contribs,
+                                contribution_count,
+                                "ciphertext not yet available; delaying player unblinding request"
+                            );
                         }
                     }
                 }

@@ -3,6 +3,9 @@ name = "zk_poker"
 version = "0.1.0"
 edition = "2021"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+
 [[bin]]
 name = "bayer_groth_demo"
 path = "src/bin/bayer_groth_demo.rs"
@@ -113,7 +116,7 @@ time = "0.3"
 zk_poker_macros = { path = "zk_poker_macros" }
 
 # Backend dependencies
-tokio = { version = "1.40", features = ["full"] }
+tokio = { version = "1.40", features = ["full", "tracing"] }
 axum = { version = "0.7", features = ["ws", "macros", "tokio"] }
 async-trait = "0.1"
 tower = { version = "0.5", features = ["timeout"] }

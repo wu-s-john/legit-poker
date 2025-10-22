@@ -776,6 +776,7 @@ mod tests {
             actor: crate::ledger::actor::PlayerActor {
                 seat_id: 1,
                 player_id: 42,
+                player_key: crate::ledger::CanonicalKey::new(sample_public_key()),
             },
             nonce: 5,
             public_key: sample_public_key(),
@@ -798,6 +799,7 @@ mod tests {
             actor: AnyActor::Player {
                 seat_id: 2,
                 player_id: 99,
+                player_key: crate::ledger::CanonicalKey::new(sample_public_key()),
             },
             nonce: 8,
             public_key: sample_public_key(),
@@ -851,7 +853,8 @@ mod tests {
         }
     }
 
-    fn sample_partial_unblinding_share<C: CurveGroup + ark_serialize::CanonicalSerialize>() -> PartialUnblindingShare<C> {
+    fn sample_partial_unblinding_share<C: CurveGroup + ark_serialize::CanonicalSerialize>(
+    ) -> PartialUnblindingShare<C> {
         PartialUnblindingShare {
             share: C::zero(),
             member_key: crate::ledger::CanonicalKey::new(C::zero()),

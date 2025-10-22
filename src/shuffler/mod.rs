@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use sha2::Sha256;
+use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
@@ -46,8 +47,27 @@ pub type Deck<C, const N: usize> = [ElGamalCiphertext<C>; N];
 
 pub type ShufflerScheme<C> = Schnorr<C, Sha256>;
 
-const LOG_TARGET: &str = "game::shuffler";
+const LOG_TARGET: &str = "legit_poker::game::shuffler";
 const DEAL_CHANNEL_CAPACITY: usize = 1024;
+
+fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+    S: Into<String>,
+{
+    let name_owned = name.into();
+    #[cfg(tokio_unstable)]
+    {
+        tokio::task::Builder::new().name(&name_owned).spawn(future)
+    }
+    #[cfg(not(tokio_unstable))]
+    {
+        use tracing::Instrument;
+        let span = tracing::info_span!("task", task_name = %name_owned);
+        tokio::spawn(future.instrument(span))
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ShufflerKeypair<C: CurveGroup> {
@@ -580,9 +600,10 @@ where
         S::SecretKey: Send + Sync + 'static,
     {
         let actor_clone = actor.clone();
-        tokio::spawn(async move {
-            let game_id = runtime.game_id;
-            let hand_id = runtime.hand_id;
+        let game_id = runtime.game_id;
+        let hand_id = runtime.hand_id;
+        let task_name = format!("shuffler-{shuffler_index}-game-{game_id}-hand-{hand_id}-shuffle");
+        spawn_named_task(task_name, async move {
             if let Err(err) = Self::shuffle_loop_per_hand(
                 api,
                 params,
@@ -755,6 +776,14 @@ where
                 update = updates.recv() => {
                     match update {
                         Ok(request) => {
+                            debug!(
+                                target = LOG_TARGET,
+                                game_id = runtime.game_id,
+                                hand_id = runtime.hand_id,
+                                shuffler_index,
+                                request = ?request,
+                                "received dealing request"
+                            );
                             if let Err(err) = Self::process_deal_request(
                                 &runtime,
                                 request,
@@ -925,7 +954,7 @@ where
         };
 
         if let Some(envelope) = blinding_envelope {
-            debug!(
+            info!(
                 target = LOG_TARGET,
                 game_id = runtime.game_id,
                 hand_id = runtime.hand_id,
@@ -943,7 +972,7 @@ where
         }
 
         if let Some(unblinding_envelope) = unblinding_envelope {
-            debug!(
+            info!(
                 target = LOG_TARGET,
                 game_id = runtime.game_id,
                 hand_id = runtime.hand_id,
@@ -1132,7 +1161,10 @@ where
         finalized: &FinalizedAnyMessageEnvelope<C>,
     ) -> Option<EnvelopedMessage<C, GameShuffleMessage<C>>> {
         let actor = match &finalized.envelope.actor {
-            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor {
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
                 shuffler_id: *shuffler_id,
                 shuffler_key: shuffler_key.clone(),
             },
@@ -1347,7 +1379,10 @@ where
     S::SecretKey: Send + Sync + 'static,
 {
     let actor_clone = actor.clone();
-    tokio::spawn(async move {
+    let game_id = runtime.game_id;
+    let hand_id = runtime.hand_id;
+    let task_name = format!("shuffler-{shuffler_index}-game-{game_id}-hand-{hand_id}-deal");
+    spawn_named_task(task_name, async move {
         let result = Shuffler::<C, S>::deal_loop(
             runtime.clone(),
             updates,
@@ -1364,8 +1399,8 @@ where
         if let Err(err) = result {
             warn!(
                 target = LOG_TARGET,
-                game_id = runtime.game_id,
-                hand_id = runtime.hand_id,
+                game_id,
+                hand_id,
                 shuffler_index,
                 error = %err,
                 "deal loop exited with error"
@@ -1373,10 +1408,7 @@ where
         } else {
             debug!(
                 target = LOG_TARGET,
-                game_id = runtime.game_id,
-                hand_id = runtime.hand_id,
-                shuffler_index,
-                "deal loop finished"
+                game_id, hand_id, shuffler_index, "deal loop finished"
             );
         }
     })
@@ -1395,7 +1427,12 @@ where
     C: CurveAbsorb<C::BaseField>,
     C::Affine: Absorb,
 {
-    tokio::spawn(async move {
+    let game_id = runtime.game_id;
+    let hand_id = runtime.hand_id;
+    let shuffler_id = runtime.shuffler_id;
+    let shuffler_index = runtime.shuffler_index;
+    let task_name = format!("dealing-watcher-shuffler-{shuffler_id}-game-{game_id}-hand-{hand_id}");
+    spawn_named_task(task_name, async move {
         loop {
             tokio::select! {
                 _ = runtime.cancel.cancelled() => break,
@@ -1404,12 +1441,11 @@ where
                         Ok(shared) => {
                             match shared.as_ref() {
                                 AnyTableSnapshot::Dealing(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
-                                    let shuffler_id = runtime.shuffler_id;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
@@ -1418,11 +1454,22 @@ where
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
-                                                if let Err(err) = deal_tx.send(request) {
+                                                if let Err(err) = deal_tx.send({
+                                                    debug!(
+                                                        target = LOG_TARGET,
+                                                        game_id,
+                                                        hand_id,
+                                                        shuffler_id,
+                                                        shuffler_index,
+                                                        request = ?request,
+                                                        "broadcasting dealing request"
+                                                    );
+                                                    request
+                                                }) {
                                                     warn!(
                                                         target = LOG_TARGET,
-                                                        game_id = runtime.game_id,
-                                                        hand_id = runtime.hand_id,
+                                                        game_id,
+                                                        hand_id,
                                                         error = %err,
                                                         "failed to broadcast dealing request"
                                                     );
@@ -1432,8 +1479,8 @@ where
                                         Err(err) => {
                                             warn!(
                                                 target = LOG_TARGET,
-                                                game_id = runtime.game_id,
-                                                hand_id = runtime.hand_id,
+                                                game_id,
+                                                hand_id,
                                                 error = %err,
                                                 "failed to process dealing snapshot"
                                             );
@@ -1441,12 +1488,11 @@ where
                                     }
                                 }
                                 AnyTableSnapshot::Preflop(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
-                                    let shuffler_id = runtime.shuffler_id;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
@@ -1455,11 +1501,22 @@ where
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
-                                                if let Err(err) = deal_tx.send(request) {
+                                                if let Err(err) = deal_tx.send({
+                                                    debug!(
+                                                        target = LOG_TARGET,
+                                                        game_id,
+                                                        hand_id,
+                                                        shuffler_id,
+                                                        shuffler_index,
+                                                        request = ?request,
+                                                        "broadcasting dealing request"
+                                                    );
+                                                    request
+                                                }) {
                                                     warn!(
                                                         target = LOG_TARGET,
-                                                        game_id = runtime.game_id,
-                                                        hand_id = runtime.hand_id,
+                                                        game_id,
+                                                        hand_id,
                                                         error = %err,
                                                         "failed to broadcast dealing request"
                                                     );
@@ -1469,8 +1526,8 @@ where
                                         Err(err) => {
                                             warn!(
                                                 target = LOG_TARGET,
-                                                game_id = runtime.game_id,
-                                                hand_id = runtime.hand_id,
+                                                game_id,
+                                                hand_id,
                                                 error = %err,
                                                 "failed to process preflop snapshot"
                                             );
@@ -1478,40 +1535,40 @@ where
                                     }
                                 }
                                 AnyTableSnapshot::Flop(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
                                     runtime.dealing.lock().reset();
                                 }
                                 AnyTableSnapshot::Turn(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
                                     runtime.dealing.lock().reset();
                                 }
                                 AnyTableSnapshot::River(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
                                     runtime.dealing.lock().reset();
                                 }
                                 AnyTableSnapshot::Showdown(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
                                     runtime.dealing.lock().reset();
                                 }
                                 AnyTableSnapshot::Complete(table) => {
-                                    if table.game_id != runtime.game_id
-                                        || table.hand_id != Some(runtime.hand_id)
+                                    if table.game_id != game_id
+                                        || table.hand_id != Some(hand_id)
                                     {
                                         continue;
                                     }
@@ -1523,8 +1580,8 @@ where
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             warn!(
                                 target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
+                                game_id,
+                                hand_id,
                                 skipped,
                                 "lagged on dealing snapshots"
                             );
@@ -1981,7 +2038,11 @@ mod tests {
         table.dealing.player_ciphertexts.clear();
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         let mut player_requests: Vec<_> = requests
             .into_iter()
@@ -2010,7 +2071,11 @@ mod tests {
             .insert((first_player.seat, first_player.hole_index), cipher);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         let player_requests: Vec<_> = requests
             .into_iter()
@@ -2155,7 +2220,11 @@ mod tests {
 
         // Initial snapshot should only request player shares.
         let initial = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         assert!(initial
             .iter()
@@ -2180,7 +2249,11 @@ mod tests {
 
         // Flop requests should be emitted together once hole cards are ready.
         let second = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         let mut flop_slots: Vec<u8> = second
             .iter()
@@ -2209,7 +2282,11 @@ mod tests {
         }
 
         let third = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         let turn_count = third
             .iter()
@@ -2242,7 +2319,11 @@ mod tests {
         }
 
         let fourth = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         let river_count = fourth
             .iter()
@@ -2257,7 +2338,11 @@ mod tests {
 
         // Further snapshots should not emit additional board requests.
         let fifth = state
-            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
+            .process_snapshot_and_make_responses(
+                &table,
+                0,
+                &crate::ledger::CanonicalKey::new(Curve::zero()),
+            )
             .expect("process snapshot");
         assert!(fifth
             .iter()

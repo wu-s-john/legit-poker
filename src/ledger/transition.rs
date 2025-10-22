@@ -25,7 +25,7 @@ use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use crate::shuffling::player_decryption::combine_unblinding_shares;
 use crate::signing::Signable;
 use std::collections::BTreeMap;
-use tracing::warn;
+use tracing::{info, warn};
 
 pub trait TransitionHandler<C>: GameMessage<C> + Signable
 where
@@ -355,6 +355,18 @@ where
             .filter(|((_, s, h), _)| *s == seat && *h == hole_index)
             .map(|(_, v)| v.clone())
             .collect();
+        let contribution_count = ready_contribs.len();
+        info!(
+            target = "legit_poker::ledger::transition",
+            game_id = snapshot.game_id,
+            hand_id = snapshot.hand_id,
+            seat,
+            hole_index,
+            shuffler_id,
+            contribution_count,
+            expected = snapshot.shufflers.len(),
+            "accepted player blinding share"
+        );
 
         if ready_contribs.len() == snapshot.shufflers.len() {
             let deck_cipher = snapshot
@@ -1257,10 +1269,7 @@ mod tests {
             transcript,
         };
 
-        let shuffler_identity = ctx
-            .shufflers
-            .get(&shuffler_id)
-            .expect("shuffler identity");
+        let shuffler_identity = ctx.shufflers.get(&shuffler_id).expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 
@@ -1289,10 +1298,7 @@ mod tests {
             transcript,
         };
 
-        let shuffler_identity = ctx
-            .shufflers
-            .get(&shuffler_id)
-            .expect("shuffler identity");
+        let shuffler_identity = ctx.shufflers.get(&shuffler_id).expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 

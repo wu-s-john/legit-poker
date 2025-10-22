@@ -95,7 +95,9 @@ where
             seat_id: None,
             shuffler_id: None,
         }),
-        AnyActor::Player { seat_id, player_id, .. } => {
+        AnyActor::Player {
+            seat_id, player_id, ..
+        } => {
             let entity_id = i64::try_from(*player_id)
                 .map_err(|_| anyhow!("player_id {} cannot be represented as i64", player_id))?;
             Ok(ActorColumns {
@@ -146,7 +148,10 @@ pub(super) fn from_db_event_phase(phase: db_enums::EventPhase) -> EventPhase {
     }
 }
 
-fn decode_actor<C>(row: &events::Model, canonical_key: crate::ledger::CanonicalKey<C>) -> anyhow::Result<AnyActor<C>>
+fn decode_actor<C>(
+    row: &events::Model,
+    canonical_key: crate::ledger::CanonicalKey<C>,
+) -> anyhow::Result<AnyActor<C>>
 where
     C: ark_ec::CurveGroup,
 {
@@ -166,7 +171,11 @@ where
                 .map_err(|_| anyhow!("player entity_id {} invalid", row.entity_id))?;
             let seat_id =
                 u8::try_from(seat).map_err(|_| anyhow!("seat_id {} cannot fit in u8", seat))?;
-            Ok(AnyActor::Player { seat_id, player_id, player_key: canonical_key })
+            Ok(AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key: canonical_key,
+            })
         }
         ACTOR_SHUFFLER => {
             let id = row
@@ -179,7 +188,10 @@ where
                     row.entity_kind
                 ));
             }
-            Ok(AnyActor::Shuffler { shuffler_id: id, shuffler_key: canonical_key })
+            Ok(AnyActor::Shuffler {
+                shuffler_id: id,
+                shuffler_key: canonical_key,
+            })
         }
         other => Err(anyhow!("unknown actor_kind value {}", other)),
     }

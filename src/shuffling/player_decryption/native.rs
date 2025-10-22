@@ -383,10 +383,7 @@ pub fn generate_committee_decryption_share<C: CurveGroup + ark_serialize::Canoni
     // Compute μ_u,j = blinded_base^x_j = g^((r+Δ) * x_j)
     let share = encrypted_card.blinded_base * committee_secret;
 
-    PartialUnblindingShare {
-        share,
-        member_key,
-    }
+    PartialUnblindingShare { share, member_key }
 }
 
 /// Aggregate committee decryption shares to compute μ_u = pk^(r+Δ)
@@ -532,6 +529,7 @@ where
 mod tests {
     use super::*;
     use crate::chaum_pedersen::ChaumPedersenProof;
+    use crate::ledger::CanonicalKey;
     use crate::test_utils::serde::assert_round_trip_json;
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
@@ -569,7 +567,7 @@ mod tests {
     fn sample_partial_unblinding_share() -> PartialUnblindingShare<GrumpkinProjective> {
         PartialUnblindingShare {
             share: GrumpkinProjective::generator(),
-            member_index: 0,
+            member_key: CanonicalKey::new(GrumpkinProjective::generator()),
         }
     }
 
@@ -752,12 +750,21 @@ mod tests {
         let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
         let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
         let shuffler_key3 = crate::ledger::CanonicalKey::new(shuffler3_pk);
-        let unblinding1 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, shuffler_key1);
-        let unblinding2 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, shuffler_key2);
-        let unblinding3 =
-            generate_committee_decryption_share(&player_ciphertext, shuffler3_secret, shuffler_key3);
+        let unblinding1 = generate_committee_decryption_share(
+            &player_ciphertext,
+            shuffler1_secret,
+            shuffler_key1,
+        );
+        let unblinding2 = generate_committee_decryption_share(
+            &player_ciphertext,
+            shuffler2_secret,
+            shuffler_key2,
+        );
+        let unblinding3 = generate_committee_decryption_share(
+            &player_ciphertext,
+            shuffler3_secret,
+            shuffler_key3,
+        );
 
         // Verify individual shares are computed correctly
         assert_eq!(
@@ -898,10 +905,16 @@ mod tests {
             // Generate unblinding shares
             let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
             let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
-            let unblinding1 =
-                generate_committee_decryption_share(&player_ciphertext, shuffler1_secret, shuffler_key1);
-            let unblinding2 =
-                generate_committee_decryption_share(&player_ciphertext, shuffler2_secret, shuffler_key2);
+            let unblinding1 = generate_committee_decryption_share(
+                &player_ciphertext,
+                shuffler1_secret,
+                shuffler_key1,
+            );
+            let unblinding2 = generate_committee_decryption_share(
+                &player_ciphertext,
+                shuffler2_secret,
+                shuffler_key2,
+            );
 
             // Recover and verify
             let recovered = recover_card_value(

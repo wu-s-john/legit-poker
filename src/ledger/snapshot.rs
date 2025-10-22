@@ -304,6 +304,7 @@ mod tests {
         fixture_preflop_snapshot, fixture_river_snapshot, fixture_showdown_snapshot,
         fixture_shuffling_snapshot, fixture_turn_snapshot, FixtureContext,
     };
+    use crate::ledger::CanonicalKey;
     use crate::test_utils::serde::{assert_round_trip_eq, assert_round_trip_json};
     use crate::{
         chaum_pedersen::ChaumPedersenProof,
@@ -318,6 +319,7 @@ mod tests {
     };
     use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
+    use ark_serialize::CanonicalSerialize;
     use serde::{de::DeserializeOwned, Serialize};
 
     type Curve = G1Projective;
@@ -365,18 +367,19 @@ mod tests {
         }
     }
 
-    fn sample_partial_unblinding_share<C: CurveGroup>() -> PartialUnblindingShare<C> {
+    fn sample_partial_unblinding_share<C: CurveGroup + CanonicalSerialize>(
+    ) -> PartialUnblindingShare<C> {
         PartialUnblindingShare {
             share: C::generator(),
-            member_index: 0,
+            member_key: CanonicalKey::new(C::generator()),
         }
     }
 
-    fn sample_community_share<C: CurveGroup>() -> CommunityDecryptionShare<C> {
+    fn sample_community_share<C: CurveGroup + CanonicalSerialize>() -> CommunityDecryptionShare<C> {
         CommunityDecryptionShare {
             share: C::generator(),
             proof: sample_cp_proof::<C>(),
-            member_index: 0,
+            member_key: CanonicalKey::new(C::generator()),
         }
     }
 
@@ -537,7 +540,8 @@ mod tests {
         player_blinding_contribs.insert((1, 0, 0), sample_blinding_contribution::<Curve>());
 
         let mut shares_map = BTreeMap::new();
-        shares_map.insert(0, sample_partial_unblinding_share::<Curve>());
+        let share = sample_partial_unblinding_share::<Curve>();
+        shares_map.insert(share.member_key.clone(), share);
         let mut player_unblinding_shares = BTreeMap::new();
         player_unblinding_shares.insert((0, 0), shares_map);
 

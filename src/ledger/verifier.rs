@@ -8,7 +8,6 @@ use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::legals::{legal_actions_for, LegalActions};
 use crate::engine::nl::types::{PlayerId, PlayerStatus, SeatId};
 use crate::ledger::actor::{AnyActor, PlayerActor, ShufflerActor};
-use crate::ledger::CanonicalKey;
 use crate::ledger::messages::{
     AnyGameMessage, AnyMessageEnvelope, GameBlindingDecryptionMessage,
     GamePartialUnblindingShareMessage, GameShowdownMessage, GameShuffleMessage,
@@ -19,6 +18,7 @@ use crate::ledger::snapshot::{
 };
 use crate::ledger::state::LedgerState;
 use crate::ledger::types::{EntityKind, GameId, HandId, NonceKey, ShufflerId};
+use crate::ledger::CanonicalKey;
 use crate::showdown::choose_best5_from7;
 
 pub trait Verifier<C>
@@ -133,7 +133,11 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
             (
                 AnyTableSnapshot::Shuffling(table),
                 AnyGameMessage::Shuffle(msg),
-                ActorContext::Shuffler { shuffler_id, shuffler_key, .. },
+                ActorContext::Shuffler {
+                    shuffler_id,
+                    shuffler_key,
+                    ..
+                },
             ) => {
                 let actor = ShufflerActor {
                     shuffler_id: *shuffler_id,
@@ -144,7 +148,11 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
             (
                 AnyTableSnapshot::Dealing(table),
                 AnyGameMessage::Blinding(msg),
-                ActorContext::Shuffler { shuffler_id, shuffler_key, .. },
+                ActorContext::Shuffler {
+                    shuffler_id,
+                    shuffler_key,
+                    ..
+                },
             ) => {
                 let actor = ShufflerActor {
                     shuffler_id: *shuffler_id,
@@ -155,7 +163,11 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
             (
                 AnyTableSnapshot::Dealing(table),
                 AnyGameMessage::PartialUnblinding(msg),
-                ActorContext::Shuffler { shuffler_id, shuffler_key, .. },
+                ActorContext::Shuffler {
+                    shuffler_id,
+                    shuffler_key,
+                    ..
+                },
             ) => {
                 let actor = ShufflerActor {
                     shuffler_id: *shuffler_id,
@@ -167,7 +179,10 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 AnyTableSnapshot::Preflop(table),
                 AnyGameMessage::PlayerPreflop(msg),
                 ActorContext::Player {
-                    seat, player_id, player_key, ..
+                    seat,
+                    player_id,
+                    player_key,
+                    ..
                 },
             ) => {
                 let actor = PlayerActor {
@@ -181,7 +196,10 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 AnyTableSnapshot::Flop(table),
                 AnyGameMessage::PlayerFlop(msg),
                 ActorContext::Player {
-                    seat, player_id, player_key, ..
+                    seat,
+                    player_id,
+                    player_key,
+                    ..
                 },
             ) => {
                 let actor = PlayerActor {
@@ -195,7 +213,10 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 AnyTableSnapshot::Turn(table),
                 AnyGameMessage::PlayerTurn(msg),
                 ActorContext::Player {
-                    seat, player_id, player_key, ..
+                    seat,
+                    player_id,
+                    player_key,
+                    ..
                 },
             ) => {
                 let actor = PlayerActor {
@@ -209,7 +230,10 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 AnyTableSnapshot::River(table),
                 AnyGameMessage::PlayerRiver(msg),
                 ActorContext::Player {
-                    seat, player_id, player_key, ..
+                    seat,
+                    player_id,
+                    player_key,
+                    ..
                 },
             ) => {
                 let actor = PlayerActor {
@@ -223,7 +247,10 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
                 AnyTableSnapshot::Showdown(table),
                 AnyGameMessage::Showdown(msg),
                 ActorContext::Player {
-                    seat, player_id, player_key, ..
+                    seat,
+                    player_id,
+                    player_key,
+                    ..
                 },
             ) => {
                 let actor = PlayerActor {
@@ -360,7 +387,11 @@ fn resolve_actor<'a, C: CurveGroup>(
     actor: &AnyActor<C>,
 ) -> Result<ActorContext<'a, C>, VerifyError> {
     match actor {
-        AnyActor::Player { seat_id, player_id, player_key } => {
+        AnyActor::Player {
+            seat_id,
+            player_id,
+            player_key,
+        } => {
             let identity = players.get(player_id).ok_or(VerifyError::Unauthorized)?;
             if identity.seat != *seat_id {
                 return Err(VerifyError::Unauthorized);
@@ -384,7 +415,10 @@ fn resolve_actor<'a, C: CurveGroup>(
                 identity,
             })
         }
-        AnyActor::Shuffler { shuffler_id, shuffler_key } => {
+        AnyActor::Shuffler {
+            shuffler_id,
+            shuffler_key,
+        } => {
             let identity = shufflers
                 .get(shuffler_id)
                 .ok_or(VerifyError::Unauthorized)?;
@@ -534,9 +568,7 @@ fn validate_partial_unblinding<C: CurveGroup>(
         .player_unblinding_shares
         .get(&(*seat, hole_index))
     {
-        if existing.contains_key(&actor.shuffler_key)
-            || existing.len() >= table.shufflers.len()
-        {
+        if existing.contains_key(&actor.shuffler_key) || existing.len() >= table.shufflers.len() {
             return Err(VerifyError::InvalidMessage);
         }
     }
@@ -820,23 +852,25 @@ mod tests {
 
         // Create an envelope from SHUFFLER_ID (who is authorized)
         // but with a mismatched member_key in the share
-        let shuffler_identity = harness.shufflers.get(&SHUFFLER_ID).expect("shuffler identity");
+        let shuffler_identity = harness
+            .shufflers
+            .get(&SHUFFLER_ID)
+            .expect("shuffler identity");
         let mut rng = ark_std::test_rng();
         let wrong_key = Curve::rand(&mut rng);
-        let message =
-            AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
-                0,
-                PartialUnblindingShare {
-                    share: Curve::zero(),
-                    member_key: crate::ledger::CanonicalKey::new(wrong_key), // Wrong key!
-                },
-                harness
-                    .players
-                    .get(&PLAYER_ID)
-                    .expect("player identity")
-                    .public_key
-                    .clone(),
-            ));
+        let message = AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
+            0,
+            PartialUnblindingShare {
+                share: Curve::zero(),
+                member_key: crate::ledger::CanonicalKey::new(wrong_key), // Wrong key!
+            },
+            harness
+                .players
+                .get(&PLAYER_ID)
+                .expect("player identity")
+                .public_key
+                .clone(),
+        ));
         let envelope = build_envelope(
             HAND_ID,
             message,
@@ -1067,7 +1101,7 @@ mod tests {
         fn partial_unblinding_envelope(
             &self,
             shuffler_id: ShufflerId,
-            member_index: usize,
+            _member_index: usize,
             nonce: u64,
         ) -> AnyMessageEnvelope<Curve> {
             let shuffler_identity = self.shufflers.get(&shuffler_id).expect("shuffler identity");

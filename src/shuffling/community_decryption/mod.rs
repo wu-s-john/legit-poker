@@ -277,6 +277,7 @@ where
 mod tests {
     use super::*;
     use crate::chaum_pedersen::ChaumPedersenProof;
+    use crate::ledger::CanonicalKey;
     use crate::test_utils::serde::assert_round_trip_json;
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
@@ -313,7 +314,8 @@ mod tests {
 
         // Create a decryption share with proof
         let member_key = crate::ledger::CanonicalKey::new(committee_public_key);
-        let share = CommunityDecryptionShare::generate(&ciphertext, committee_secret, member_key, &mut rng);
+        let share =
+            CommunityDecryptionShare::generate(&ciphertext, committee_secret, member_key, &mut rng);
 
         // Verify the proof is valid
         assert!(
@@ -336,7 +338,7 @@ mod tests {
         let share = CommunityDecryptionShare {
             share: GrumpkinProjective::generator(),
             proof: sample_cp_proof(),
-            member_index: 0,
+            member_key: CanonicalKey::new(GrumpkinProjective::generator()),
         };
 
         assert_round_trip_json(&share);
@@ -373,9 +375,12 @@ mod tests {
         let member_key1 = crate::ledger::CanonicalKey::new(member1_pk);
         let member_key2 = crate::ledger::CanonicalKey::new(member2_pk);
         let member_key3 = crate::ledger::CanonicalKey::new(member3_pk);
-        let share1 = CommunityDecryptionShare::generate(&ciphertext, member1_secret, member_key1, &mut rng);
-        let share2 = CommunityDecryptionShare::generate(&ciphertext, member2_secret, member_key2, &mut rng);
-        let share3 = CommunityDecryptionShare::generate(&ciphertext, member3_secret, member_key3, &mut rng);
+        let share1 =
+            CommunityDecryptionShare::generate(&ciphertext, member1_secret, member_key1, &mut rng);
+        let share2 =
+            CommunityDecryptionShare::generate(&ciphertext, member2_secret, member_key2, &mut rng);
+        let share3 =
+            CommunityDecryptionShare::generate(&ciphertext, member3_secret, member_key3, &mut rng);
 
         // Verify all shares
         assert!(share1.verify(&ciphertext, member1_pk));
@@ -447,9 +452,24 @@ mod tests {
         let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
         let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
         let shuffler_key3 = crate::ledger::CanonicalKey::new(shuffler3_pk);
-        let share1 = CommunityDecryptionShare::generate(&ciphertext, shuffler1_secret, shuffler_key1, &mut rng);
-        let share2 = CommunityDecryptionShare::generate(&ciphertext, shuffler2_secret, shuffler_key2, &mut rng);
-        let share3 = CommunityDecryptionShare::generate(&ciphertext, shuffler3_secret, shuffler_key3, &mut rng);
+        let share1 = CommunityDecryptionShare::generate(
+            &ciphertext,
+            shuffler1_secret,
+            shuffler_key1,
+            &mut rng,
+        );
+        let share2 = CommunityDecryptionShare::generate(
+            &ciphertext,
+            shuffler2_secret,
+            shuffler_key2,
+            &mut rng,
+        );
+        let share3 = CommunityDecryptionShare::generate(
+            &ciphertext,
+            shuffler3_secret,
+            shuffler_key3,
+            &mut rng,
+        );
 
         // Verify individual shares are computed correctly
         assert_eq!(share1.share, ciphertext.c1 * shuffler1_secret);
@@ -535,10 +555,18 @@ mod tests {
             // Generate decryption shares
             let member_key1 = crate::ledger::CanonicalKey::new(member1_pk);
             let member_key2 = crate::ledger::CanonicalKey::new(member2_pk);
-            let share1 =
-                CommunityDecryptionShare::generate(&ciphertext, member1_secret, member_key1.clone(), &mut rng);
-            let share2 =
-                CommunityDecryptionShare::generate(&ciphertext, member2_secret, member_key2.clone(), &mut rng);
+            let share1 = CommunityDecryptionShare::generate(
+                &ciphertext,
+                member1_secret,
+                member_key1.clone(),
+                &mut rng,
+            );
+            let share2 = CommunityDecryptionShare::generate(
+                &ciphertext,
+                member2_secret,
+                member_key2.clone(),
+                &mut rng,
+            );
 
             // Verify shares
             assert!(share1.verify(&ciphertext, member1_pk));

@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use ark_crypto_primitives::sponge::Absorb;
@@ -17,6 +18,25 @@ use tokio::task::JoinHandle;
 use tracing::{error, info, instrument, Span};
 
 const LOG_TARGET: &str = "legit_poker::ledger::operator";
+
+fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+    S: Into<String>,
+{
+    let name_owned = name.into();
+    #[cfg(tokio_unstable)]
+    {
+        tokio::task::Builder::new().name(&name_owned).spawn(future)
+    }
+    #[cfg(not(tokio_unstable))]
+    {
+        use tracing::Instrument;
+        let span = tracing::info_span!("task", task_name = %name_owned);
+        tokio::spawn(future.instrument(span))
+    }
+}
 
 /// Facade that wires together verifier, queue, worker, event store, and state.
 pub struct LedgerOperator<C>
@@ -66,7 +86,7 @@ where
     ) -> anyhow::Result<JoinHandle<Result<(), WorkerError>>> {
         // let events = self.event_store.load_all_events().await?;
         // self.state.replay(events)?;
-        let handle = tokio::spawn(async move {
+        let handle = spawn_named_task("ledger-worker", async move {
             let result = worker.run().await;
             if let Err(err) = &result {
                 error!("ledger worker exited with error: {err}");

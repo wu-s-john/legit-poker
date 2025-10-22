@@ -206,8 +206,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::CanonicalKey;
-    use ark_bls12_381::{Fq, G1Affine, G1Projective};
-    use ark_ec::CurveGroup;
+    use ark_bls12_381::G1Projective;
     use ark_std::UniformRand;
 
     #[test]

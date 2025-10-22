@@ -511,7 +511,13 @@ where
         };
 
         let actor = match &event.actor {
-            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor { shuffler_id: *shuffler_id, shuffler_key: shuffler_key.clone() },
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
             _ => bail!("shuffle message must originate from a shuffler"),
         };
 
@@ -546,7 +552,13 @@ where
         };
 
         let actor = match &event.actor {
-            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor { shuffler_id: *shuffler_id, shuffler_key: shuffler_key.clone() },
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
             _ => bail!("blinding decryption message must originate from a shuffler"),
         };
 
@@ -575,7 +587,13 @@ where
         };
 
         let actor = match &event.actor {
-            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor { shuffler_id: *shuffler_id, shuffler_key: shuffler_key.clone() },
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
             _ => bail!("partial unblinding message must originate from a shuffler"),
         };
 
@@ -609,7 +627,15 @@ where
             _ => bail!("preflop action can only be applied during preflop phase"),
         };
         let actor = match &event.actor {
-            AnyActor::Player { seat_id, player_id, player_key } => PlayerActor { seat_id: *seat_id, player_id: *player_id, player_key: player_key.clone() },
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
             _ => bail!("preflop action must originate from a player"),
         };
 
@@ -637,7 +663,15 @@ where
             _ => bail!("flop action can only be applied during flop phase"),
         };
         let actor = match &event.actor {
-            AnyActor::Player { seat_id, player_id, player_key } => PlayerActor { seat_id: *seat_id, player_id: *player_id, player_key: player_key.clone() },
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
             _ => bail!("flop action must originate from a player"),
         };
 
@@ -665,7 +699,15 @@ where
             _ => bail!("turn action can only be applied during turn phase"),
         };
         let actor = match &event.actor {
-            AnyActor::Player { seat_id, player_id, player_key } => PlayerActor { seat_id: *seat_id, player_id: *player_id, player_key: player_key.clone() },
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
             _ => bail!("turn action must originate from a player"),
         };
 
@@ -693,7 +735,15 @@ where
             _ => bail!("river action can only be applied during river phase"),
         };
         let actor = match &event.actor {
-            AnyActor::Player { seat_id, player_id, player_key } => PlayerActor { seat_id: *seat_id, player_id: *player_id, player_key: player_key.clone() },
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
             _ => bail!("river action must originate from a player"),
         };
 
@@ -727,7 +777,15 @@ where
         };
 
         let actor = match &event.actor {
-            AnyActor::Player { seat_id, player_id, player_key } => PlayerActor { seat_id: *seat_id, player_id: *player_id, player_key: player_key.clone() },
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
             _ => bail!("showdown message must originate from a player"),
         };
 

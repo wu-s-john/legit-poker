@@ -226,7 +226,9 @@ impl ActorResponse {
     fn from<C: ark_ec::CurveGroup>(actor: &crate::ledger::AnyActor<C>) -> Self {
         match actor {
             crate::ledger::AnyActor::None => ActorResponse::None,
-            crate::ledger::AnyActor::Player { seat_id, player_id, .. } => ActorResponse::Player {
+            crate::ledger::AnyActor::Player {
+                seat_id, player_id, ..
+            } => ActorResponse::Player {
                 seat_id: *seat_id,
                 player_id: *player_id,
             },

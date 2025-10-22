@@ -269,7 +269,7 @@ impl From<FinalizedAnyMessageEnvelope<Curve>> for FinalizedEnvelopeDisplay {
 struct MessageEnvelopeDisplay {
     hand_id: HandId,
     game_id: GameId,
-    actor: AnyActor,
+    actor: AnyActor<Curve>,
     nonce: u64,
     #[serde(with = "zk_poker::crypto_serde::curve")]
     public_key: Curve,
@@ -324,7 +324,6 @@ mod tests {
     use std::sync::Arc;
     use zk_poker::engine::nl::actions::PlayerBetAction;
     use zk_poker::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
-    use zk_poker::ledger::actor::AnyActor;
     use zk_poker::ledger::messages::{
         AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
         PreflopStreet,
@@ -334,6 +333,7 @@ mod tests {
         ShufflerIdentity, ShufflingSnapshot, SnapshotStatus, TableSnapshot,
     };
     use zk_poker::ledger::types::{EventPhase, ShufflerId, StateHash};
+    use zk_poker::ledger::{actor::AnyActor, CanonicalKey};
     use zk_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
     use zk_poker::signing::{Signable, WithSignature};
 
@@ -363,6 +363,7 @@ mod tests {
             100,
             ShufflerIdentity {
                 public_key: Curve::generator(),
+                shuffler_key: CanonicalKey::new(Curve::generator()),
                 aggregated_public_key: Curve::generator(),
             },
         );
@@ -372,6 +373,7 @@ mod tests {
             200u64,
             PlayerIdentity {
                 public_key: Curve::generator(),
+                player_key: CanonicalKey::new(Curve::generator()),
                 nonce: 0,
                 seat: 0,
             },
@@ -433,6 +435,7 @@ mod tests {
             actor: AnyActor::Player {
                 seat_id: 0,
                 player_id: 200,
+                player_key: CanonicalKey::new(Curve::generator()),
             },
             nonce: 3,
             public_key: Curve::generator(),
