@@ -502,19 +502,21 @@ where
             .or_insert_with(BTreeMap::new);
 
         let share = envelope.message.value.share.clone();
-        if entry.contains_key(&share.member_index) {
+        let member_key = share.member_key.clone();
+
+        // Insert returns None if key didn't exist, Some(old_value) if it did (duplicate)
+        if entry.insert(member_key.clone(), share).is_some() {
             bail!(
-                "duplicate partial unblinding share for member {} seat {} hole {}",
-                share.member_index,
+                "duplicate partial unblinding share for member {:?} seat {} hole {}",
+                member_key,
                 seat,
                 hole_index
             );
         }
-        entry.insert(share.member_index, share);
 
         if entry.len() == snapshot.shufflers.len() {
-            let mut shares: Vec<_> = entry.values().cloned().collect();
-            shares.sort_by_key(|s| s.member_index);
+            let shares: Vec<_> = entry.values().cloned().collect();
+            // Note: No sorting needed - BTreeMap maintains canonical key order
             let combined = combine_unblinding_shares(&shares, snapshot.shufflers.len())
                 .map_err(|err| anyhow!(err))?;
             snapshot
@@ -1255,17 +1257,20 @@ mod tests {
             transcript,
         };
 
-        let public_key = ctx
+        let shuffler_identity = ctx
             .shufflers
             .get(&shuffler_id)
-            .expect("shuffler identity")
-            .public_key
-            .clone();
+            .expect("shuffler identity");
+        let public_key = shuffler_identity.public_key.clone();
+        let shuffler_key = shuffler_identity.shuffler_key.clone();
 
         EnvelopedMessage {
             hand_id: ctx.hand_id,
             game_id: ctx.game_id,
-            actor: ShufflerActor { shuffler_id },
+            actor: ShufflerActor {
+                shuffler_id,
+                shuffler_key,
+            },
             nonce: 0,
             public_key,
             message: with_sig,
@@ -1284,17 +1289,20 @@ mod tests {
             transcript,
         };
 
-        let public_key = ctx
+        let shuffler_identity = ctx
             .shufflers
             .get(&shuffler_id)
-            .expect("shuffler identity")
-            .public_key
-            .clone();
+            .expect("shuffler identity");
+        let public_key = shuffler_identity.public_key.clone();
+        let shuffler_key = shuffler_identity.shuffler_key.clone();
 
         EnvelopedMessage {
             hand_id: ctx.hand_id,
             game_id: ctx.game_id,
-            actor: ShufflerActor { shuffler_id },
+            actor: ShufflerActor {
+                shuffler_id,
+                shuffler_key,
+            },
             nonce: 0,
             public_key,
             message: with_sig,
@@ -1314,7 +1322,7 @@ mod tests {
     fn player_actor_info(
         ctx: &FixtureContext<Curve>,
         seat: SeatId,
-    ) -> (PlayerActor, PlayerId, Curve) {
+    ) -> (PlayerActor<Curve>, PlayerId, Curve) {
         let player_id = ctx
             .seating
             .get(&seat)
@@ -1325,6 +1333,7 @@ mod tests {
             PlayerActor {
                 seat_id: seat,
                 player_id,
+                player_key: identity.player_key.clone(),
             },
             player_id,
             identity.public_key,
@@ -1338,7 +1347,7 @@ mod tests {
     ) -> EnvelopedMessage<Curve, GamePlayerMessage<R, Curve>>
     where
         R: Street + Default,
-        GamePlayerMessage<R, Curve>: GameMessage<Curve, Actor = PlayerActor>,
+        GamePlayerMessage<R, Curve>: GameMessage<Curve, Actor = PlayerActor<Curve>>,
     {
         let (actor, _, public_key) = player_actor_info(ctx, seat);
         let message = GamePlayerMessage::<R, Curve>::new(action);

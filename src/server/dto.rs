@@ -4,7 +4,6 @@ use ark_serialize::CanonicalSerialize;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::nl::types::{PlayerId, SeatId};
-use crate::ledger::actor::AnyActor;
 use crate::ledger::messages::{AnyGameMessage, FinalizedAnyMessageEnvelope};
 use crate::ledger::query::LatestSnapshot;
 use crate::ledger::serialization::{encode_state_hash, serialize_curve_hex};
@@ -224,14 +223,14 @@ pub enum ActorResponse {
 }
 
 impl ActorResponse {
-    fn from(actor: &AnyActor) -> Self {
+    fn from<C: ark_ec::CurveGroup>(actor: &crate::ledger::AnyActor<C>) -> Self {
         match actor {
-            AnyActor::None => ActorResponse::None,
-            AnyActor::Player { seat_id, player_id } => ActorResponse::Player {
+            crate::ledger::AnyActor::None => ActorResponse::None,
+            crate::ledger::AnyActor::Player { seat_id, player_id, .. } => ActorResponse::Player {
                 seat_id: *seat_id,
                 player_id: *player_id,
             },
-            AnyActor::Shuffler { shuffler_id } => ActorResponse::Shuffler {
+            crate::ledger::AnyActor::Shuffler { shuffler_id, .. } => ActorResponse::Shuffler {
                 shuffler_id: *shuffler_id,
             },
         }

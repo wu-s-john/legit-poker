@@ -151,6 +151,7 @@ where
             player_id,
             crate::ledger::snapshot::PlayerIdentity {
                 public_key: public,
+                player_key: crate::ledger::CanonicalKey::new(public),
                 nonce: 0,
                 seat: *seat,
             },
@@ -218,6 +219,7 @@ where
             shuffler_id,
             ShufflerIdentity {
                 public_key: public,
+                shuffler_key: crate::ledger::CanonicalKey::new(public),
                 aggregated_public_key: aggregated,
             },
         );

@@ -394,8 +394,8 @@ where
         builder.append_u8(seat);
         builder.append_u8(hole_index);
         builder.append_u64(shares.len() as u64);
-        for (&member_index, share) in shares {
-            builder.append_u64(member_index as u64);
+        for (member_key, share) in shares {
+            member_key.write_transcript(&mut builder);
             share.write_transcript(&mut builder);
         }
     }
@@ -413,7 +413,7 @@ where
         builder.append_u8(card_index);
         append_curve_point(&mut builder, &share.share);
         share.proof.write_transcript(&mut builder);
-        builder.append_u64(share.member_index as u64);
+        share.member_key.write_transcript(&mut builder);
     }
 
     builder.append_u64(dealing.community_cards.len() as u64);

@@ -188,11 +188,12 @@ where
     where
         C::ScalarField: PrimeField,
     {
-        // μ_{u,j} = A_u^{x_j}; index is self.index
+        // μ_{u,j} = A_u^{x_j}
+        let member_key = crate::ledger::CanonicalKey::new(self.public_key.clone());
         let share = crate::shuffling::generate_committee_decryption_share(
             player_ciphertext,
             self.secret_key,
-            self.index,
+            member_key,
         );
         Ok(share)
     }
@@ -207,10 +208,11 @@ where
         C::ScalarField: PrimeField + Absorb,
         C: CurveAbsorb<C::BaseField>,
     {
+        let member_key = crate::ledger::CanonicalKey::new(self.public_key.clone());
         let share = crate::shuffling::CommunityDecryptionShare::generate(
             ciphertext,
             self.secret_key,
-            self.index,
+            member_key,
             rng,
         );
         Ok(share)
@@ -260,6 +262,7 @@ struct HandRuntime<C: CurveGroup> {
     pub hand_id: HandId,
     pub shuffler_id: ShufflerId,
     pub shuffler_index: usize,
+    pub shuffler_key: crate::ledger::CanonicalKey<C>,
     pub cancel: CancellationToken,
     pub shuffling: Mutex<ShufflingHandState<C>>,
     pub dealing: Mutex<DealingHandState<C>>,
@@ -429,6 +432,7 @@ where
             hand_id,
             shuffler_id: self.shuffler_id,
             shuffler_index: self.index,
+            shuffler_key: crate::ledger::CanonicalKey::new(self.public_key.clone()),
             cancel: cancel.clone(),
             shuffling: Mutex::new(state),
             dealing: Mutex::new(DealingHandState::new()),
@@ -460,6 +464,7 @@ where
         let public_key = self.public_key.clone();
         let actor = ShufflerActor {
             shuffler_id: self.shuffler_id,
+            shuffler_key: crate::ledger::CanonicalKey::new(public_key.clone()),
         };
         let events_rx = {
             let guard = self.events_rx.lock();
@@ -481,7 +486,7 @@ where
             events_rx,
             history_cap,
             public_key.clone(),
-            actor,
+            &actor,
         );
 
         let (deal_tx, deal_rx) = broadcast::channel(DEAL_CHANNEL_CAPACITY);
@@ -496,7 +501,7 @@ where
             Arc::clone(&params),
             Arc::clone(&secret),
             public_key.clone(),
-            actor,
+            &actor,
         );
 
         let mut subscription =
@@ -537,6 +542,10 @@ where
             }
         }
 
+        let actor = ShufflerActor {
+            shuffler_id: self.shuffler_id,
+            shuffler_key: crate::ledger::CanonicalKey::new(self.public_key),
+        };
         Self::emit_shuffle(
             &self.api,
             &self.params,
@@ -544,9 +553,7 @@ where
             &self.submit,
             &runtime_arc,
             &self.public_key,
-            ShufflerActor {
-                shuffler_id: self.shuffler_id,
-            },
+            &actor,
         )
         .await
     }
@@ -561,7 +568,7 @@ where
         shuffle_updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
         history_cap: usize,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> JoinHandle<()>
     where
         C: Send + Sync + 'static,
@@ -572,6 +579,7 @@ where
         S::Parameters: Send + Sync + 'static,
         S::SecretKey: Send + Sync + 'static,
     {
+        let actor_clone = actor.clone();
         tokio::spawn(async move {
             let game_id = runtime.game_id;
             let hand_id = runtime.hand_id;
@@ -584,7 +592,7 @@ where
                 shuffle_updates,
                 history_cap,
                 public_key,
-                actor,
+                &actor_clone,
                 shuffler_index,
             )
             .await
@@ -615,7 +623,7 @@ where
         mut updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
         history_cap: usize,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         shuffler_index: usize,
     ) -> Result<()>
     where
@@ -723,7 +731,7 @@ where
         params: Arc<S::Parameters>,
         secret: Arc<S::SecretKey>,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         shuffler_index: usize,
     ) -> Result<()>
     where
@@ -803,7 +811,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -838,7 +846,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -974,7 +982,7 @@ where
         _params: &Arc<S::Parameters>,
         _secret: &Arc<S::SecretKey>,
         _public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -1013,7 +1021,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         message: GameBlindingDecryptionMessage<C>,
     ) -> Result<AnyMessageEnvelope<C>>
     where
@@ -1025,7 +1033,7 @@ where
         let meta = MetadataEnvelope {
             hand_id: runtime.hand_id,
             game_id: runtime.game_id,
-            actor,
+            actor: actor.clone(),
             nonce: state.next_nonce,
             public_key: public_key.clone(),
         };
@@ -1049,7 +1057,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         message: GamePartialUnblindingShareMessage<C>,
     ) -> Result<AnyMessageEnvelope<C>>
     where
@@ -1061,7 +1069,7 @@ where
         let meta = MetadataEnvelope {
             hand_id: runtime.hand_id,
             game_id: runtime.game_id,
-            actor,
+            actor: actor.clone(),
             nonce: state.next_nonce,
             public_key: public_key.clone(),
         };
@@ -1123,8 +1131,11 @@ where
     fn as_shuffle_envelope(
         finalized: &FinalizedAnyMessageEnvelope<C>,
     ) -> Option<EnvelopedMessage<C, GameShuffleMessage<C>>> {
-        let actor = match finalized.envelope.actor {
-            AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+        let actor = match &finalized.envelope.actor {
+            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
             _ => return None,
         };
 
@@ -1152,7 +1163,7 @@ where
         submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: &Arc<HandRuntime<C>>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -1191,7 +1202,7 @@ where
             let meta = MetadataEnvelope {
                 hand_id: runtime.hand_id,
                 game_id: runtime.game_id,
-                actor,
+                actor: actor.clone(),
                 nonce: state.next_nonce,
                 public_key: public_key.clone(),
             };
@@ -1243,7 +1254,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1267,7 +1281,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1291,7 +1308,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1312,7 +1332,7 @@ fn spawn_deal_loop_per_hand<C, S>(
     params: Arc<S::Parameters>,
     secret: Arc<S::SecretKey>,
     public_key: C,
-    actor: ShufflerActor,
+    actor: &ShufflerActor<C>,
 ) -> JoinHandle<()>
 where
     C: CurveGroup + Send + Sync + 'static,
@@ -1326,6 +1346,7 @@ where
     S::Parameters: Send + Sync + 'static,
     S::SecretKey: Send + Sync + 'static,
 {
+    let actor_clone = actor.clone();
     tokio::spawn(async move {
         let result = Shuffler::<C, S>::deal_loop(
             runtime.clone(),
@@ -1335,7 +1356,7 @@ where
             params,
             secret,
             public_key,
-            actor,
+            &actor_clone,
             shuffler_index,
         )
         .await;
@@ -1389,12 +1410,11 @@ where
                                         continue;
                                     }
                                     let shuffler_id = runtime.shuffler_id;
-                                    let shuffler_index = runtime.shuffler_index;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
                                         shuffler_id,
-                                        shuffler_index,
+                                        &runtime.shuffler_key,
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
@@ -1427,12 +1447,11 @@ where
                                         continue;
                                     }
                                     let shuffler_id = runtime.shuffler_id;
-                                    let shuffler_index = runtime.shuffler_index;
                                     let mut state = runtime.dealing.lock();
                                     match state.process_snapshot_and_make_responses(
                                         table,
                                         shuffler_id,
-                                        shuffler_index,
+                                        &runtime.shuffler_key,
                                     ) {
                                         Ok(requests) => {
                                             for request in requests {
@@ -1783,6 +1802,7 @@ mod tests {
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
+            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1798,7 +1818,11 @@ mod tests {
         });
 
         let (deal_tx, deal_rx) = broadcast::channel(8);
-        let actor = ShufflerActor { shuffler_id: 0 };
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let actor = ShufflerActor {
+            shuffler_id: 0,
+            shuffler_key,
+        };
         let deal_handle = spawn_deal_loop_per_hand::<Curve, ShufflerScheme<Curve>>(
             0,
             Arc::clone(&runtime),
@@ -1808,7 +1832,7 @@ mod tests {
             Arc::clone(&shuffler.params),
             Arc::clone(&shuffler.secret_key),
             shuffler.public_key.clone(),
-            actor,
+            &actor,
         );
 
         let ciphertext = PlayerAccessibleCiphertext {
@@ -1889,6 +1913,7 @@ mod tests {
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
+            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
                 expected_order: vec![0],
@@ -1904,7 +1929,11 @@ mod tests {
         });
 
         let (deal_tx, deal_rx) = broadcast::channel(4);
-        let actor = ShufflerActor { shuffler_id: 0 };
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let actor = ShufflerActor {
+            shuffler_id: 0,
+            shuffler_key,
+        };
         let deal_handle = spawn_deal_loop_per_hand::<Curve, ShufflerScheme<Curve>>(
             0,
             Arc::clone(&runtime),
@@ -1914,7 +1943,7 @@ mod tests {
             Arc::clone(&shuffler.params),
             Arc::clone(&shuffler.secret_key),
             shuffler.public_key.clone(),
-            actor,
+            &actor,
         );
 
         let board_request = BoardCardShufflerRequest {
@@ -1952,7 +1981,7 @@ mod tests {
         table.dealing.player_ciphertexts.clear();
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let mut player_requests: Vec<_> = requests
             .into_iter()
@@ -1981,7 +2010,7 @@ mod tests {
             .insert((first_player.seat, first_player.hole_index), cipher);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let player_requests: Vec<_> = requests
             .into_iter()
@@ -2015,7 +2044,7 @@ mod tests {
             .expect("fixture hole card");
 
         let shuffler_id = 42;
-        let member_index = 7;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::generator());
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -2033,17 +2062,17 @@ mod tests {
 
         let faux_share = PartialUnblindingShare {
             share: Curve::zero(),
-            member_index,
+            member_key: test_key.clone(),
         };
         table
             .dealing
             .player_unblinding_shares
             .entry((seat, hole_index))
             .or_default()
-            .insert(member_index, faux_share);
+            .insert(test_key.clone(), faux_share);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
             .expect("process snapshot");
 
         assert!(
@@ -2073,7 +2102,7 @@ mod tests {
             .expect("preflop hole card");
 
         let shuffler_id = 17;
-        let member_index = 2;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::generator() + Curve::generator());
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -2100,7 +2129,7 @@ mod tests {
         );
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, member_index)
+            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
             .expect("process preflop snapshot");
 
         assert!(
@@ -2126,7 +2155,7 @@ mod tests {
 
         // Initial snapshot should only request player shares.
         let initial = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         assert!(initial
             .iter()
@@ -2151,7 +2180,7 @@ mod tests {
 
         // Flop requests should be emitted together once hole cards are ready.
         let second = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let mut flop_slots: Vec<u8> = second
             .iter()
@@ -2180,7 +2209,7 @@ mod tests {
         }
 
         let third = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let turn_count = third
             .iter()
@@ -2213,7 +2242,7 @@ mod tests {
         }
 
         let fourth = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         let river_count = fourth
             .iter()
@@ -2228,7 +2257,7 @@ mod tests {
 
         // Further snapshots should not emit additional board requests.
         let fifth = state
-            .process_snapshot_and_make_responses(&table, 0, 0)
+            .process_snapshot_and_make_responses(&table, 0, &crate::ledger::CanonicalKey::new(Curve::zero()))
             .expect("process snapshot");
         assert!(fifth
             .iter()

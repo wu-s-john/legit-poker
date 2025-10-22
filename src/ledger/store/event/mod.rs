@@ -610,7 +610,10 @@ mod tests {
         AnyMessageEnvelope {
             hand_id,
             game_id,
-            actor: AnyActor::Shuffler { shuffler_id: 0 },
+            actor: AnyActor::Shuffler {
+                shuffler_id: 0,
+                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
+            },
             nonce,
             public_key: Curve::zero(),
             message: WithSignature {

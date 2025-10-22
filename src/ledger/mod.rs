@@ -1,5 +1,6 @@
 pub mod actor;
 pub mod hash;
+pub mod identity;
 pub mod lobby;
 pub mod messages;
 mod operator;
@@ -17,7 +18,8 @@ pub mod worker;
 #[cfg(test)]
 pub mod test_support;
 
-pub use actor::{GameActor, PlayerActor, ShufflerActor};
+pub use actor::{AnyActor, GameActor, PlayerActor, ShufflerActor};
+pub use identity::CanonicalKey;
 pub use lobby::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, GameSetupError,
     JoinGameOutput, LedgerLobby, RegisterShufflerOutput, SeaOrmLobby, ShufflerRegistrationConfig,

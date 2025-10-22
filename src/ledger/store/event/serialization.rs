@@ -39,9 +39,10 @@ where
         nonce = row.nonce,
         "attempting to decode ledger event row"
     );
-    let actor = decode_actor(&row)?;
     let public_key = deserialize_curve_bytes::<C>(&row.public_key)
         .context("failed to deserialize stored public key")?;
+    let canonical_key = crate::ledger::CanonicalKey::new(public_key);
+    let actor = decode_actor(&row, canonical_key)?;
     let nonce =
         u64::try_from(row.nonce).map_err(|_| anyhow!("stored nonce {} is negative", row.nonce))?;
 
@@ -82,7 +83,10 @@ where
     })
 }
 
-pub(super) fn encode_actor(actor: &AnyActor) -> anyhow::Result<ActorColumns> {
+pub(super) fn encode_actor<C>(actor: &AnyActor<C>) -> anyhow::Result<ActorColumns>
+where
+    C: ark_ec::CurveGroup,
+{
     match actor {
         AnyActor::None => Ok(ActorColumns {
             entity_kind: ENTITY_PLAYER,
@@ -91,7 +95,7 @@ pub(super) fn encode_actor(actor: &AnyActor) -> anyhow::Result<ActorColumns> {
             seat_id: None,
             shuffler_id: None,
         }),
-        AnyActor::Player { seat_id, player_id } => {
+        AnyActor::Player { seat_id, player_id, .. } => {
             let entity_id = i64::try_from(*player_id)
                 .map_err(|_| anyhow!("player_id {} cannot be represented as i64", player_id))?;
             Ok(ActorColumns {
@@ -102,7 +106,7 @@ pub(super) fn encode_actor(actor: &AnyActor) -> anyhow::Result<ActorColumns> {
                 shuffler_id: None,
             })
         }
-        AnyActor::Shuffler { shuffler_id } => {
+        AnyActor::Shuffler { shuffler_id, .. } => {
             let shuffler_small = i16::try_from(*shuffler_id)
                 .map_err(|_| anyhow!("shuffler_id {} cannot be represented as i16", shuffler_id))?;
             Ok(ActorColumns {
@@ -142,7 +146,10 @@ pub(super) fn from_db_event_phase(phase: db_enums::EventPhase) -> EventPhase {
     }
 }
 
-fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
+fn decode_actor<C>(row: &events::Model, canonical_key: crate::ledger::CanonicalKey<C>) -> anyhow::Result<AnyActor<C>>
+where
+    C: ark_ec::CurveGroup,
+{
     match row.actor_kind {
         ACTOR_NONE => Ok(AnyActor::None),
         ACTOR_PLAYER => {
@@ -159,7 +166,7 @@ fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
                 .map_err(|_| anyhow!("player entity_id {} invalid", row.entity_id))?;
             let seat_id =
                 u8::try_from(seat).map_err(|_| anyhow!("seat_id {} cannot fit in u8", seat))?;
-            Ok(AnyActor::Player { seat_id, player_id })
+            Ok(AnyActor::Player { seat_id, player_id, player_key: canonical_key })
         }
         ACTOR_SHUFFLER => {
             let id = row
@@ -172,7 +179,7 @@ fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
                     row.entity_kind
                 ));
             }
-            Ok(AnyActor::Shuffler { shuffler_id: id })
+            Ok(AnyActor::Shuffler { shuffler_id: id, shuffler_key: canonical_key })
         }
         other => Err(anyhow!("unknown actor_kind value {}", other)),
     }

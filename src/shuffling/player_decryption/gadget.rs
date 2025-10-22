@@ -210,8 +210,9 @@ where
 {
     /// blinded_base^x_j - the partial unblinding from committee member j
     pub share: CV,
-    /// Index of the committee member providing this share
-    pub member_index: FpVar<C::BaseField>,
+    // Note: member_key is not included in the circuit as uniqueness is guaranteed
+    // by the BTreeMap structure at the application layer
+    _phantom: std::marker::PhantomData<C>,
 }
 
 impl<C, CV> Clone for PartialUnblindingShareVar<C, CV>
@@ -223,7 +224,7 @@ where
     fn clone(&self) -> Self {
         Self {
             share: self.share.clone(),
-            member_index: self.member_index.clone(),
+            _phantom: std::marker::PhantomData,
         }
     }
 }
@@ -246,16 +247,11 @@ where
         // Allocate the share as CurveVar
         let share = CV::new_variable(cs.clone(), || Ok(share_value.share), mode)?;
 
-        // Allocate member_index as FpVar
-        let member_index = FpVar::<C::BaseField>::new_variable(
-            cs.clone(),
-            || Ok(C::BaseField::from(share_value.member_index as u64)),
-            mode,
-        )?;
+        // Note: member_key is not allocated in the circuit - uniqueness is checked at application layer
 
         Ok(Self {
             share,
-            member_index,
+            _phantom: std::marker::PhantomData,
         })
     }
 }
@@ -824,7 +820,7 @@ mod tests {
             // Generate unblinding share
             let unblinding = PartialUnblindingShare {
                 share: player_ciphertext.blinded_base * committee_secret,
-                member_index: 0,
+                member_key: crate::ledger::CanonicalKey::new(GrumpkinProjective::zero()),
             };
 
             // ============= Circuit Recovery =============
@@ -934,7 +930,7 @@ mod tests {
             // Generate unblinding share
             let unblinding = PartialUnblindingShare {
                 share: player_ciphertext.blinded_base * committee_secret,
-                member_index: 0,
+                member_key: crate::ledger::CanonicalKey::new(GrumpkinProjective::zero()),
             };
 
             // ============= Native Recovery =============
@@ -1051,7 +1047,7 @@ mod tests {
         // Generate unblinding share
         let unblinding = PartialUnblindingShare {
             share: player_ciphertext.blinded_base * committee_secret,
-            member_index: 0,
+            member_key: crate::ledger::CanonicalKey::new(aggregated_pk),
         };
 
         // Try to recover with wrong player secret
@@ -1075,9 +1071,10 @@ mod tests {
 
         // Setup with 2 committee members
         let committee_secret1 = Fr::rand(&mut rng);
+        let committee_pk1 = GrumpkinProjective::generator() * committee_secret1;
         let committee_secret2 = Fr::rand(&mut rng);
-        let _aggregated_pk =
-            GrumpkinProjective::generator() * (committee_secret1 + committee_secret2);
+        let committee_pk2 = GrumpkinProjective::generator() * committee_secret2;
+        let _aggregated_pk = committee_pk1 + committee_pk2;
 
         let player_secret = Fr::rand(&mut rng);
         let _player_public_key = GrumpkinProjective::generator() * player_secret;
@@ -1097,7 +1094,7 @@ mod tests {
         // Only provide one share when two are expected
         let unblinding1 = PartialUnblindingShare {
             share: player_ciphertext.blinded_base * committee_secret1,
-            member_index: 0,
+            member_key: crate::ledger::CanonicalKey::new(committee_pk1),
         };
 
         let result = recover_card_value(

@@ -59,6 +59,7 @@ pub type SnapshotSeq = u32;
 pub struct PlayerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
+    pub player_key: crate::ledger::CanonicalKey<C>,
     pub nonce: u64,
     pub seat: SeatId,
 }
@@ -79,6 +80,7 @@ impl<C: CurveGroup> PlayerIdentity<C> {
 pub struct ShufflerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
+    pub shuffler_key: crate::ledger::CanonicalKey<C>,
     #[serde(with = "crate::crypto_serde::curve")]
     pub aggregated_public_key: C,
 }
@@ -585,7 +587,7 @@ pub struct DealingSnapshot<C: CurveGroup> {
         deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
     )]
     pub player_unblinding_shares:
-        BTreeMap<(SeatId, u8), BTreeMap<usize, PartialUnblindingShare<C>>>,
+        BTreeMap<(SeatId, u8), BTreeMap<crate::ledger::CanonicalKey<C>, PartialUnblindingShare<C>>>,
     #[serde(with = "crate::crypto_serde::curve_map")]
     pub player_unblinding_combined: BTreeMap<(SeatId, u8), C>,
     #[serde(
@@ -972,7 +974,8 @@ where
         roster.insert(
             player_id,
             PlayerIdentity {
-                public_key,
+                public_key: public_key.clone(),
+                player_key: crate::ledger::CanonicalKey::new(public_key),
                 nonce,
                 seat,
             },
@@ -1031,7 +1034,8 @@ where
         roster.insert(
             assignment.shuffler_id,
             ShufflerIdentity {
-                public_key: pk,
+                public_key: pk.clone(),
+                shuffler_key: crate::ledger::CanonicalKey::new(pk),
                 aggregated_public_key: aggregated.clone(),
             },
         );

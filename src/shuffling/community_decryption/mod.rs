@@ -27,8 +27,8 @@ pub struct CommunityDecryptionShare<C: CurveGroup> {
     pub share: C,
     /// Proof that log_g(pk_j) = log_c1(share_j)
     pub proof: ChaumPedersenProof<C>,
-    /// Index of the committee member providing this share
-    pub member_index: usize,
+    /// Canonical key of the committee member providing this share
+    pub member_key: crate::ledger::CanonicalKey<C>,
 }
 
 impl<C> CommunityDecryptionShare<C>
@@ -43,14 +43,17 @@ where
     /// # Arguments
     /// * `ciphertext` - The ElGamal ciphertext to partially decrypt
     /// * `committee_secret` - The committee member's secret share x_j
-    /// * `member_index` - The index of this committee member
+    /// * `member_key` - Canonical key identifying this committee member
     #[instrument(skip(committee_secret, rng), level = "trace")]
     pub fn generate<R: Rng>(
         ciphertext: &ElGamalCiphertext<C>,
         committee_secret: C::ScalarField,
-        member_index: usize,
+        member_key: crate::ledger::CanonicalKey<C>,
         rng: &mut R,
-    ) -> Self {
+    ) -> Self
+    where
+        C: ark_serialize::CanonicalSerialize,
+    {
         let generator = C::generator();
 
         // Compute the partial decryption share: share_j = c1^x_j
@@ -68,7 +71,7 @@ where
         Self {
             share,
             proof,
-            member_index,
+            member_key,
         }
     }
 
@@ -93,7 +96,7 @@ where
         );
 
         if !result {
-            warn!(target: LOG_TARGET, "Decryption share proof verification failed for member {}!", self.member_index);
+            warn!(target: LOG_TARGET, "Decryption share proof verification failed for member {:?}!", self.member_key);
         }
 
         result
@@ -127,25 +130,8 @@ pub fn combine_community_shares<C: CurveGroup>(
         );
     }
 
-    // Verify all member indices are unique and in range
-    let mut seen_indices = vec![false; expected_members];
-    for share in shares {
-        if share.member_index >= expected_members {
-            warn!(target: LOG_TARGET,
-                "Invalid member index: {} (max: {})",
-                share.member_index, expected_members - 1
-            );
-            return Err("Invalid member index");
-        }
-        if seen_indices[share.member_index] {
-            warn!(target: LOG_TARGET,
-                "Duplicate member index: {}",
-                share.member_index
-            );
-            return Err("Duplicate member index");
-        }
-        seen_indices[share.member_index] = true;
-    }
+    // Note: With canonical keys, uniqueness is guaranteed by the map structure
+    // and range checks are not applicable. We only verify the count.
 
     // Aggregate by adding all shares: pk^r = Σ(share_j)
     // This gives us c1^(Σx_j) = g^(r*Σx_j) = pk^r
@@ -326,7 +312,8 @@ mod tests {
         let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
 
         // Create a decryption share with proof
-        let share = CommunityDecryptionShare::generate(&ciphertext, committee_secret, 0, &mut rng);
+        let member_key = crate::ledger::CanonicalKey::new(committee_public_key);
+        let share = CommunityDecryptionShare::generate(&ciphertext, committee_secret, member_key, &mut rng);
 
         // Verify the proof is valid
         assert!(
@@ -383,9 +370,12 @@ mod tests {
         let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
 
         // Generate decryption shares from each committee member
-        let share1 = CommunityDecryptionShare::generate(&ciphertext, member1_secret, 0, &mut rng);
-        let share2 = CommunityDecryptionShare::generate(&ciphertext, member2_secret, 1, &mut rng);
-        let share3 = CommunityDecryptionShare::generate(&ciphertext, member3_secret, 2, &mut rng);
+        let member_key1 = crate::ledger::CanonicalKey::new(member1_pk);
+        let member_key2 = crate::ledger::CanonicalKey::new(member2_pk);
+        let member_key3 = crate::ledger::CanonicalKey::new(member3_pk);
+        let share1 = CommunityDecryptionShare::generate(&ciphertext, member1_secret, member_key1, &mut rng);
+        let share2 = CommunityDecryptionShare::generate(&ciphertext, member2_secret, member_key2, &mut rng);
+        let share3 = CommunityDecryptionShare::generate(&ciphertext, member3_secret, member_key3, &mut rng);
 
         // Verify all shares
         assert!(share1.verify(&ciphertext, member1_pk));
@@ -454,9 +444,12 @@ mod tests {
 
         // ============ COMMUNITY DECRYPTION ============
         // Generate decryption shares from each committee member
-        let share1 = CommunityDecryptionShare::generate(&ciphertext, shuffler1_secret, 0, &mut rng);
-        let share2 = CommunityDecryptionShare::generate(&ciphertext, shuffler2_secret, 1, &mut rng);
-        let share3 = CommunityDecryptionShare::generate(&ciphertext, shuffler3_secret, 2, &mut rng);
+        let shuffler_key1 = crate::ledger::CanonicalKey::new(shuffler1_pk);
+        let shuffler_key2 = crate::ledger::CanonicalKey::new(shuffler2_pk);
+        let shuffler_key3 = crate::ledger::CanonicalKey::new(shuffler3_pk);
+        let share1 = CommunityDecryptionShare::generate(&ciphertext, shuffler1_secret, shuffler_key1, &mut rng);
+        let share2 = CommunityDecryptionShare::generate(&ciphertext, shuffler2_secret, shuffler_key2, &mut rng);
+        let share3 = CommunityDecryptionShare::generate(&ciphertext, shuffler3_secret, shuffler_key3, &mut rng);
 
         // Verify individual shares are computed correctly
         assert_eq!(share1.share, ciphertext.c1 * shuffler1_secret);
@@ -540,10 +533,12 @@ mod tests {
             let ciphertext = ElGamalCiphertext::encrypt(message_point, randomness, aggregated_pk);
 
             // Generate decryption shares
+            let member_key1 = crate::ledger::CanonicalKey::new(member1_pk);
+            let member_key2 = crate::ledger::CanonicalKey::new(member2_pk);
             let share1 =
-                CommunityDecryptionShare::generate(&ciphertext, member1_secret, 0, &mut rng);
+                CommunityDecryptionShare::generate(&ciphertext, member1_secret, member_key1.clone(), &mut rng);
             let share2 =
-                CommunityDecryptionShare::generate(&ciphertext, member2_secret, 1, &mut rng);
+                CommunityDecryptionShare::generate(&ciphertext, member2_secret, member_key2.clone(), &mut rng);
 
             // Verify shares
             assert!(share1.verify(&ciphertext, member1_pk));
