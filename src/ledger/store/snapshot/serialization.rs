@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
@@ -7,38 +7,30 @@ use sea_orm::sea_query::OnConflict;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
 };
-use serde_json::{json, Value as JsonValue};
+use serde_json::Value as JsonValue;
 use tracing::info;
 
-use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::sea_orm_active_enums::{
     self as db_enums, ApplicationStatus as DbApplicationStatus,
 };
 use crate::db::entity::{games, hand_configs, hands, phases, table_snapshots};
-use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::events::NormalizedAction;
 use crate::engine::nl::state::BettingState;
 use crate::engine::nl::types::{
-    ActionLogEntry as EngineActionLogEntry, HandConfig, PlayerState as EnginePlayerState,
-    PlayerStatus as EnginePlayerStatus, Pot as EnginePot, Pots as EnginePots, Street,
+    HandConfig, PlayerState as EnginePlayerState, PlayerStatus as EnginePlayerStatus,
+    Pot as EnginePot, Pots as EnginePots, Street,
 };
 use crate::ledger::hash::LedgerHasher;
-use crate::ledger::serialization::canonical_serialize_hex_prefixed;
 use crate::ledger::snapshot::{
     AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, CardDestination, PhaseBetting,
-    PhaseComplete, PlayerStacks, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, SnapshotStatus,
-    TableAtDealing, TableAtShowdown, TableAtShuffling, TableSnapshot,
+    PhaseComplete, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, SnapshotStatus, TableAtDealing,
+    TableAtShowdown, TableAtShuffling, TableSnapshot,
 };
 use crate::ledger::types::{GameId, HandId, StateHash};
 use crate::showdown::HandCategory;
-use crate::shuffling::community_decryption::CommunityDecryptionShare;
 use crate::shuffling::data_structures::{
-    append_ciphertext, append_curve_point, append_shuffle_proof, ElGamalCiphertext, ShuffleProof,
-    DECK_SIZE,
-};
-use crate::shuffling::player_decryption::{
-    PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
+    append_ciphertext, append_curve_point, append_shuffle_proof, DECK_SIZE,
 };
 use crate::signing::{Signable, TranscriptBuilder};
 use std::sync::Arc;
@@ -123,7 +115,8 @@ where
         .hand_id
         .ok_or_else(|| anyhow!("snapshot missing hand id"))?;
     let sequence = cast_sequence(table.sequence)?;
-    let stacks = serialize_player_stacks(table.stacks.as_ref());
+    let stacks =
+        serde_json::to_value(table.stacks.as_ref()).context("failed to serialize player stacks")?;
     let (phase, hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (application_status, failure_reason) = map_status(&table.status);
 
@@ -160,7 +153,8 @@ where
         .hand_id
         .ok_or_else(|| anyhow!("snapshot missing hand id"))?;
     let sequence = cast_sequence(table.sequence)?;
-    let stacks = serialize_player_stacks(table.stacks.as_ref());
+    let stacks =
+        serde_json::to_value(table.stacks.as_ref()).context("failed to serialize player stacks")?;
     let (shuffle_phase, shuffle_hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
     let (application_status, failure_reason) = map_status(&table.status);
@@ -199,7 +193,8 @@ where
         .hand_id
         .ok_or_else(|| anyhow!("snapshot missing hand id"))?;
     let sequence = cast_sequence(table.sequence)?;
-    let stacks = serialize_player_stacks(table.stacks.as_ref());
+    let stacks =
+        serde_json::to_value(table.stacks.as_ref()).context("failed to serialize player stacks")?;
 
     let (shuffle_phase, shuffle_hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
@@ -241,7 +236,8 @@ where
         .hand_id
         .ok_or_else(|| anyhow!("snapshot missing hand id"))?;
     let sequence = cast_sequence(table.sequence)?;
-    let stacks = serialize_player_stacks(table.stacks.as_ref());
+    let stacks =
+        serde_json::to_value(table.stacks.as_ref()).context("failed to serialize player stacks")?;
 
     let (shuffle_phase, shuffle_hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
@@ -283,7 +279,8 @@ where
         .hand_id
         .ok_or_else(|| anyhow!("snapshot missing hand id"))?;
     let sequence = cast_sequence(table.sequence)?;
-    let stacks = serialize_player_stacks(table.stacks.as_ref());
+    let stacks =
+        serde_json::to_value(table.stacks.as_ref()).context("failed to serialize player stacks")?;
 
     let (shuffle_phase, shuffle_hash) = build_shuffling_phase(&table.shuffling, hasher)?;
     let (deal_phase, deal_hash) = build_dealing_phase(&table.dealing, hasher)?;
@@ -340,7 +337,8 @@ where
     }
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
-    let payload_json = shuffling_phase_payload(shuffling)?;
+    let payload_json =
+        serde_json::to_value(shuffling).context("failed to serialize shuffling phase")?;
     Ok((
         PreparedPhase {
             kind: db_enums::PhaseKind::Shuffling,
@@ -444,7 +442,8 @@ where
 
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
-    let payload_json = dealing_phase_payload(dealing)?;
+    let payload_json =
+        serde_json::to_value(dealing).context("failed to serialize dealing phase")?;
     Ok((
         PreparedPhase {
             kind: db_enums::PhaseKind::Dealing,
@@ -474,7 +473,8 @@ where
 
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
-    let payload_json = betting_phase_payload(betting)?;
+    let payload_json =
+        serde_json::to_value(betting).context("failed to serialize betting phase")?;
     Ok((
         PreparedPhase {
             kind: db_enums::PhaseKind::Betting,
@@ -521,7 +521,8 @@ where
 
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
-    let payload_json = reveals_phase_payload(reveals)?;
+    let payload_json =
+        serde_json::to_value(reveals).context("failed to serialize reveals phase")?;
     Ok((
         PreparedPhase {
             kind: db_enums::PhaseKind::Reveals,
@@ -530,6 +531,29 @@ where
         },
         hash,
     ))
+}
+
+fn street_label(street: Street) -> &'static str {
+    match street {
+        Street::Preflop => "preflop",
+        Street::Flop => "flop",
+        Street::Turn => "turn",
+        Street::River => "river",
+    }
+}
+
+fn hand_category_label(category: HandCategory) -> &'static str {
+    match category {
+        HandCategory::HighCard => "high_card",
+        HandCategory::OnePair => "one_pair",
+        HandCategory::TwoPair => "two_pair",
+        HandCategory::ThreeOfAKind => "three_of_a_kind",
+        HandCategory::Straight => "straight",
+        HandCategory::Flush => "flush",
+        HandCategory::FullHouse => "full_house",
+        HandCategory::FourOfAKind => "four_of_a_kind",
+        HandCategory::StraightFlush => "straight_flush",
+    }
 }
 
 fn append_betting_state(builder: &mut TranscriptBuilder, state: &BettingState) {
@@ -681,565 +705,6 @@ where
             builder.append_bytes(b"river");
             msg.write_transcript(builder);
         }
-    }
-}
-
-fn serialize_hex<T>(value: &T) -> anyhow::Result<String>
-where
-    T: CanonicalSerialize,
-{
-    canonical_serialize_hex_prefixed(value).map_err(|err| anyhow!("serialization failed: {err}"))
-}
-
-fn ciphertext_to_json<C>(ciphertext: &ElGamalCiphertext<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-{
-    Ok(json!({
-        "c1": serialize_hex(&ciphertext.c1)?,
-        "c2": serialize_hex(&ciphertext.c2)?,
-    }))
-}
-
-fn chaum_pedersen_to_json<C>(proof: &ChaumPedersenProof<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    Ok(json!({
-        "t_g": serialize_hex(&proof.t_g)?,
-        "t_h": serialize_hex(&proof.t_h)?,
-        "z": serialize_hex(&proof.z)?,
-    }))
-}
-
-fn player_ciphertext_to_json<C>(
-    ciphertext: &PlayerAccessibleCiphertext<C>,
-) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    let proofs = ciphertext
-        .shuffler_proofs
-        .iter()
-        .map(chaum_pedersen_to_json)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "blinded_base": serialize_hex(&ciphertext.blinded_base)?,
-        "blinded_message_with_player_key": serialize_hex(&ciphertext.blinded_message_with_player_key)?,
-        "player_unblinding_helper": serialize_hex(&ciphertext.player_unblinding_helper)?,
-        "shuffler_proofs": proofs,
-    }))
-}
-
-fn blinding_contribution_to_json<C>(
-    contrib: &PlayerTargetedBlindingContribution<C>,
-) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    Ok(json!({
-        "blinding_base_contribution": serialize_hex(&contrib.blinding_base_contribution)?,
-        "blinding_combined_contribution": serialize_hex(&contrib.blinding_combined_contribution)?,
-        "proof": chaum_pedersen_to_json(&contrib.proof)?,
-    }))
-}
-
-fn community_share_to_json<C>(share: &CommunityDecryptionShare<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    Ok(json!({
-        "member_index": share.member_index,
-        "share": serialize_hex(&share.share)?,
-        "proof": chaum_pedersen_to_json(&share.proof)?,
-    }))
-}
-
-fn shuffle_proof_to_json<C>(proof: &ShuffleProof<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::BaseField: CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    let input_deck = proof
-        .input_deck
-        .iter()
-        .map(ciphertext_to_json)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let sorted_deck = proof
-        .sorted_deck
-        .iter()
-        .map(|(cipher, randomizer)| {
-            let cipher_json = ciphertext_to_json(cipher)?;
-            let randomizer_hex = serialize_hex(randomizer)?;
-            Ok(json!({
-                "ciphertext": cipher_json,
-                "randomizer": randomizer_hex,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let rerandomization_values = proof
-        .rerandomization_values
-        .iter()
-        .map(serialize_hex)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "input_deck": input_deck,
-        "sorted_deck": sorted_deck,
-        "rerandomization_values": rerandomization_values,
-    }))
-}
-
-fn shuffling_phase_payload<C>(shuffling: &ShufflingSnapshot<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
-    C::BaseField: PrimeField + CanonicalSerialize,
-    C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
-    C::Affine: Absorb,
-{
-    let initial_deck = shuffling
-        .initial_deck
-        .iter()
-        .map(ciphertext_to_json)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let steps = shuffling
-        .steps
-        .iter()
-        .map(|step| {
-            let key_hex = serialize_hex(&step.shuffler_public_key)?;
-            let proof_json = shuffle_proof_to_json(&step.proof)?;
-            Ok(json!({
-                "shuffler_public_key": key_hex,
-                "proof": proof_json,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let final_deck = shuffling
-        .final_deck
-        .iter()
-        .map(ciphertext_to_json)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "initial_deck": initial_deck,
-        "steps": steps,
-        "final_deck": final_deck,
-        "expected_order": shuffling.expected_order.clone(),
-    }))
-}
-
-fn dealing_phase_payload<C>(
-    dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
-) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
-    C::BaseField: PrimeField + CanonicalSerialize,
-    C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
-    C::Affine: Absorb,
-{
-    let assignments = dealing
-        .assignments
-        .iter()
-        .map(|(&card, dealt)| {
-            let cipher_json = ciphertext_to_json(&dealt.cipher)?;
-            Ok(json!({
-                "card": card,
-                "ciphertext": cipher_json,
-                "source_index": dealt.source_index,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let player_ciphertexts = dealing
-        .player_ciphertexts
-        .iter()
-        .map(|(&(seat, hole_index), cipher)| {
-            let cipher_json = player_ciphertext_to_json(cipher)?;
-            Ok(json!({
-                "seat": seat,
-                "hole_index": hole_index,
-                "ciphertext": cipher_json,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let player_blinding_contribs = dealing
-        .player_blinding_contribs
-        .iter()
-        .map(|(&(shuffler_id, seat, hole_index), contrib)| {
-            let contrib_json = blinding_contribution_to_json(contrib)?;
-            Ok(json!({
-                "shuffler_id": shuffler_id,
-                "seat": seat,
-                "hole_index": hole_index,
-                "contribution": contrib_json,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let player_unblinding_shares = dealing
-        .player_unblinding_shares
-        .iter()
-        .map(|(&(seat, hole_index), shares)| {
-            let share_entries = shares
-                .iter()
-                .map(|(&member_index, share)| {
-                    Ok(json!({
-                        "member_index": member_index,
-                        "share": serialize_hex(&share.share)?,
-                    }))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-
-            Ok(json!({
-                "seat": seat,
-                "hole_index": hole_index,
-                "shares": share_entries,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let player_unblinding_combined = dealing
-        .player_unblinding_combined
-        .iter()
-        .map(|(&(seat, hole_index), combined)| {
-            Ok(json!({
-                "seat": seat,
-                "hole_index": hole_index,
-                "combined": serialize_hex(combined)?,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let community_shares = dealing
-        .community_decryption_shares
-        .iter()
-        .map(|(&(shuffler_id, card_index), share)| {
-            let share_json = community_share_to_json(share)?;
-            Ok(json!({
-                "shuffler_id": shuffler_id,
-                "card_index": card_index,
-                "share": share_json,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let community_cards = dealing
-        .community_cards
-        .iter()
-        .map(|(&card_index, &value)| {
-            json!({
-                "card_index": card_index,
-                "value": value,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let card_plan = dealing
-        .card_plan
-        .iter()
-        .map(|(&card, destination)| {
-            let destination_json = match destination {
-                CardDestination::Hole { seat, hole_index } => json!({
-                    "type": "hole",
-                    "seat": seat,
-                    "hole_index": hole_index,
-                }),
-                CardDestination::Board { board_index } => json!({
-                    "type": "board",
-                    "board_index": board_index,
-                }),
-                CardDestination::Burn => json!({ "type": "burn" }),
-                CardDestination::Unused => json!({ "type": "unused" }),
-            };
-            Ok(json!({
-                "card": card,
-                "destination": destination_json,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "assignments": assignments,
-        "player_ciphertexts": player_ciphertexts,
-        "player_blinding_contributions": player_blinding_contribs,
-        "player_unblinding_shares": player_unblinding_shares,
-        "player_unblinding_combined": player_unblinding_combined,
-        "community_decryption_shares": community_shares,
-        "community_cards": community_cards,
-        "card_plan": card_plan,
-    }))
-}
-
-fn player_bet_action_to_json(action: &PlayerBetAction) -> JsonValue {
-    match action {
-        PlayerBetAction::Fold => json!({"type": "fold"}),
-        PlayerBetAction::Check => json!({"type": "check"}),
-        PlayerBetAction::Call => json!({"type": "call"}),
-        PlayerBetAction::BetTo { to } => json!({"type": "bet_to", "to": to}),
-        PlayerBetAction::RaiseTo { to } => json!({"type": "raise_to", "to": to}),
-        PlayerBetAction::AllIn => json!({"type": "all_in"}),
-    }
-}
-
-fn normalized_action_to_json(action: &NormalizedAction) -> JsonValue {
-    match action {
-        NormalizedAction::Fold => json!({"type": "fold"}),
-        NormalizedAction::Check => json!({"type": "check"}),
-        NormalizedAction::Call {
-            call_amount,
-            full_call,
-        } => json!({
-            "type": "call",
-            "call_amount": call_amount,
-            "full_call": full_call,
-        }),
-        NormalizedAction::Bet { to } => json!({
-            "type": "bet",
-            "to": to,
-        }),
-        NormalizedAction::Raise {
-            to,
-            raise_amount,
-            full_raise,
-        } => json!({
-            "type": "raise",
-            "to": to,
-            "raise_amount": raise_amount,
-            "full_raise": full_raise,
-        }),
-        NormalizedAction::AllInAsCall {
-            call_amount,
-            full_call,
-        } => json!({
-            "type": "all_in_as_call",
-            "call_amount": call_amount,
-            "full_call": full_call,
-        }),
-        NormalizedAction::AllInAsBet { to } => json!({
-            "type": "all_in_as_bet",
-            "to": to,
-        }),
-        NormalizedAction::AllInAsRaise {
-            to,
-            raise_amount,
-            full_raise,
-        } => json!({
-            "type": "all_in_as_raise",
-            "to": to,
-            "raise_amount": raise_amount,
-            "full_raise": full_raise,
-        }),
-    }
-}
-
-fn action_log_entry_to_json(entry: &EngineActionLogEntry) -> JsonValue {
-    json!({
-        "street": street_label(entry.street),
-        "seat": entry.seat,
-        "action": normalized_action_to_json(&entry.action),
-        "price_to_call_before": entry.price_to_call_before,
-        "current_bet_to_match_after": entry.current_bet_to_match_after,
-    })
-}
-
-fn player_state_to_json(player: &EnginePlayerState) -> JsonValue {
-    json!({
-        "seat": player.seat,
-        "player_id": player.player_id,
-        "stack": player.stack,
-        "committed_this_round": player.committed_this_round,
-        "committed_total": player.committed_total,
-        "status": player_status_label(player.status),
-        "has_acted_this_round": player.has_acted_this_round,
-    })
-}
-
-fn pot_to_json(pot: &EnginePot) -> JsonValue {
-    json!({
-        "amount": pot.amount,
-        "eligible": pot.eligible,
-    })
-}
-
-fn pots_to_json(pots: &EnginePots) -> JsonValue {
-    let sides: Vec<JsonValue> = pots.sides.iter().map(pot_to_json).collect();
-    json!({
-        "main": pot_to_json(&pots.main),
-        "sides": sides,
-    })
-}
-
-fn hand_config_to_json(cfg: &HandConfig) -> JsonValue {
-    json!({
-        "stakes": {
-            "small_blind": cfg.stakes.small_blind,
-            "big_blind": cfg.stakes.big_blind,
-            "ante": cfg.stakes.ante,
-        },
-        "button": cfg.button,
-        "small_blind_seat": cfg.small_blind_seat,
-        "big_blind_seat": cfg.big_blind_seat,
-        "check_raise_allowed": cfg.check_raise_allowed,
-    })
-}
-
-fn betting_state_to_json(state: &BettingState) -> JsonValue {
-    let players: Vec<JsonValue> = state.players.iter().map(player_state_to_json).collect();
-    let pending: Vec<_> = state.pending_to_match.clone();
-    let action_log: Vec<JsonValue> = state
-        .action_log
-        .0
-        .iter()
-        .map(action_log_entry_to_json)
-        .collect();
-
-    json!({
-        "street": street_label(state.street),
-        "button": state.button,
-        "first_to_act": state.first_to_act,
-        "to_act": state.to_act,
-        "current_bet_to_match": state.current_bet_to_match,
-        "last_full_raise_amount": state.last_full_raise_amount,
-        "last_aggressor": state.last_aggressor,
-        "voluntary_bet_opened": state.voluntary_bet_opened,
-        "players": players,
-        "pots": pots_to_json(&state.pots),
-        "hand_config": hand_config_to_json(&state.cfg),
-        "pending_to_match": pending,
-        "betting_locked_all_in": state.betting_locked_all_in,
-        "action_log": action_log,
-    })
-}
-
-fn player_action_msg_to_json<C>(msg: &AnyPlayerActionMsg<C>) -> JsonValue
-where
-    C: CurveGroup,
-{
-    match msg {
-        AnyPlayerActionMsg::Preflop(action) => json!({
-            "street": "preflop",
-            "action": player_bet_action_to_json(&action.action),
-        }),
-        AnyPlayerActionMsg::Flop(action) => json!({
-            "street": "flop",
-            "action": player_bet_action_to_json(&action.action),
-        }),
-        AnyPlayerActionMsg::Turn(action) => json!({
-            "street": "turn",
-            "action": player_bet_action_to_json(&action.action),
-        }),
-        AnyPlayerActionMsg::River(action) => json!({
-            "street": "river",
-            "action": player_bet_action_to_json(&action.action),
-        }),
-    }
-}
-
-fn betting_phase_payload<C>(betting: &BettingSnapshot<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup,
-{
-    let last_events: Vec<JsonValue> = betting
-        .last_events
-        .iter()
-        .map(player_action_msg_to_json)
-        .collect();
-
-    Ok(json!({
-        "state": betting_state_to_json(&betting.state),
-        "last_events": last_events,
-    }))
-}
-
-fn reveals_phase_payload<C>(reveals: &RevealsSnapshot<C>) -> anyhow::Result<JsonValue>
-where
-    C: CurveGroup + CanonicalSerialize,
-    C::ScalarField: CanonicalSerialize,
-{
-    let revealed_holes = reveals
-        .revealed_holes
-        .iter()
-        .map(|(&seat, hand)| {
-            let hole_ciphertexts = hand
-                .hole_ciphertexts
-                .iter()
-                .map(player_ciphertext_to_json)
-                .collect::<anyhow::Result<Vec<_>>>()?;
-
-            Ok(json!({
-                "seat": seat,
-                "hole": hand.hole,
-                "hole_ciphertexts": hole_ciphertexts,
-                "best_five": hand.best_five,
-                "best_category": hand_category_label(hand.best_category),
-                "best_tiebreak": hand.best_tiebreak,
-                "best_score": hand.best_score,
-            }))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    Ok(json!({
-        "board": reveals.board.clone(),
-        "revealed_holes": revealed_holes,
-    }))
-}
-
-fn serialize_player_stacks(stacks: &PlayerStacks) -> JsonValue {
-    let entries: Vec<JsonValue> = stacks
-        .iter()
-        .map(|(&seat, info)| {
-            json!({
-                "seat": seat,
-                "player_id": info.player_id,
-                "starting_stack": info.starting_stack,
-                "committed_blind": info.committed_blind,
-                "status": player_status_label(info.status),
-            })
-        })
-        .collect();
-    JsonValue::from(entries)
-}
-
-fn player_status_label(status: EnginePlayerStatus) -> &'static str {
-    match status {
-        EnginePlayerStatus::Active => "active",
-        EnginePlayerStatus::Folded => "folded",
-        EnginePlayerStatus::AllIn => "all_in",
-        EnginePlayerStatus::SittingOut => "sitting_out",
-    }
-}
-
-fn street_label(street: Street) -> &'static str {
-    match street {
-        Street::Preflop => "preflop",
-        Street::Flop => "flop",
-        Street::Turn => "turn",
-        Street::River => "river",
-    }
-}
-
-fn hand_category_label(category: HandCategory) -> &'static str {
-    match category {
-        HandCategory::HighCard => "high_card",
-        HandCategory::OnePair => "one_pair",
-        HandCategory::TwoPair => "two_pair",
-        HandCategory::ThreeOfAKind => "three_of_a_kind",
-        HandCategory::Straight => "straight",
-        HandCategory::Flush => "flush",
-        HandCategory::FullHouse => "full_house",
-        HandCategory::FourOfAKind => "four_of_a_kind",
-        HandCategory::StraightFlush => "straight_flush",
     }
 }
 

@@ -1,201 +1,28 @@
+use crate::db::entity::events;
+use crate::db::entity::sea_orm_active_enums as db_enums;
+use crate::ledger::actor::AnyActor;
+use crate::ledger::messages::{AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
+use crate::ledger::serialization::deserialize_curve_bytes;
+use crate::ledger::snapshot::SnapshotStatus;
+use crate::ledger::types::EventPhase;
+use crate::signing::{Signable, WithSignature};
 use anyhow::{anyhow, Context};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
 
-use crate::chaum_pedersen::ChaumPedersenProof;
-use crate::db::entity::events;
-use crate::db::entity::sea_orm_active_enums as db_enums;
-use crate::engine::nl::actions::PlayerBetAction;
-use crate::ledger::actor::AnyActor;
-use crate::ledger::messages::{
-    AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, FlopStreet,
-    GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage, GamePlayerMessage,
-    GameShowdownMessage, GameShuffleMessage, PreflopStreet, RiverStreet, TurnStreet,
-};
-use crate::ledger::serialization::canonical_serialize_hex;
-use crate::ledger::snapshot::SnapshotStatus;
-use crate::ledger::types::{EventPhase, GameId};
-use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
-use crate::shuffling::player_decryption::{
-    PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
-};
-use crate::signing::{Signable, WithSignature};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct StoredEnvelopePayload {
-    pub(super) game_id: GameId,
-    pub(super) message: StoredGameMessage,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum StoredGameMessage {
-    Shuffle {
-        turn_index: u16,
-        deck_in: Vec<String>,
-        deck_out: Vec<String>,
-        proof: String,
-    },
-    Blinding {
-        card_in_deck_position: u8,
-        share: String,
-        target_player_public_key: String,
-    },
-    PartialUnblinding {
-        card_in_deck_position: u8,
-        share: String,
-        target_player_public_key: String,
-    },
-    PlayerPreflop {
-        action: PlayerBetAction,
-    },
-    PlayerFlop {
-        action: PlayerBetAction,
-    },
-    PlayerTurn {
-        action: PlayerBetAction,
-    },
-    PlayerRiver {
-        action: PlayerBetAction,
-    },
-    Showdown {
-        chaum_pedersen_proofs: Vec<String>,
-        card_in_deck_position: [u8; 2],
-        hole_ciphertexts: Vec<String>,
-    },
-}
-
-impl StoredGameMessage {
-    pub(super) fn message_type(&self) -> &'static str {
-        match self {
-            StoredGameMessage::Shuffle { .. } => "shuffle",
-            StoredGameMessage::Blinding { .. } => "blinding",
-            StoredGameMessage::PartialUnblinding { .. } => "partial_unblinding",
-            StoredGameMessage::PlayerPreflop { .. } => "player_preflop",
-            StoredGameMessage::PlayerFlop { .. } => "player_flop",
-            StoredGameMessage::PlayerTurn { .. } => "player_turn",
-            StoredGameMessage::PlayerRiver { .. } => "player_river",
-            StoredGameMessage::Showdown { .. } => "showdown",
-        }
-    }
-
-    pub(crate) fn from_any<C>(message: &AnyGameMessage<C>) -> anyhow::Result<Self>
-    where
-        C: CurveGroup + CanonicalSerialize,
-    {
-        match message {
-            AnyGameMessage::Shuffle(inner) => Ok(StoredGameMessage::Shuffle {
-                turn_index: inner.turn_index,
-                deck_in: encode_ciphertexts(&inner.deck_in)?,
-                deck_out: encode_ciphertexts(&inner.deck_out)?,
-                proof: canonical_serialize_hex(&inner.proof)?,
-            }),
-            AnyGameMessage::Blinding(inner) => Ok(StoredGameMessage::Blinding {
-                card_in_deck_position: inner.card_in_deck_position,
-                share: canonical_serialize_hex(&inner.share)?,
-                target_player_public_key: canonical_serialize_hex(&inner.target_player_public_key)?,
-            }),
-            AnyGameMessage::PartialUnblinding(inner) => Ok(StoredGameMessage::PartialUnblinding {
-                card_in_deck_position: inner.card_in_deck_position,
-                share: canonical_serialize_hex(&inner.share)?,
-                target_player_public_key: canonical_serialize_hex(&inner.target_player_public_key)?,
-            }),
-            AnyGameMessage::PlayerPreflop(inner) => Ok(StoredGameMessage::PlayerPreflop {
-                action: inner.action.clone(),
-            }),
-            AnyGameMessage::PlayerFlop(inner) => Ok(StoredGameMessage::PlayerFlop {
-                action: inner.action.clone(),
-            }),
-            AnyGameMessage::PlayerTurn(inner) => Ok(StoredGameMessage::PlayerTurn {
-                action: inner.action.clone(),
-            }),
-            AnyGameMessage::PlayerRiver(inner) => Ok(StoredGameMessage::PlayerRiver {
-                action: inner.action.clone(),
-            }),
-            AnyGameMessage::Showdown(inner) => Ok(StoredGameMessage::Showdown {
-                chaum_pedersen_proofs: encode_many(&inner.chaum_pedersen_proofs)?,
-                card_in_deck_position: inner.card_in_deck_position,
-                hole_ciphertexts: encode_many(&inner.hole_ciphertexts)?,
-            }),
-        }
-    }
-
-    pub(super) fn into_any<C>(self) -> anyhow::Result<AnyGameMessage<C>>
-    where
-        C: CurveGroup + CanonicalDeserialize,
-    {
-        Ok(match self {
-            StoredGameMessage::Shuffle {
-                turn_index,
-                deck_in,
-                deck_out,
-                proof,
-            } => {
-                let deck_in = decode_ciphertexts::<C>(&deck_in)?;
-                let deck_out = decode_ciphertexts::<C>(&deck_out)?;
-                let proof = decode_hex::<ShuffleProof<C>>(&proof)?;
-                AnyGameMessage::Shuffle(GameShuffleMessage::new(
-                    deck_in, deck_out, proof, turn_index,
-                ))
-            }
-            StoredGameMessage::Blinding {
-                card_in_deck_position,
-                share,
-                target_player_public_key,
-            } => {
-                let share = decode_hex::<PlayerTargetedBlindingContribution<C>>(&share)?;
-                let target_player_public_key = decode_hex::<C>(&target_player_public_key)?;
-                AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
-                    card_in_deck_position,
-                    share,
-                    target_player_public_key,
-                ))
-            }
-            StoredGameMessage::PartialUnblinding {
-                card_in_deck_position,
-                share,
-                target_player_public_key,
-            } => {
-                let share = decode_hex::<PartialUnblindingShare<C>>(&share)?;
-                let target_player_public_key = decode_hex::<C>(&target_player_public_key)?;
-                AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
-                    card_in_deck_position,
-                    share,
-                    target_player_public_key,
-                ))
-            }
-            StoredGameMessage::PlayerPreflop { action } => {
-                AnyGameMessage::PlayerPreflop(GamePlayerMessage::<PreflopStreet, C>::new(action))
-            }
-            StoredGameMessage::PlayerFlop { action } => {
-                AnyGameMessage::PlayerFlop(GamePlayerMessage::<FlopStreet, C>::new(action))
-            }
-            StoredGameMessage::PlayerTurn { action } => {
-                AnyGameMessage::PlayerTurn(GamePlayerMessage::<TurnStreet, C>::new(action))
-            }
-            StoredGameMessage::PlayerRiver { action } => {
-                AnyGameMessage::PlayerRiver(GamePlayerMessage::<RiverStreet, C>::new(action))
-            }
-            StoredGameMessage::Showdown {
-                chaum_pedersen_proofs,
-                card_in_deck_position,
-                hole_ciphertexts,
-            } => {
-                let proofs_vec = decode_many::<ChaumPedersenProof<C>>(&chaum_pedersen_proofs)?;
-                let proofs = vec_to_array::<_, 2>(proofs_vec, "chaum_pedersen_proofs")?;
-                let ciphertexts_vec =
-                    decode_many::<PlayerAccessibleCiphertext<C>>(&hole_ciphertexts)?;
-                let ciphertexts = vec_to_array::<_, 2>(ciphertexts_vec, "hole_ciphertexts")?;
-
-                AnyGameMessage::Showdown(GameShowdownMessage::new(
-                    proofs,
-                    card_in_deck_position,
-                    ciphertexts,
-                ))
-            }
-        })
+pub(super) fn message_type<C>(message: &AnyGameMessage<C>) -> &'static str
+where
+    C: CurveGroup,
+{
+    match message {
+        AnyGameMessage::Shuffle(_) => "shuffle",
+        AnyGameMessage::Blinding(_) => "blinding",
+        AnyGameMessage::PartialUnblinding(_) => "partial_unblinding",
+        AnyGameMessage::PlayerPreflop(_) => "player_preflop",
+        AnyGameMessage::PlayerFlop(_) => "player_flop",
+        AnyGameMessage::PlayerTurn(_) => "player_turn",
+        AnyGameMessage::PlayerRiver(_) => "player_river",
+        AnyGameMessage::Showdown(_) => "showdown",
     }
 }
 
@@ -213,31 +40,13 @@ where
         "attempting to decode ledger event row"
     );
     let actor = decode_actor(&row)?;
-    let public_key = deserialize_curve::<C>(&row.public_key)?;
+    let public_key = deserialize_curve_bytes::<C>(&row.public_key)
+        .context("failed to deserialize stored public key")?;
     let nonce =
         u64::try_from(row.nonce).map_err(|_| anyhow!("stored nonce {} is negative", row.nonce))?;
 
-    let payload: StoredEnvelopePayload =
-        serde_json::from_value(row.payload).context("failed to deserialize event payload")?;
-    tracing::trace!(
-        target: "ledger::store::event",
-        hand_id = row.hand_id,
-        game_id = payload.game_id,
-        "decoded event payload"
-    );
-    let message = match payload.message.into_any::<C>() {
-        Ok(msg) => msg,
-        Err(err) => {
-            tracing::error!(
-                target: "ledger::store::event",
-                hand_id = row.hand_id,
-                message_type = %row.message_type,
-                error = %err,
-                "failed to deserialize stored message"
-            );
-            return Err(err);
-        }
-    };
+    let message: AnyGameMessage<C> = serde_json::from_value(row.payload)
+        .context("failed to deserialize stored message payload")?;
 
     let with_signature = WithSignature {
         value: message.clone(),
@@ -247,7 +56,7 @@ where
 
     let envelope = AnyMessageEnvelope {
         hand_id: row.hand_id,
-        game_id: payload.game_id,
+        game_id: row.game_id,
         actor,
         nonce,
         public_key,
@@ -333,141 +142,6 @@ pub(super) fn from_db_event_phase(phase: db_enums::EventPhase) -> EventPhase {
     }
 }
 
-fn encode_ciphertexts<C>(deck: &[ElGamalCiphertext<C>]) -> anyhow::Result<Vec<String>>
-where
-    C: CurveGroup + CanonicalSerialize,
-{
-    encode_many(deck)
-}
-
-fn decode_ciphertexts<C>(encoded: &[String]) -> anyhow::Result<[ElGamalCiphertext<C>; DECK_SIZE]>
-where
-    C: CurveGroup + CanonicalDeserialize,
-{
-    let decoded = encoded
-        .iter()
-        .map(|value| decode_hex::<ElGamalCiphertext<C>>(value))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    vec_to_array(decoded, "deck")
-}
-
-fn encode_many<T>(items: &[T]) -> anyhow::Result<Vec<String>>
-where
-    T: CanonicalSerialize,
-{
-    items.iter().map(canonical_serialize_hex).collect()
-}
-
-fn decode_many<T>(encoded: &[String]) -> anyhow::Result<Vec<T>>
-where
-    T: CanonicalDeserialize,
-{
-    encoded.iter().map(|value| decode_hex(value)).collect()
-}
-
-fn decode_hex<T>(value: &str) -> anyhow::Result<T>
-where
-    T: CanonicalDeserialize,
-{
-    let trimmed = value.trim();
-    let mut owned = String::new();
-    let input = if trimmed.len() % 2 == 1 {
-        owned.reserve(trimmed.len() + 1);
-        owned.push('0');
-        owned.push_str(trimmed);
-        tracing::warn!(
-            target: "ledger::store::event",
-            len = trimmed.len(),
-            "hex payload had odd length; prefixed leading zero"
-        );
-        owned.as_str()
-    } else {
-        trimmed
-    };
-    let bytes = hex::decode(input).context("failed to decode hex payload stored in event")?;
-    match T::deserialize_compressed(&mut &bytes[..]) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            tracing::error!(
-                target: "ledger::store::event",
-                error = %err,
-                byte_len = bytes.len(),
-                first_byte = bytes.first().copied(),
-                "canonical deserialize failed for hex payload"
-            );
-            Err(anyhow!("canonical deserialize failed: {err}"))
-        }
-    }
-}
-
-fn deserialize_curve<C>(bytes: &[u8]) -> anyhow::Result<C>
-where
-    C: CanonicalDeserialize,
-{
-    tracing::trace!(
-        target: "ledger::store::event",
-        byte_len = bytes.len(),
-        tail = bytes.last().copied().unwrap_or_default(),
-        "deserializing curve point"
-    );
-    match C::deserialize_compressed(&mut &bytes[..]) {
-        Ok(curve) => Ok(curve),
-        Err(ark_serialize::SerializationError::UnexpectedFlags) => {
-            if let Some(normalized) = normalize_sw_compressed(bytes) {
-                match C::deserialize_compressed(&mut &normalized[..]) {
-                    Ok(curve) => {
-                        tracing::warn!(
-                            target: "ledger::store::event",
-                            "normalized unexpected short Weierstrass flags in compressed point"
-                        );
-                        Ok(curve)
-                    }
-                    Err(err) => Err(anyhow!(
-                        "curve deserialization failed after normalization: {err}"
-                    )),
-                }
-            } else {
-                tracing::error!(
-                    target: "ledger::store::event",
-                    byte_len = bytes.len(),
-                    tail = bytes.last().copied().unwrap_or_default(),
-                    "cannot normalize compressed point with unexpected flags"
-                );
-                Err(anyhow!(
-                    "curve deserialization failed: unexpected compression flags"
-                ))
-            }
-        }
-        Err(err) => Err(anyhow!("curve deserialization failed: {err}")),
-    }
-}
-
-fn normalize_sw_compressed(bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let mut normalized = bytes.to_vec();
-    let last = normalized.last_mut().expect("vec not empty");
-    const SW_NEGATIVE: u8 = 1 << 7;
-    const SW_INFINITY: u8 = 1 << 6;
-    if (*last & (SW_NEGATIVE | SW_INFINITY)) == (SW_NEGATIVE | SW_INFINITY) {
-        *last &= !SW_INFINITY;
-        return Some(normalized);
-    }
-    None
-}
-
-fn vec_to_array<T, const N: usize>(vec: Vec<T>, label: &str) -> anyhow::Result<[T; N]> {
-    vec.try_into().map_err(|_: Vec<T>| {
-        anyhow!(
-            "expected {} elements while decoding {} but lengths mismatched",
-            N,
-            label
-        )
-    })
-}
-
 fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
     match row.actor_kind {
         ACTOR_NONE => Ok(AnyActor::None),
@@ -507,6 +181,7 @@ fn decode_actor(row: &events::Model) -> anyhow::Result<AnyActor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ledger::serialization::deserialize_curve_bytes;
     use ark_bn254::G1Projective as Curve;
     use ark_ec::PrimeGroup;
     use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
@@ -528,7 +203,8 @@ mod tests {
             .expect_err("invalid flags should fail");
         assert!(matches!(err, SerializationError::UnexpectedFlags));
 
-        let recovered = deserialize_curve::<Curve>(&invalid).expect("fallback normalizes flags");
+        let recovered =
+            deserialize_curve_bytes::<Curve>(&invalid).expect("fallback normalizes flags");
         assert_eq!(recovered.into_affine(), point.into_affine());
     }
 }

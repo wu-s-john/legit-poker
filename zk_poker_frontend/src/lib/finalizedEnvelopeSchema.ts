@@ -84,7 +84,7 @@ export const anyActorSchema = z.union([
 export type AnyActor = z.infer<typeof anyActorSchema>;
 
 /**
- * Individual game message variants (`StoredGameMessage` / `AnyGameMessage`).
+ * Individual game message variants (serde-backed `AnyGameMessage`).
  * Hex-encoded fields correspond to serialized curve points/ciphertexts/proofs.
  */
 const DECK_SIZE = 52 as const;

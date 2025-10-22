@@ -33,13 +33,6 @@ const rawEventRowSchema = z.object({
 
 type RawEventRow = z.infer<typeof rawEventRowSchema>;
 
-const storedEnvelopePayloadSchema = z.object({
-  game_id: z.union([z.number(), z.string()]),
-  message: anyGameMessageSchema,
-});
-
-type StoredEnvelopePayload = z.infer<typeof storedEnvelopePayloadSchema>;
-
 type FinalizedEnvelopeInput = z.input<typeof finalizedEnvelopeSchema>;
 
 type SnapshotStatusInput = z.input<typeof snapshotStatusSchema>;
@@ -130,7 +123,7 @@ function mapActor(row: RawEventRow): FinalizedEnvelopeInput['envelope']['actor']
 
 export function mapRealtimeRowToFinalizedEnvelope(row: unknown): FinalizedEnvelopeInput {
   const parsedRow = rawEventRowSchema.parse(row);
-  const payload = storedEnvelopePayloadSchema.parse(parsedRow.payload) as StoredEnvelopePayload;
+  const messagePayload = anyGameMessageSchema.parse(parsedRow.payload);
 
   const handId = toNumeric(parsedRow.hand_id, 'hand_id');
   const gameId = toNumeric(parsedRow.game_id, 'game_id');
@@ -140,10 +133,6 @@ export function mapRealtimeRowToFinalizedEnvelope(row: unknown): FinalizedEnvelo
   const appliedPhase = mapPhase(parsedRow.resulting_phase);
   const actor = mapActor(parsedRow);
 
-  if (toNumeric(payload.game_id, 'payload.game_id') !== gameId) {
-    console.warn('Payload game_id mismatch with row game_id', payload.game_id, gameId);
-  }
-
   return {
     envelope: {
       handId,
@@ -152,7 +141,7 @@ export function mapRealtimeRowToFinalizedEnvelope(row: unknown): FinalizedEnvelo
       nonce,
       publicKey: normalizeHex(parsedRow.public_key),
       message: {
-        value: payload.message,
+        value: messagePayload,
         signature: normalizeHex(parsedRow.signature),
         transcript: [],
       },

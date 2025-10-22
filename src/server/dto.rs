@@ -5,11 +5,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::nl::types::{PlayerId, SeatId};
 use crate::ledger::actor::AnyActor;
-use crate::ledger::messages::FinalizedAnyMessageEnvelope;
+use crate::ledger::messages::{AnyGameMessage, FinalizedAnyMessageEnvelope};
 use crate::ledger::query::LatestSnapshot;
 use crate::ledger::serialization::{encode_state_hash, serialize_curve_hex};
 use crate::ledger::snapshot::{SnapshotSeq, SnapshotStatus};
-use crate::ledger::store::event::StoredGameMessage;
 use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId};
 
 #[derive(Deserialize)]
@@ -159,9 +158,9 @@ impl HandMessageResponse {
     where
         C: CurveGroup + CanonicalSerialize,
     {
-        let stored = StoredGameMessage::from_any(&event.envelope.message.value)?;
-        let message_type = MessageTypeResponse::from(&stored);
-        let payload = serde_json::to_value(&stored)?;
+        let message = &event.envelope.message.value;
+        let message_type = MessageTypeResponse::from(message);
+        let payload = serde_json::to_value(message)?;
 
         let status = SnapshotStatusResponse::from(event.snapshot_status.clone());
         let phase = SnapshotPhaseResponse::from(event.applied_phase);
@@ -196,17 +195,17 @@ pub enum MessageTypeResponse {
     Showdown,
 }
 
-impl From<&StoredGameMessage> for MessageTypeResponse {
-    fn from(message: &StoredGameMessage) -> Self {
+impl<C: CurveGroup> From<&AnyGameMessage<C>> for MessageTypeResponse {
+    fn from(message: &AnyGameMessage<C>) -> Self {
         match message {
-            StoredGameMessage::Shuffle { .. } => MessageTypeResponse::Shuffle,
-            StoredGameMessage::Blinding { .. } => MessageTypeResponse::Blinding,
-            StoredGameMessage::PartialUnblinding { .. } => MessageTypeResponse::PartialUnblinding,
-            StoredGameMessage::PlayerPreflop { .. } => MessageTypeResponse::PlayerPreflop,
-            StoredGameMessage::PlayerFlop { .. } => MessageTypeResponse::PlayerFlop,
-            StoredGameMessage::PlayerTurn { .. } => MessageTypeResponse::PlayerTurn,
-            StoredGameMessage::PlayerRiver { .. } => MessageTypeResponse::PlayerRiver,
-            StoredGameMessage::Showdown { .. } => MessageTypeResponse::Showdown,
+            AnyGameMessage::Shuffle(_) => MessageTypeResponse::Shuffle,
+            AnyGameMessage::Blinding(_) => MessageTypeResponse::Blinding,
+            AnyGameMessage::PartialUnblinding(_) => MessageTypeResponse::PartialUnblinding,
+            AnyGameMessage::PlayerPreflop(_) => MessageTypeResponse::PlayerPreflop,
+            AnyGameMessage::PlayerFlop(_) => MessageTypeResponse::PlayerFlop,
+            AnyGameMessage::PlayerTurn(_) => MessageTypeResponse::PlayerTurn,
+            AnyGameMessage::PlayerRiver(_) => MessageTypeResponse::PlayerRiver,
+            AnyGameMessage::Showdown(_) => MessageTypeResponse::Showdown,
         }
     }
 }

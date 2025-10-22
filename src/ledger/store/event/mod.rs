@@ -19,9 +19,8 @@ use crate::ledger::snapshot::{SnapshotSeq, SnapshotStatus};
 use crate::ledger::types::HandId;
 
 pub use self::serialization::model_to_envelope;
-pub(crate) use self::serialization::StoredGameMessage;
 
-use self::serialization::{encode_actor, to_db_event_phase, StoredEnvelopePayload};
+use self::serialization::{encode_actor, message_type, to_db_event_phase};
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
 
@@ -68,7 +67,7 @@ where
 
 fn active_model_for_event<C>(
     event: &FinalizedAnyMessageEnvelope<C>,
-    stored: &StoredGameMessage,
+    message_type: &str,
     payload_value: &JsonValue,
 ) -> anyhow::Result<events::ActiveModel>
 where
@@ -101,7 +100,7 @@ where
         is_successful: Set(is_successful),
         failure_message: Set(failure_message),
         resulting_phase: Set(to_db_event_phase(event.applied_phase)),
-        message_type: Set(stored.message_type().to_string()),
+        message_type: Set(message_type.to_string()),
         payload: Set(payload_value.clone()),
         signature: Set(event.envelope.message.signature.clone()),
         ..Default::default()
@@ -160,14 +159,15 @@ where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
 {
     async fn persist_event(&self, event: &FinalizedAnyMessageEnvelope<C>) -> anyhow::Result<()> {
-        let stored = StoredGameMessage::from_any(&event.envelope.message.value)?;
-        let payload_value = serde_json::to_value(StoredEnvelopePayload {
-            game_id: event.envelope.game_id,
-            message: stored.clone(),
-        })?;
+        let message_json = serde_json::to_value(&event.envelope.message.value)?;
+        let payload_value = message_json;
         log_event_payload(event, &payload_value, "persisting event payload")?;
 
-        let active = active_model_for_event(event, &stored, &payload_value)?;
+        let active = active_model_for_event(
+            event,
+            message_type(&event.envelope.message.value),
+            &payload_value,
+        )?;
 
         events::Entity::insert(active)
             .exec(&self.connection)
@@ -182,14 +182,15 @@ where
         txn: &DatabaseTransaction,
         event: &FinalizedAnyMessageEnvelope<C>,
     ) -> anyhow::Result<()> {
-        let stored = StoredGameMessage::from_any(&event.envelope.message.value)?;
-        let payload_value = serde_json::to_value(StoredEnvelopePayload {
-            game_id: event.envelope.game_id,
-            message: stored.clone(),
-        })?;
+        let message_json = serde_json::to_value(&event.envelope.message.value)?;
+        let payload_value = message_json;
         log_event_payload(event, &payload_value, "persisting event payload (txn)")?;
 
-        let active = active_model_for_event(event, &stored, &payload_value)?;
+        let active = active_model_for_event(
+            event,
+            message_type(&event.envelope.message.value),
+            &payload_value,
+        )?;
 
         events::Entity::insert(active)
             .exec(txn)
@@ -277,7 +278,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::serialization::StoredGameMessage;
     use super::*;
     use crate::engine::nl::actions::PlayerBetAction;
     use crate::engine::nl::types::{HandConfig, TableStakes};
@@ -636,8 +636,8 @@ mod tests {
             GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Call),
         );
 
-        let stored = StoredGameMessage::from_any(&message).unwrap();
-        let restored: AnyGameMessage<Curve> = stored.into_any().unwrap();
+        let json = serde_json::to_value(&message).unwrap();
+        let restored: AnyGameMessage<Curve> = serde_json::from_value(json).unwrap();
         match restored {
             AnyGameMessage::PlayerPreflop(inner) => {
                 assert!(matches!(inner.action, PlayerBetAction::Call));

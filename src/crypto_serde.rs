@@ -31,6 +31,47 @@ pub mod curve {
     }
 }
 
+/// Serde helpers for BTreeMap<_, Curve> values encoded as hex strings.
+pub mod curve_map {
+    use super::*;
+    use serde::ser::SerializeMap;
+    use std::collections::BTreeMap;
+
+    pub fn serialize<K, C, S>(
+        value: &BTreeMap<K, C>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K: Serialize + Ord,
+        C: CurveGroup + CanonicalSerialize,
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(value.len()))?;
+        for (key, point) in value {
+            let hex = serialize_curve_hex(point).map_err(SerError::custom)?;
+            map.serialize_entry(key, &hex)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, K, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<K, C>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        C: CurveGroup + CanonicalDeserialize,
+        D: Deserializer<'de>,
+    {
+        let raw = BTreeMap::<K, String>::deserialize(deserializer)?;
+        raw.into_iter()
+            .map(|(key, hex)| {
+                let point = deserialize_curve_hex(&hex).map_err(DeError::custom)?;
+                Ok((key, point))
+            })
+            .collect()
+    }
+}
+
 /// Serde helpers for scalar/base-field elements as 0x-prefixed hex strings.
 pub mod field {
     use super::*;
