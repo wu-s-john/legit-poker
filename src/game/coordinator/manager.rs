@@ -47,7 +47,7 @@ pub struct ShufflerSecretConfig<C: CurveGroup> {
 pub struct ShufflerDescriptor<C: CurveGroup> {
     pub shuffler_id: ShufflerId,
     pub turn_index: usize,
-    pub public_key: C,
+    pub public_key: crate::ledger::CanonicalKey<C>,
     pub aggregated_public_key: C,
 }
 
@@ -296,11 +296,15 @@ where
         let mut descriptors = self
             .shufflers
             .values()
-            .map(|shuffler| ShufflerDescriptor {
-                shuffler_id: shuffler.shuffler_id(),
-                turn_index: shuffler.index(),
-                public_key: shuffler.public_key(),
-                aggregated_public_key: shuffler.aggregated_public_key(),
+            .map(|shuffler| {
+                let public_key = shuffler.public_key();
+                let aggregated_public_key = shuffler.aggregated_public_key();
+                ShufflerDescriptor {
+                    shuffler_id: shuffler.shuffler_id(),
+                    turn_index: shuffler.index(),
+                    public_key: crate::ledger::CanonicalKey::new(public_key),
+                    aggregated_public_key,
+                }
             })
             .collect::<Vec<_>>();
         descriptors.sort_by_key(|descriptor| descriptor.turn_index);
@@ -314,11 +318,15 @@ where
         let expected_order = snapshot.shuffling.expected_order.clone();
 
         let mut subscriptions = Vec::with_capacity(expected_order.len());
-        for (turn_index, shuffler_id) in expected_order.iter().enumerate() {
+        for (turn_index, shuffler_key) in expected_order.iter().enumerate() {
+            let identity = snapshot
+                .shufflers
+                .get(shuffler_key)
+                .ok_or_else(|| anyhow!("expected shuffler key not found in snapshot"))?;
             let shuffler = self
                 .shufflers
-                .get(shuffler_id)
-                .ok_or_else(|| anyhow!("no shuffler configured for id {}", shuffler_id))?
+                .get(&identity.shuffler_id)
+                .ok_or_else(|| anyhow!("no shuffler configured for id {:?}", identity.shuffler_id))?
                 .clone();
             let subscription = shuffler
                 .subscribe_per_hand(game_id, hand_id, turn_index, &snapshot)
@@ -326,11 +334,15 @@ where
             subscriptions.push(subscription);
         }
 
-        if let Some(first_shuffler_id) = expected_order.first() {
+        if let Some(first_shuffler_key) = expected_order.first() {
+            let identity = snapshot
+                .shufflers
+                .get(first_shuffler_key)
+                .ok_or_else(|| anyhow!("expected shuffler key not found in snapshot"))?;
             let first = self
                 .shufflers
-                .get(first_shuffler_id)
-                .ok_or_else(|| anyhow!("no shuffler configured for id {}", first_shuffler_id))?
+                .get(&identity.shuffler_id)
+                .ok_or_else(|| anyhow!("no shuffler configured for id {:?}", identity.shuffler_id))?
                 .clone();
             first
                 .kick_start_hand(game_id, hand_id)
@@ -338,7 +350,7 @@ where
                 .with_context(|| {
                     format!(
                         "failed to kick start hand {} for shuffler {}",
-                        hand_id, first_shuffler_id
+                        hand_id, identity.shuffler_id
                     )
                 })?;
         }

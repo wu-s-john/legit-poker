@@ -226,10 +226,14 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
     match snapshot {
         AnyTableSnapshot::Shuffling(table) => {
             assert_eq!(table.hand_id, Some(outcome.hand.state.id));
-            assert_eq!(
-                table.shuffling.expected_order,
-                vec![registered.shuffler.state.id]
-            );
+            let expected_key = table
+                .shufflers
+                .iter()
+                .find_map(|(key, identity)| {
+                    (identity.shuffler_id == registered.shuffler.state.id).then(|| key.clone())
+                })
+                .expect("shuffler key present in roster");
+            assert_eq!(table.shuffling.expected_order, vec![expected_key]);
         }
         other => panic!("expected shuffling snapshot, got {other:?}"),
     }

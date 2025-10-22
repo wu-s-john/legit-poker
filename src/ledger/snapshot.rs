@@ -26,6 +26,7 @@ use crate::ledger::messages::{
 };
 use crate::ledger::serialization::deserialize_curve_bytes;
 use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId, StateHash};
+use crate::ledger::CanonicalKey;
 use crate::showdown::HandCategory;
 use crate::shuffling::community_decryption::CommunityDecryptionShare;
 use crate::shuffling::data_structures::{
@@ -59,7 +60,8 @@ pub type SnapshotSeq = u32;
 pub struct PlayerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
-    pub player_key: crate::ledger::CanonicalKey<C>,
+    pub player_key: CanonicalKey<C>,
+    pub player_id: PlayerId,
     pub nonce: u64,
     pub seat: SeatId,
 }
@@ -68,6 +70,7 @@ impl<C: CurveGroup> PlayerIdentity<C> {
     pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
         builder.append_u8(self.seat);
         builder.append_u64(self.nonce);
+        builder.append_u64(self.player_id);
         append_curve_point(builder, &self.public_key);
     }
 }
@@ -80,15 +83,16 @@ impl<C: CurveGroup> PlayerIdentity<C> {
 pub struct ShufflerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
-    pub shuffler_key: crate::ledger::CanonicalKey<C>,
+    pub shuffler_key: CanonicalKey<C>,
+    pub shuffler_id: ShufflerId,
     #[serde(with = "crate::crypto_serde::curve")]
     pub aggregated_public_key: C,
 }
 
-pub type PlayerRoster<C> = BTreeMap<PlayerId, PlayerIdentity<C>>;
-pub type ShufflerRoster<C> = BTreeMap<ShufflerId, ShufflerIdentity<C>>;
-pub type SeatingMap = BTreeMap<SeatId, Option<PlayerId>>;
-pub type PlayerStacks = BTreeMap<SeatId, PlayerStackInfo>;
+pub type PlayerRoster<C> = BTreeMap<CanonicalKey<C>, PlayerIdentity<C>>;
+pub type ShufflerRoster<C> = BTreeMap<CanonicalKey<C>, ShufflerIdentity<C>>;
+pub type SeatingMap<C> = BTreeMap<SeatId, Option<CanonicalKey<C>>>;
+pub type PlayerStacks<C> = BTreeMap<SeatId, PlayerStackInfo<C>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -113,6 +117,7 @@ impl<C: CurveGroup> Signable for ShufflerIdentity<C> {
     }
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+        builder.append_i64(self.shuffler_id);
         append_curve_point(builder, &self.public_key);
         append_curve_point(builder, &self.aggregated_public_key);
     }
@@ -142,7 +147,7 @@ pub struct ShufflingSnapshot<C: CurveGroup> {
     pub steps: Vec<ShufflingStep<C>>,
     #[serde(with = "crate::crypto_serde::elgamal_array")]
     pub final_deck: [ElGamalCiphertext<C>; DECK_SIZE],
-    pub expected_order: Vec<ShufflerId>,
+    pub expected_order: Vec<CanonicalKey<C>>,
 }
 
 // ---- Dealing -------------------------------------------------------------------------------
@@ -158,20 +163,24 @@ pub struct DealtCard<C: CurveGroup> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PlayerStackInfo {
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
+pub struct PlayerStackInfo<C: CurveGroup> {
     pub seat: SeatId,
-    pub player_id: Option<PlayerId>,
+    pub player_key: Option<CanonicalKey<C>>,
     pub starting_stack: u64,
     pub committed_blind: u64,
     pub status: PlayerStatus,
 }
 
-impl PlayerStackInfo {
+impl<C: CurveGroup> PlayerStackInfo<C> {
     pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
-        match self.player_id {
-            Some(player_id) => {
+        match &self.player_key {
+            Some(player_key) => {
                 builder.append_u8(1);
-                builder.append_u64(player_id);
+                builder.append_bytes(player_key.bytes());
             }
             None => builder.append_u8(0),
         }
@@ -181,7 +190,7 @@ impl PlayerStackInfo {
     }
 }
 
-impl Signable for PlayerStackInfo {
+impl<C: CurveGroup> Signable for PlayerStackInfo<C> {
     fn domain_kind(&self) -> &'static str {
         "ledger/player_stack_info_v1"
     }
@@ -202,12 +211,15 @@ pub enum CardDestination {
 
 pub type CardPlan = BTreeMap<u8, CardDestination>;
 
-pub fn build_default_card_plan(cfg: &HandConfig, seating: &SeatingMap) -> CardPlan {
+pub fn build_default_card_plan<C>(cfg: &HandConfig, seating: &SeatingMap<C>) -> CardPlan
+where
+    C: CurveGroup,
+{
     let mut plan = CardPlan::new();
 
     let mut active_seats: Vec<SeatId> = seating
         .iter()
-        .filter_map(|(&seat, player)| player.map(|_| seat))
+        .filter_map(|(&seat, player)| player.as_ref().map(|_| seat))
         .collect();
     active_seats.sort();
 
@@ -256,14 +268,25 @@ pub fn build_default_card_plan(cfg: &HandConfig, seating: &SeatingMap) -> CardPl
     plan
 }
 
-pub fn build_initial_betting_state(cfg: &HandConfig, stacks: &PlayerStacks) -> BettingStateNL {
+pub fn build_initial_betting_state<C>(
+    cfg: &HandConfig,
+    stacks: &PlayerStacks<C>,
+    players: &PlayerRoster<C>,
+) -> BettingStateNL
+where
+    C: CurveGroup,
+{
     let mut player_states: Vec<PlayerState> = stacks
         .values()
         .map(|info| {
             let committed = info.committed_blind;
+            let player_id = info
+                .player_key
+                .as_ref()
+                .and_then(|key| players.get(key).map(|identity| identity.player_id));
             PlayerState {
                 seat: info.seat,
-                player_id: info.player_id,
+                player_id,
                 stack: info.starting_stack.saturating_sub(committed),
                 committed_this_round: committed,
                 committed_total: 0,
@@ -398,12 +421,15 @@ mod tests {
             check_raise_allowed: true,
         };
 
-        let mut stacks = PlayerStacks::new();
+        let key1 = CanonicalKey::new(Curve::generator());
+        let key2 = CanonicalKey::new(Curve::generator() + Curve::generator());
+
+        let mut stacks: PlayerStacks<Curve> = BTreeMap::new();
         stacks.insert(
             1,
             PlayerStackInfo {
                 seat: 1,
-                player_id: Some(10),
+                player_key: Some(key1.clone()),
                 starting_stack: 100,
                 committed_blind: 1,
                 status: PlayerStatus::Active,
@@ -413,14 +439,36 @@ mod tests {
             2,
             PlayerStackInfo {
                 seat: 2,
-                player_id: Some(11),
+                player_key: Some(key2.clone()),
                 starting_stack: 120,
                 committed_blind: 2,
                 status: PlayerStatus::Active,
             },
         );
 
-        let state = build_initial_betting_state(&cfg, &stacks);
+        let mut roster: PlayerRoster<Curve> = BTreeMap::new();
+        roster.insert(
+            key1.clone(),
+            PlayerIdentity {
+                public_key: Curve::generator(),
+                player_key: key1.clone(),
+                player_id: 10,
+                nonce: 0,
+                seat: 1,
+            },
+        );
+        roster.insert(
+            key2.clone(),
+            PlayerIdentity {
+                public_key: Curve::generator() + Curve::generator(),
+                player_key: key2.clone(),
+                player_id: 11,
+                nonce: 0,
+                seat: 2,
+            },
+        );
+
+        let state = build_initial_betting_state(&cfg, &stacks, &roster);
 
         assert_eq!(state.street, Street::Preflop);
         assert_eq!(state.players.len(), 2);
@@ -536,8 +584,12 @@ mod tests {
         let mut player_ciphertexts = BTreeMap::new();
         player_ciphertexts.insert((0, 0), sample_accessible_ciphertext::<Curve>());
 
+        let shuffler_key = CanonicalKey::new(Curve::generator());
         let mut player_blinding_contribs = BTreeMap::new();
-        player_blinding_contribs.insert((1, 0, 0), sample_blinding_contribution::<Curve>());
+        player_blinding_contribs.insert(
+            (shuffler_key.clone(), 0, 0),
+            sample_blinding_contribution::<Curve>(),
+        );
 
         let mut shares_map = BTreeMap::new();
         let share = sample_partial_unblinding_share::<Curve>();
@@ -546,7 +598,7 @@ mod tests {
         player_unblinding_shares.insert((0, 0), shares_map);
 
         let mut community_shares = BTreeMap::new();
-        community_shares.insert((1, 0), sample_community_share::<Curve>());
+        community_shares.insert((shuffler_key.clone(), 0), sample_community_share::<Curve>());
 
         let snapshot = DealingSnapshot {
             assignments,
@@ -585,20 +637,20 @@ pub struct DealingSnapshot<C: CurveGroup> {
         deserialize_with = "crate::crypto_serde::tuple_map3::deserialize"
     )]
     pub player_blinding_contribs:
-        BTreeMap<(ShufflerId, SeatId, u8), PlayerTargetedBlindingContribution<C>>,
+        BTreeMap<(CanonicalKey<C>, SeatId, u8), PlayerTargetedBlindingContribution<C>>,
     #[serde(
         serialize_with = "crate::crypto_serde::tuple_map2::serialize",
         deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
     )]
     pub player_unblinding_shares:
-        BTreeMap<(SeatId, u8), BTreeMap<crate::ledger::CanonicalKey<C>, PartialUnblindingShare<C>>>,
+        BTreeMap<(SeatId, u8), BTreeMap<CanonicalKey<C>, PartialUnblindingShare<C>>>,
     #[serde(with = "crate::crypto_serde::curve_map")]
     pub player_unblinding_combined: BTreeMap<(SeatId, u8), C>,
     #[serde(
         serialize_with = "crate::crypto_serde::tuple_map2::serialize",
         deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
     )]
-    pub community_decryption_shares: BTreeMap<(ShufflerId, u8), CommunityDecryptionShare<C>>,
+    pub community_decryption_shares: BTreeMap<(CanonicalKey<C>, u8), CommunityDecryptionShare<C>>,
     #[serde(
         serialize_with = "crate::crypto_serde::array_map::serialize",
         deserialize_with = "crate::crypto_serde::array_map::deserialize"
@@ -741,9 +793,9 @@ where
     #[serde(with = "crate::crypto_serde::arc")]
     pub players: Shared<PlayerRoster<C>>,
     #[serde(with = "crate::crypto_serde::arc")]
-    pub seating: Shared<SeatingMap>,
+    pub seating: Shared<SeatingMap<C>>,
     #[serde(with = "crate::crypto_serde::arc")]
-    pub stacks: Shared<PlayerStacks>,
+    pub stacks: Shared<PlayerStacks<C>>,
     pub previous_hash: Option<StateHash>,
     pub state_hash: StateHash,
     pub status: SnapshotStatus,
@@ -767,6 +819,24 @@ where
     P: HandPhase<C>,
     C: CurveGroup,
 {
+    pub fn player_identity_by_id(&self, player_id: PlayerId) -> Option<&PlayerIdentity<C>> {
+        self.players
+            .values()
+            .find(|identity| identity.player_id == player_id)
+    }
+
+    pub fn shuffler_identity_by_id(&self, shuffler_id: ShufflerId) -> Option<&ShufflerIdentity<C>> {
+        self.shufflers
+            .values()
+            .find(|identity| identity.shuffler_id == shuffler_id)
+    }
+
+    pub fn shuffler_key_by_id(&self, shuffler_id: ShufflerId) -> Option<&CanonicalKey<C>> {
+        self.shufflers
+            .iter()
+            .find_map(|(key, identity)| (identity.shuffler_id == shuffler_id).then_some(key))
+    }
+
     pub fn initialize_hash(&mut self, hasher: &dyn LedgerHasher) {
         self.sequence = 0;
         self.previous_hash = None;
@@ -823,6 +893,45 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
             AnyTableSnapshot::River(table) => table.state_hash,
             AnyTableSnapshot::Showdown(table) => table.state_hash,
             AnyTableSnapshot::Complete(table) => table.state_hash,
+        }
+    }
+
+    pub fn player_identity_by_id(&self, player_id: PlayerId) -> Option<&PlayerIdentity<C>> {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Dealing(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Preflop(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Flop(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Turn(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::River(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Showdown(table) => table.player_identity_by_id(player_id),
+            AnyTableSnapshot::Complete(table) => table.player_identity_by_id(player_id),
+        }
+    }
+
+    pub fn shuffler_identity_by_id(&self, shuffler_id: ShufflerId) -> Option<&ShufflerIdentity<C>> {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Dealing(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Preflop(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Flop(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Turn(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::River(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Showdown(table) => table.shuffler_identity_by_id(shuffler_id),
+            AnyTableSnapshot::Complete(table) => table.shuffler_identity_by_id(shuffler_id),
+        }
+    }
+
+    pub fn shuffler_key_by_id(&self, shuffler_id: ShufflerId) -> Option<&CanonicalKey<C>> {
+        match self {
+            AnyTableSnapshot::Shuffling(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Dealing(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Preflop(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Flop(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Turn(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::River(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Showdown(table) => table.shuffler_key_by_id(shuffler_id),
+            AnyTableSnapshot::Complete(table) => table.shuffler_key_by_id(shuffler_id),
         }
     }
 
@@ -949,7 +1058,7 @@ async fn load_player_roster<C>(
     conn: &DatabaseConnection,
     game_id: GameId,
     hand_id: HandId,
-) -> Result<(PlayerRoster<C>, SeatingMap)>
+) -> Result<(PlayerRoster<C>, SeatingMap<C>)>
 where
     C: CurveGroup + CanonicalDeserialize,
 {
@@ -961,8 +1070,8 @@ where
         .all(conn)
         .await?;
 
-    let mut roster = BTreeMap::new();
-    let mut seating = BTreeMap::new();
+    let mut roster: PlayerRoster<C> = BTreeMap::new();
+    let mut seating: SeatingMap<C> = BTreeMap::new();
 
     for (seat_row, player_row) in rows {
         let player = player_row.context("player row missing public key")?;
@@ -974,17 +1083,19 @@ where
             .map_err(|_| anyhow!("nonce {} exceeds u64 range", seat_row.nonce))?;
         let public_key = deserialize_curve_bytes::<C>(&player.public_key)
             .context("failed to deserialize player public key")?;
+        let player_key = CanonicalKey::new(public_key.clone());
 
         roster.insert(
-            player_id,
+            player_key.clone(),
             PlayerIdentity {
-                public_key: public_key.clone(),
-                player_key: crate::ledger::CanonicalKey::new(public_key),
+                public_key,
+                player_key: player_key.clone(),
+                player_id,
                 nonce,
                 seat,
             },
         );
-        seating.insert(seat, Some(player_id));
+        seating.insert(seat, Some(player_key));
     }
 
     Ok((roster, seating))
@@ -1014,16 +1125,17 @@ where
         .all(conn)
         .await?;
 
-    let mut public_keys: HashMap<i64, C> = HashMap::new();
+    let mut public_keys: HashMap<i64, (C, CanonicalKey<C>)> = HashMap::new();
     for model in shuffler_models {
         let pk = deserialize_curve_bytes::<C>(&model.public_key)
             .context("failed to deserialize shuffler public key")?;
-        public_keys.insert(model.id, pk);
+        let canonical = CanonicalKey::new(pk.clone());
+        public_keys.insert(model.id, (pk, canonical));
     }
 
     let mut aggregated = C::zero();
     for id in &shuffler_ids {
-        let pk = public_keys
+        let (pk, _canonical) = public_keys
             .get(id)
             .context("shuffler assignment missing public key")?;
         aggregated += pk.clone();
@@ -1031,15 +1143,16 @@ where
 
     let mut roster = BTreeMap::new();
     for assignment in assignments {
-        let pk = public_keys
+        let (pk, canonical) = public_keys
             .get(&assignment.shuffler_id)
             .context("shuffler assignment missing public key")?
             .clone();
         roster.insert(
-            assignment.shuffler_id,
+            canonical.clone(),
             ShufflerIdentity {
                 public_key: pk.clone(),
-                shuffler_key: crate::ledger::CanonicalKey::new(pk),
+                shuffler_key: canonical,
+                shuffler_id: assignment.shuffler_id,
                 aggregated_public_key: aggregated.clone(),
             },
         );
@@ -1118,8 +1231,9 @@ where
         ),
     };
     let state_hash = state_hash_from_vec(snapshot_model.state_hash)?;
-    let player_stacks: PlayerStacks = serde_json::from_value(snapshot_model.player_stacks.clone())
-        .context("failed to deserialize player stacks")?;
+    let player_stacks: PlayerStacks<C> =
+        serde_json::from_value(snapshot_model.player_stacks.clone())
+            .context("failed to deserialize player stacks")?;
 
     let hand_config_model = hand_configs::Entity::find_by_id(snapshot_model.hand_config_id)
         .one(conn)

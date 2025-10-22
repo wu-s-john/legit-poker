@@ -23,7 +23,7 @@ use crate::ledger::snapshot::{
 use crate::ledger::store::snapshot::{prepare_snapshot, SeaOrmSnapshotStore, SnapshotStore};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
-use crate::ledger::LedgerOperator;
+use crate::ledger::{CanonicalKey, LedgerOperator};
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
@@ -459,27 +459,29 @@ where
     C::ScalarField: UniformRand,
 {
     let mut player_roster: PlayerRoster<C> = BTreeMap::new();
-    let mut seating: SeatingMap = BTreeMap::new();
-    let mut stacks: PlayerStacks = BTreeMap::new();
+    let mut seating: SeatingMap<C> = BTreeMap::new();
+    let mut stacks: PlayerStacks<C> = BTreeMap::new();
 
     for player in players {
+        let player_key = CanonicalKey::new(player.public_key.clone());
         player_roster.insert(
-            player.player_id,
+            player_key.clone(),
             PlayerIdentity {
                 public_key: player.public_key.clone(),
-                player_key: crate::ledger::CanonicalKey::new(player.public_key.clone()),
+                player_key: player_key.clone(),
+                player_id: player.player_id,
                 nonce: 0,
                 seat: player.seat,
             },
         );
-        seating.insert(player.seat, Some(player.player_id));
+        seating.insert(player.seat, Some(player_key.clone()));
         let committed =
             compute_initial_commitment(&params.hand_config, player.seat).min(player.starting_stack);
         stacks.insert(
             player.seat,
             PlayerStackInfo {
                 seat: player.seat,
-                player_id: Some(player.player_id),
+                player_key: Some(player_key),
                 starting_stack: player.starting_stack,
                 committed_blind: committed,
                 status: PlayerStatus::Active,
@@ -488,20 +490,22 @@ where
     }
 
     let mut shuffler_roster: ShufflerRoster<C> = BTreeMap::new();
-    let mut expected: Vec<(u16, ShufflerId)> = Vec::with_capacity(shufflers.len());
+    let mut expected: Vec<(u16, CanonicalKey<C>)> = Vec::with_capacity(shufflers.len());
     for shuffler in shufflers {
+        let shuffler_key = CanonicalKey::new(shuffler.public_key.clone());
         shuffler_roster.insert(
-            shuffler.shuffler_id,
+            shuffler_key.clone(),
             ShufflerIdentity {
                 public_key: shuffler.public_key.clone(),
-                shuffler_key: crate::ledger::CanonicalKey::new(shuffler.public_key.clone()),
+                shuffler_key: shuffler_key.clone(),
+                shuffler_id: shuffler.shuffler_id,
                 aggregated_public_key: shuffler.aggregated_public_key.clone(),
             },
         );
-        expected.push((shuffler.sequence, shuffler.shuffler_id));
+        expected.push((shuffler.sequence, shuffler_key));
     }
     expected.sort_by_key(|(sequence, _)| *sequence);
-    let expected_order: Vec<ShufflerId> = expected.into_iter().map(|(_, id)| id).collect();
+    let expected_order: Vec<CanonicalKey<C>> = expected.into_iter().map(|(_, key)| key).collect();
 
     if expected_order.is_empty() {
         return Err(GameSetupError::validation(

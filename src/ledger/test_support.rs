@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use ark_ec::{CurveConfig, CurveGroup};
+use ark_ec::{CurveConfig, CurveGroup, PrimeGroup};
 use ark_ff::{PrimeField, UniformRand};
 use ark_std::rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -18,6 +18,7 @@ use crate::ledger::snapshot::{
     TableAtPreflop, TableAtRiver, TableAtShowdown, TableAtShuffling, TableAtTurn, TableSnapshot,
 };
 use crate::ledger::types::{GameId, HandId, ShufflerId, StateHash};
+use crate::ledger::CanonicalKey;
 use crate::showdown::HandCategory;
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use crate::shuffling::generate_random_ciphertexts;
@@ -33,12 +34,14 @@ pub struct FixtureContext<C: CurveGroup> {
     pub hand_id: HandId,
     pub cfg: Shared<HandConfig>,
     pub players: Shared<PlayerRoster<C>>,
+    pub player_keys: BTreeMap<PlayerId, CanonicalKey<C>>,
     pub player_secrets: BTreeMap<PlayerId, C::ScalarField>,
     pub shufflers: Shared<ShufflerRoster<C>>,
+    pub shuffler_keys: BTreeMap<ShufflerId, CanonicalKey<C>>,
     pub shuffler_secrets: BTreeMap<ShufflerId, C::ScalarField>,
-    pub seating: Shared<SeatingMap>,
-    pub stacks: Shared<PlayerStacks>,
-    pub expected_shuffler_order: Vec<ShufflerId>,
+    pub seating: Shared<SeatingMap<C>>,
+    pub stacks: Shared<PlayerStacks<C>>,
+    pub expected_shuffler_order: Vec<CanonicalKey<C>>,
     pub aggregated_shuffler_pk: C,
     pub initial_deck: Arc<[ElGamalCiphertext<C>; DECK_SIZE]>,
     pub hasher: Arc<dyn LedgerHasher + Send + Sync>,
@@ -46,7 +49,7 @@ pub struct FixtureContext<C: CurveGroup> {
 
 impl<C> FixtureContext<C>
 where
-    C: CurveGroup,
+    C: CurveGroup + PrimeGroup,
     C::ScalarField: PrimeField + UniformRand,
     C::BaseField: PrimeField,
     C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -64,10 +67,15 @@ where
         let mut rng = fixture_rng();
         let cfg = fixture_hand_config(seat_ids[0], seat_ids[1], seat_ids[2]);
 
-        let (players, seating, stacks, player_secrets) =
+        let (players, seating, stacks, player_keys, player_secrets) =
             build_player_context::<C>(&mut rng, seat_ids, &cfg);
-        let (shufflers, shuffler_secrets, expected_shuffler_order, aggregated_shuffler_pk) =
-            build_shuffler_context::<C>(&mut rng, shuffler_ids);
+        let (
+            shufflers,
+            shuffler_secrets,
+            shuffler_keys,
+            expected_shuffler_order,
+            aggregated_shuffler_pk,
+        ) = build_shuffler_context::<C>(&mut rng, shuffler_ids);
 
         let (deck, _) =
             generate_random_ciphertexts::<C, DECK_SIZE>(&aggregated_shuffler_pk, &mut rng);
@@ -79,8 +87,10 @@ where
             hand_id: FIXTURE_HAND_ID,
             cfg: Arc::new(cfg),
             players: Arc::new(players),
+            player_keys,
             player_secrets,
             shufflers: Arc::new(shufflers),
+            shuffler_keys,
             shuffler_secrets,
             seating: Arc::new(seating),
             stacks: Arc::new(stacks),
@@ -129,34 +139,38 @@ fn build_player_context<C>(
     cfg: &HandConfig,
 ) -> (
     PlayerRoster<C>,
-    SeatingMap,
-    PlayerStacks,
+    SeatingMap<C>,
+    PlayerStacks<C>,
+    BTreeMap<PlayerId, CanonicalKey<C>>,
     BTreeMap<PlayerId, C::ScalarField>,
 )
 where
     C: CurveGroup,
     C::ScalarField: PrimeField + UniformRand,
 {
-    let mut roster = PlayerRoster::new();
-    let mut seating = SeatingMap::new();
-    let mut stacks = PlayerStacks::new();
+    let mut roster: PlayerRoster<C> = BTreeMap::new();
+    let mut seating: SeatingMap<C> = BTreeMap::new();
+    let mut stacks: PlayerStacks<C> = BTreeMap::new();
+    let mut key_map = BTreeMap::new();
     let mut secrets = BTreeMap::new();
 
     for (idx, seat) in seat_ids.iter().enumerate() {
         let player_id = (idx as PlayerId) + 100;
         let secret = C::ScalarField::rand(rng);
         let public = C::generator() * secret;
+        let player_key = CanonicalKey::new(public);
 
         roster.insert(
-            player_id,
+            player_key.clone(),
             crate::ledger::snapshot::PlayerIdentity {
                 public_key: public,
-                player_key: crate::ledger::CanonicalKey::new(public),
+                player_key: player_key.clone(),
+                player_id,
                 nonce: 0,
                 seat: *seat,
             },
         );
-        seating.insert(*seat, Some(player_id));
+        seating.insert(*seat, Some(player_key.clone()));
 
         let committed_blind = if *seat == cfg.small_blind_seat {
             cfg.stakes.small_blind
@@ -170,7 +184,7 @@ where
             *seat,
             PlayerStackInfo {
                 seat: *seat,
-                player_id: Some(player_id),
+                player_key: Some(player_key.clone()),
                 starting_stack: FIXTURE_STACK,
                 committed_blind,
                 status: if *seat == cfg.button {
@@ -180,10 +194,11 @@ where
                 },
             },
         );
+        key_map.insert(player_id, player_key.clone());
         secrets.insert(player_id, secret);
     }
 
-    (roster, seating, stacks, secrets)
+    (roster, seating, stacks, key_map, secrets)
 }
 
 fn build_shuffler_context<C>(
@@ -192,16 +207,17 @@ fn build_shuffler_context<C>(
 ) -> (
     ShufflerRoster<C>,
     BTreeMap<ShufflerId, C::ScalarField>,
-    Vec<ShufflerId>,
+    BTreeMap<ShufflerId, CanonicalKey<C>>,
+    Vec<CanonicalKey<C>>,
     C,
 )
 where
     C: CurveGroup,
     C::ScalarField: PrimeField + UniformRand,
 {
-    let mut roster = ShufflerRoster::new();
+    let mut roster: ShufflerRoster<C> = BTreeMap::new();
     let mut secrets = BTreeMap::new();
-    let expected_order = Vec::from(shuffler_ids);
+    let mut key_map = BTreeMap::new();
 
     let mut entries = Vec::new();
     for shuffler_id in shuffler_ids {
@@ -214,19 +230,24 @@ where
         .iter()
         .fold(C::zero(), |acc, (_, _, public)| acc + *public);
 
+    let mut expected_order = Vec::with_capacity(entries.len());
     for (shuffler_id, secret, public) in entries {
+        let canonical = CanonicalKey::new(public.clone());
         roster.insert(
-            shuffler_id,
+            canonical.clone(),
             ShufflerIdentity {
-                public_key: public,
-                shuffler_key: crate::ledger::CanonicalKey::new(public),
+                public_key: public.clone(),
+                shuffler_key: canonical.clone(),
+                shuffler_id,
                 aggregated_public_key: aggregated,
             },
         );
         secrets.insert(shuffler_id, secret);
+        key_map.insert(shuffler_id, canonical.clone());
+        expected_order.push(canonical);
     }
 
-    (roster, secrets, expected_order, aggregated)
+    (roster, secrets, key_map, expected_order, aggregated)
 }
 
 fn zero_player_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
@@ -419,7 +440,11 @@ where
         shuffling: build_shuffling_snapshot(ctx),
         dealing,
         betting: BettingSnapshot {
-            state: build_initial_betting_state(ctx.cfg.as_ref(), ctx.stacks.as_ref()),
+            state: build_initial_betting_state(
+                ctx.cfg.as_ref(),
+                ctx.stacks.as_ref(),
+                ctx.players.as_ref(),
+            ),
             last_events: Vec::new(),
         },
         reveals: RevealsSnapshot {

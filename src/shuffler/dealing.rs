@@ -21,7 +21,7 @@ pub trait DealingTableView<C: CurveGroup> {
     fn shufflers(&self) -> &Shared<ShufflerRoster<C>>;
     fn dealing(&self) -> &DealingSnapshot<C>;
     fn players(&self) -> &Shared<PlayerRoster<C>>;
-    fn seating(&self) -> &Shared<SeatingMap>;
+    fn seating(&self) -> &Shared<SeatingMap<C>>;
 }
 
 impl<C: CurveGroup> DealingTableView<C> for TableAtDealing<C> {
@@ -45,7 +45,7 @@ impl<C: CurveGroup> DealingTableView<C> for TableAtDealing<C> {
         &self.players
     }
 
-    fn seating(&self) -> &Shared<SeatingMap> {
+    fn seating(&self) -> &Shared<SeatingMap<C>> {
         &self.seating
     }
 }
@@ -71,7 +71,7 @@ impl<C: CurveGroup> DealingTableView<C> for TableAtPreflop<C> {
         &self.players
     }
 
-    fn seating(&self) -> &Shared<SeatingMap> {
+    fn seating(&self) -> &Shared<SeatingMap<C>> {
         &self.seating
     }
 }
@@ -164,7 +164,6 @@ impl<C: CurveGroup> DealingHandState<C> {
             .values()
             .map(|identity| identity.shuffler_key.clone())
             .collect();
-        let roster = table.shufflers();
 
         let card_plan = self
             .card_plan
@@ -177,16 +176,10 @@ impl<C: CurveGroup> DealingHandState<C> {
             match destination {
                 CardDestination::Hole { seat, hole_index } => {
                     let player_public_key = player_public_key_for_seat(table, *seat)?;
-                    let already_blinded = table.dealing().player_blinding_contribs.iter().any(
-                        |((shuffler_id, s, h), _)| {
-                            *s == *seat
-                                && *h == *hole_index
-                                && roster
-                                    .get(shuffler_id)
-                                    .map(|identity| &identity.shuffler_key)
-                                    == Some(self_member_key)
-                        },
-                    );
+                    let already_blinded = table
+                        .dealing()
+                        .player_blinding_contribs
+                        .contains_key(&(self_member_key.clone(), *seat, *hole_index));
                     if already_blinded {
                         self.blinding_sent.insert(deal_index);
                     } else if self.blinding_sent.insert(deal_index) {
@@ -194,18 +187,9 @@ impl<C: CurveGroup> DealingHandState<C> {
                         let contribution_count = table
                             .dealing()
                             .player_blinding_contribs
-                            .iter()
-                            .filter_map(|((shuffler_id, s, h), _)| {
-                                if *s == *seat && *h == *hole_index {
-                                    roster
-                                        .get(shuffler_id)
-                                        .map(|identity| identity.shuffler_key.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<BTreeSet<_>>()
-                            .len();
+                            .keys()
+                            .filter(|(_, s, h)| *s == *seat && *h == *hole_index)
+                            .count();
                         let ciphertext_ready = table
                             .dealing()
                             .player_ciphertexts
@@ -255,18 +239,9 @@ impl<C: CurveGroup> DealingHandState<C> {
                         let contribution_count = table
                             .dealing()
                             .player_blinding_contribs
-                            .iter()
-                            .filter_map(|((shuffler_id, s, h), _)| {
-                                if *s == *seat && *h == *hole_index {
-                                    roster
-                                        .get(shuffler_id)
-                                        .map(|identity| identity.shuffler_key.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<BTreeSet<_>>()
-                            .len();
+                            .keys()
+                            .filter(|(_, s, h)| *s == *seat && *h == *hole_index)
+                            .count();
                         let ciphertext_ready = table
                             .dealing()
                             .player_ciphertexts
@@ -408,15 +383,14 @@ fn player_public_key_for_seat<C: CurveGroup, T>(table: &T, seat: SeatId) -> Resu
 where
     T: DealingTableView<C>,
 {
-    let player_id = table
+    let player_key = table
         .seating()
         .get(&seat)
-        .copied()
-        .flatten()
+        .and_then(|key| key.clone())
         .ok_or_else(|| anyhow!("no player seated at seat {seat}"))?;
     let identity = table
         .players()
-        .get(&player_id)
+        .get(&player_key)
         .ok_or_else(|| anyhow!("missing player identity for seat {seat}"))?;
     Ok(identity.public_key.clone())
 }

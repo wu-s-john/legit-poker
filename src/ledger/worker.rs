@@ -380,20 +380,23 @@ mod tests {
             deck_vec.clone().try_into().expect("deck length");
         let deck_out = deck_in.clone();
 
+        let shuffler_public = Curve::zero();
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler_public.clone());
         let shuffling = ShufflingSnapshot {
             initial_deck: deck_in.clone(),
             steps: Vec::new(),
             final_deck: deck_out.clone(),
-            expected_order: vec![0],
+            expected_order: vec![shuffler_key.clone()],
         };
 
         let mut roster = ShufflerRoster::new();
         roster.insert(
-            0,
+            shuffler_key.clone(),
             ShufflerIdentity {
-                public_key: Curve::zero(),
-                shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
-                aggregated_public_key: Curve::zero(),
+                public_key: shuffler_public.clone(),
+                shuffler_key,
+                shuffler_id: 0,
+                aggregated_public_key: shuffler_public,
             },
         );
 

@@ -332,7 +332,7 @@ mod tests {
         phases::PhaseShuffling, AnyTableSnapshot, PlayerIdentity, PlayerStackInfo,
         ShufflerIdentity, ShufflingSnapshot, SnapshotStatus, TableSnapshot,
     };
-    use zk_poker::ledger::types::{EventPhase, ShufflerId, StateHash};
+    use zk_poker::ledger::types::{EventPhase, StateHash};
     use zk_poker::ledger::{actor::AnyActor, CanonicalKey};
     use zk_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
     use zk_poker::signing::{Signable, WithSignature};
@@ -358,36 +358,42 @@ mod tests {
             check_raise_allowed: true,
         };
 
-        let mut shufflers = BTreeMap::<ShufflerId, ShufflerIdentity<Curve>>::new();
+        let shuffler_public = Curve::generator();
+        let shuffler_key = CanonicalKey::new(shuffler_public);
+        let mut shufflers = BTreeMap::<CanonicalKey<Curve>, ShufflerIdentity<Curve>>::new();
         shufflers.insert(
-            100,
+            shuffler_key.clone(),
             ShufflerIdentity {
-                public_key: Curve::generator(),
-                shuffler_key: CanonicalKey::new(Curve::generator()),
-                aggregated_public_key: Curve::generator(),
+                public_key: shuffler_public,
+                shuffler_key: shuffler_key.clone(),
+                shuffler_id: 100,
+                aggregated_public_key: shuffler_public,
             },
         );
 
+        let player_public = Curve::generator();
+        let player_key = CanonicalKey::new(player_public);
         let mut players = BTreeMap::new();
         players.insert(
-            200u64,
+            player_key.clone(),
             PlayerIdentity {
-                public_key: Curve::generator(),
-                player_key: CanonicalKey::new(Curve::generator()),
+                public_key: player_public,
+                player_key: player_key.clone(),
+                player_id: 200,
                 nonce: 0,
                 seat: 0,
             },
         );
 
         let mut seating = BTreeMap::new();
-        seating.insert(0, Some(200u64));
+        seating.insert(0, Some(player_key.clone()));
 
         let mut stacks = BTreeMap::new();
         stacks.insert(
             0,
             PlayerStackInfo {
                 seat: 0,
-                player_id: Some(200u64),
+                player_key: Some(player_key.clone()),
                 starting_stack: 1_000,
                 committed_blind: 0,
                 status: PlayerStatus::Active,
@@ -400,7 +406,7 @@ mod tests {
             initial_deck: deck.clone(),
             steps: Vec::new(),
             final_deck: deck,
-            expected_order: vec![100],
+            expected_order: vec![shuffler_key],
         };
 
         let table: TableSnapshot<PhaseShuffling, Curve> = TableSnapshot {

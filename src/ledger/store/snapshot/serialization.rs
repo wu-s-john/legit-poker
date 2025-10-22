@@ -332,8 +332,8 @@ where
         append_ciphertext(&mut builder, cipher);
     }
     builder.append_u64(shuffling.expected_order.len() as u64);
-    for &id in &shuffling.expected_order {
-        builder.append_i64(id);
+    for key in &shuffling.expected_order {
+        key.write_transcript(&mut builder);
     }
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
@@ -382,10 +382,10 @@ where
     }
 
     builder.append_u64(dealing.player_blinding_contribs.len() as u64);
-    for (&(shuffler_id, seat, hole_index), contrib) in dealing.player_blinding_contribs.iter() {
-        builder.append_i64(shuffler_id);
-        builder.append_u8(seat);
-        builder.append_u8(hole_index);
+    for ((shuffler_key, seat, hole_index), contrib) in dealing.player_blinding_contribs.iter() {
+        shuffler_key.write_transcript(&mut builder);
+        builder.append_u8(*seat);
+        builder.append_u8(*hole_index);
         contrib.write_transcript(&mut builder);
     }
 
@@ -408,9 +408,9 @@ where
     }
 
     builder.append_u64(dealing.community_decryption_shares.len() as u64);
-    for (&(shuffler_id, card_index), share) in dealing.community_decryption_shares.iter() {
-        builder.append_i64(shuffler_id);
-        builder.append_u8(card_index);
+    for ((shuffler_key, card_index), share) in dealing.community_decryption_shares.iter() {
+        shuffler_key.write_transcript(&mut builder);
+        builder.append_u8(*card_index);
         append_curve_point(&mut builder, &share.share);
         share.proof.write_transcript(&mut builder);
         share.member_key.write_transcript(&mut builder);

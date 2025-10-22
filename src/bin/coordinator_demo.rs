@@ -30,7 +30,7 @@ use zk_poker::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore,
 use zk_poker::ledger::typestate::MaybeSaved;
 use zk_poker::ledger::verifier::{LedgerVerifier, Verifier};
 use zk_poker::ledger::LedgerLobby;
-use zk_poker::ledger::{HandId, ShufflerId};
+use zk_poker::ledger::HandId;
 use zk_poker::shuffling::{draw_shuffler_public_key, make_global_public_keys};
 
 const LOG_TARGET: &str = "bin::coordinator_demo";
@@ -390,7 +390,7 @@ async fn register_shufflers(
 async fn monitor_shuffle_progress(
     state: Arc<LedgerState<Curve>>,
     hand_id: HandId,
-    expected_order: Vec<ShufflerId>,
+    expected_order: Vec<zk_poker::ledger::CanonicalKey<Curve>>,
 ) -> Result<()> {
     let mut observed = 0usize;
     let total = expected_order.len();
@@ -422,7 +422,13 @@ async fn monitor_shuffle_progress(
                     AnyTableSnapshot::Shuffling(table) => {
                         let completed = table.shuffling.steps.len();
                         while observed < completed && observed < total {
-                            let shuffler_id = expected_order[observed];
+                            let shuffler_key = &expected_order[observed];
+                            let shuffler_id = table
+                                .shufflers
+                                .as_ref()
+                                .get(shuffler_key)
+                                .map(|identity| identity.shuffler_id)
+                                .unwrap_or(-1);
                             info!(
                                 target = LOG_TARGET,
                                 hand_id,

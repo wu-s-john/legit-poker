@@ -250,9 +250,9 @@ mod tests {
         AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GameShuffleMessage,
     };
     use crate::ledger::snapshot::{
-        build_default_card_plan, AnyTableSnapshot, PlayerStackInfo, PlayerStacks, RevealsSnapshot,
-        ShufflerIdentity, ShufflerRoster, ShufflingSnapshot, ShufflingStep, TableAtShuffling,
-        TableSnapshot,
+        build_default_card_plan, AnyTableSnapshot, PlayerIdentity, PlayerRoster, PlayerStackInfo,
+        PlayerStacks, RevealsSnapshot, SeatingMap, ShufflerIdentity, ShufflerRoster,
+        ShufflingSnapshot, ShufflingStep, TableAtShuffling, TableSnapshot,
     };
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use crate::signing::WithSignature;
@@ -276,6 +276,9 @@ mod tests {
         use crate::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
         use std::sync::Arc;
 
+        let shuffler_public = C::zero();
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler_public.clone());
+
         let shuffling = ShufflingSnapshot {
             initial_deck: std::array::from_fn(|_| sample_cipher()),
             steps: vec![ShufflingStep {
@@ -283,15 +286,18 @@ mod tests {
                 proof: sample_shuffle_proof(),
             }],
             final_deck: std::array::from_fn(|_| sample_cipher()),
-            expected_order: vec![0],
+            expected_order: vec![shuffler_key.clone()],
         };
 
-        let mut stacks = PlayerStacks::new();
+        let player_public = C::zero();
+        let player_key = crate::ledger::CanonicalKey::new(player_public.clone());
+
+        let mut stacks: PlayerStacks<C> = BTreeMap::new();
         stacks.insert(
             0,
             PlayerStackInfo {
                 seat: 0,
-                player_id: Some(0),
+                player_key: Some(player_key.clone()),
                 starting_stack: 100,
                 committed_blind: 0,
                 status: PlayerStatus::Active,
@@ -315,17 +321,30 @@ mod tests {
             check_raise_allowed: true,
         };
 
-        let mut seating_map = BTreeMap::new();
-        seating_map.insert(0, Some(0));
+        let mut seating_map: SeatingMap<C> = BTreeMap::new();
+        seating_map.insert(0, Some(player_key.clone()));
         let _plan = build_default_card_plan(&hand_cfg, &seating_map);
 
         let mut shufflers = ShufflerRoster::new();
         shufflers.insert(
-            0,
+            shuffler_key.clone(),
             ShufflerIdentity {
-                public_key: C::zero(),
-                shuffler_key: crate::ledger::CanonicalKey::new(C::zero()),
-                aggregated_public_key: C::zero(),
+                public_key: shuffler_public.clone(),
+                shuffler_key: shuffler_key.clone(),
+                shuffler_id: 0,
+                aggregated_public_key: shuffler_public,
+            },
+        );
+
+        let mut players = PlayerRoster::new();
+        players.insert(
+            player_key.clone(),
+            PlayerIdentity {
+                public_key: player_public,
+                player_key: player_key.clone(),
+                player_id: 0,
+                nonce: 0,
+                seat: 0,
             },
         );
 
@@ -335,7 +354,7 @@ mod tests {
             sequence: 0,
             cfg: Arc::new(hand_cfg),
             shufflers: Arc::new(shufflers),
-            players: Arc::new(BTreeMap::new()),
+            players: Arc::new(players),
             seating: Arc::new(seating_map),
             stacks: Arc::new(stacks),
             previous_hash: None,

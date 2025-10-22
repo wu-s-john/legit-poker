@@ -33,6 +33,7 @@ use crate::ledger::{
     },
     snapshot::{AnyTableSnapshot, Shared, TableAtShuffling},
     types::{GameId, HandId, ShufflerId},
+    CanonicalKey,
 };
 use crate::shuffling::data_structures::ShuffleProof;
 use crate::shuffling::{
@@ -261,7 +262,7 @@ impl ShufflerRunConfig {
 
 #[derive(Debug)]
 pub struct ShufflingHandState<C: CurveGroup> {
-    pub expected_order: Vec<ShufflerId>,
+    pub expected_order: Vec<CanonicalKey<C>>,
     pub buffered: Vec<EnvelopedMessage<C, GameShuffleMessage<C>>>,
     pub next_nonce: u64,
     pub turn_index: usize,
@@ -1134,13 +1135,13 @@ where
 
         let position = state.buffered.len();
         if let Some(expected) = state.expected_order.get(position) {
-            if *expected != envelope.actor.shuffler_id {
+            if *expected != envelope.actor.shuffler_key {
                 warn!(
                     target = LOG_TARGET,
                     game_id = runtime.game_id,
                     hand_id = runtime.hand_id,
-                    expected = *expected,
-                    actual = envelope.actor.shuffler_id,
+                    expected = ?expected,
+                    actual = ?envelope.actor.shuffler_key,
                     "incoming shuffle actor mismatch"
                 );
             }
@@ -1211,13 +1212,13 @@ where
 
             let position = state.buffered.len();
             if let Some(expected) = state.expected_order.get(position) {
-                if *expected != actor.shuffler_id {
+                if *expected != actor.shuffler_key {
                     warn!(
                         target = LOG_TARGET,
                         game_id = runtime.game_id,
                         hand_id = runtime.hand_id,
-                        expected = *expected,
-                        actual = actor.shuffler_id,
+                        expected = ?expected,
+                        actual = ?actor.shuffler_key,
                         "attempted to emit shuffle out of turn"
                     );
                     return Ok(());
@@ -1854,15 +1855,16 @@ mod tests {
         let zero_cipher = ElGamalCiphertext::new(Curve::generator(), Curve::generator());
         let deck: [ElGamalCiphertext<Curve>; DECK_SIZE] =
             core::array::from_fn(|_| zero_cipher.clone());
+        let runtime_key = crate::ledger::CanonicalKey::new(Curve::zero());
         let runtime = Arc::new(HandRuntime {
             game_id: key.0,
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
-            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
+            shuffler_key: runtime_key.clone(),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
-                expected_order: vec![0],
+                expected_order: vec![runtime_key.clone()],
                 buffered: Vec::new(),
                 next_nonce: 0,
                 turn_index: 0,
@@ -1965,15 +1967,16 @@ mod tests {
         let key = (5i64, 6i64);
         let zero_cipher = ElGamalCiphertext::new(Curve::zero(), Curve::zero());
         let deck = core::array::from_fn(|_| zero_cipher.clone());
+        let runtime_key = crate::ledger::CanonicalKey::new(Curve::zero());
         let runtime = Arc::new(HandRuntime {
             game_id: key.0,
             hand_id: key.1,
             shuffler_id: 0,
             shuffler_index: 0,
-            shuffler_key: crate::ledger::CanonicalKey::new(Curve::zero()),
+            shuffler_key: runtime_key.clone(),
             cancel: CancellationToken::new(),
             shuffling: Mutex::new(ShufflingHandState {
-                expected_order: vec![0],
+                expected_order: vec![runtime_key.clone()],
                 buffered: Vec::new(),
                 next_nonce: 0,
                 turn_index: 0,
@@ -2123,7 +2126,7 @@ mod tests {
         table
             .dealing
             .player_blinding_contribs
-            .insert((shuffler_id, seat, hole_index), faux_contribution);
+            .insert((test_key.clone(), seat, hole_index), faux_contribution);
 
         let faux_share = PartialUnblindingShare {
             share: Curve::zero(),
@@ -2181,7 +2184,7 @@ mod tests {
         table
             .dealing
             .player_blinding_contribs
-            .insert((shuffler_id, seat, hole_index), faux_contribution);
+            .insert((test_key.clone(), seat, hole_index), faux_contribution);
 
         table.dealing.player_ciphertexts.insert(
             (seat, hole_index),

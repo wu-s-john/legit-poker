@@ -6,7 +6,7 @@ use ark_serialize::CanonicalSerialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL, Transition};
-use crate::engine::nl::types::{PlayerId, PlayerStatus, Street as EngineStreet};
+use crate::engine::nl::types::{PlayerStatus, Street as EngineStreet};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::messages::{
     EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage,
@@ -15,8 +15,8 @@ use crate::ledger::messages::{
 use crate::ledger::snapshot::{
     build_default_card_plan, build_initial_betting_state, AnyPlayerActionMsg, AnyTableSnapshot,
     BettingSnapshot, CardDestination, CardPlan, DealingSnapshot, DealtCard, PhaseBetting,
-    PhaseShowdown, PhaseShuffling, PlayerIdentity, RevealedHand, RevealsSnapshot, SeatingMap,
-    ShufflingStep, SnapshotStatus, TableSnapshot,
+    PhaseShowdown, PhaseShuffling, PlayerRoster, RevealedHand, RevealsSnapshot, ShufflingStep,
+    SnapshotStatus, TableSnapshot,
 };
 use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::poseidon_config;
@@ -65,15 +65,15 @@ where
     Ok(format!("0x{}", hex::encode(bytes)))
 }
 
-fn roster_keys_hex<C>(players: &BTreeMap<PlayerId, PlayerIdentity<C>>) -> Result<Vec<String>>
+fn roster_keys_hex<C>(players: &PlayerRoster<C>) -> Result<Vec<String>>
 where
     C: CurveGroup + CanonicalSerialize,
 {
     players
-        .iter()
-        .map(|(player_id, identity)| {
+        .values()
+        .map(|identity| {
             let key_hex = curve_hex(&identity.public_key)?;
-            Ok(format!("{player_id}:{key_hex}"))
+            Ok(format!("{}:{key_hex}", identity.player_id))
         })
         .collect()
 }
@@ -81,7 +81,6 @@ where
 fn initialize_dealing_state<C: CurveGroup>(
     final_deck: &[ElGamalCiphertext<C>; DECK_SIZE],
     card_plan: CardPlan,
-    _seating: &SeatingMap,
 ) -> DealingSnapshot<C> {
     let mut assignments = BTreeMap::new();
     let player_ciphertexts = BTreeMap::new();
@@ -144,7 +143,7 @@ fn promote_to_dealing<C: CurveGroup>(
         "card plan empty when promoting to dealing"
     );
 
-    let dealing = initialize_dealing_state(&shuffling.final_deck, card_plan, &seating);
+    let dealing = initialize_dealing_state(&shuffling.final_deck, card_plan);
 
     Ok(AnyTableSnapshot::Dealing(TableSnapshot {
         game_id,
@@ -221,9 +220,10 @@ where
     {
         let shuffler_id = envelope.actor.shuffler_id;
         let shuffler = snapshot
-            .shufflers
-            .get(&shuffler_id)
+            .shuffler_identity_by_id(shuffler_id)
             .context("unknown shuffler for shuffle message")?;
+        let shuffler_key = shuffler.shuffler_key.clone();
+        let shuffler_public_key = shuffler.public_key.clone();
 
         let expected_index = snapshot.shuffling.steps.len();
         let message = &envelope.message.value;
@@ -231,6 +231,21 @@ where
             usize::from(message.turn_index) == expected_index,
             "shuffle turn index mismatch: expected {expected_index}, got {}",
             message.turn_index
+        );
+        let expected_key = snapshot
+            .shuffling
+            .expected_order
+            .get(expected_index)
+            .context("shuffle expected order missing entry")?;
+        ensure!(
+            expected_key == &envelope.actor.shuffler_key,
+            "shuffle actor mismatch: expected {:?}, got {:?}",
+            expected_key,
+            envelope.actor.shuffler_key
+        );
+        ensure!(
+            shuffler_key == envelope.actor.shuffler_key,
+            "shuffle actor key mismatch"
         );
 
         if snapshot.shuffling.steps.is_empty() {
@@ -244,7 +259,7 @@ where
 
         snapshot.shuffling.final_deck = message.deck_out.clone();
         snapshot.shuffling.steps.push(ShufflingStep {
-            shuffler_public_key: shuffler.public_key.clone(),
+            shuffler_public_key,
             proof: message.proof.clone(),
         });
 
@@ -278,9 +293,9 @@ where
         let card_ref = card_pos;
 
         let shuffler = snapshot
-            .shufflers
-            .get(&shuffler_id)
+            .shuffler_identity_by_id(shuffler_id)
             .context("unknown shuffler for blinding message")?;
+        let shuffler_key = shuffler.shuffler_key.clone();
 
         let destination = snapshot
             .dealing
@@ -293,15 +308,15 @@ where
             other => bail!("blinding contribution targets non-hole card: {other:?}"),
         };
 
-        let player_id = snapshot
+        let player_key = snapshot
             .seating
             .get(&seat)
-            .and_then(|id| *id)
+            .and_then(|key| key.clone())
             .context("seat has no player assigned")?;
 
         let player_identity = snapshot
             .players
-            .get(&player_id)
+            .get(&player_key)
             .context("player identity not found")?;
 
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
@@ -338,7 +353,7 @@ where
             "invalid blinding contribution proof"
         );
 
-        let key = (shuffler_id, seat, hole_index);
+        let key = (shuffler_key.clone(), seat, hole_index);
         if snapshot.dealing.player_blinding_contribs.contains_key(&key) {
             bail!("duplicate blinding contribution for shuffler {shuffler_id} seat {seat} hole {hole_index}");
         }
@@ -413,7 +428,11 @@ where
 
         if all_hole_cards_ready {
             let betting_state =
-                build_initial_betting_state(snapshot.cfg.as_ref(), snapshot.stacks.as_ref());
+                build_initial_betting_state(
+                    snapshot.cfg.as_ref(),
+                    snapshot.stacks.as_ref(),
+                    snapshot.players.as_ref(),
+                );
             let betting = BettingSnapshot {
                 state: betting_state,
                 last_events: Vec::new(),
@@ -474,15 +493,15 @@ where
             other => bail!("partial unblinding share targets non-hole card: {other:?}"),
         };
 
-        let player_id = snapshot
+        let player_key = snapshot
             .seating
             .get(&seat)
-            .and_then(|id| *id)
+            .and_then(|id| id.clone())
             .context("seat has no player assigned")?;
 
         let player_identity = snapshot
             .players
-            .get(&player_id)
+            .get(&player_key)
             .context("player identity not found")?;
 
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
@@ -1013,8 +1032,7 @@ where
         );
 
         let player_identity = snapshot
-            .players
-            .get(&actor_id)
+            .player_identity_by_id(actor_id)
             .context("player identity not found")?;
         ensure!(
             player_identity.seat == seat,
@@ -1140,7 +1158,7 @@ where
             .stacks
             .values()
             .filter(|info| {
-                info.player_id.is_some()
+                info.player_key.is_some()
                     && matches!(info.status, PlayerStatus::Active | PlayerStatus::AllIn)
             })
             .map(|info| info.seat)
@@ -1269,7 +1287,14 @@ mod tests {
             transcript,
         };
 
-        let shuffler_identity = ctx.shufflers.get(&shuffler_id).expect("shuffler identity");
+        let shuffler_key = ctx
+            .shuffler_keys
+            .get(&shuffler_id)
+            .expect("shuffler key");
+        let shuffler_identity = ctx
+            .shufflers
+            .get(shuffler_key)
+            .expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 
@@ -1298,7 +1323,14 @@ mod tests {
             transcript,
         };
 
-        let shuffler_identity = ctx.shufflers.get(&shuffler_id).expect("shuffler identity");
+        let shuffler_key = ctx
+            .shuffler_keys
+            .get(&shuffler_id)
+            .expect("shuffler key");
+        let shuffler_identity = ctx
+            .shufflers
+            .get(shuffler_key)
+            .expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 
@@ -1329,19 +1361,19 @@ mod tests {
         ctx: &FixtureContext<Curve>,
         seat: SeatId,
     ) -> (PlayerActor<Curve>, PlayerId, Curve) {
-        let player_id = ctx
+        let player_key = ctx
             .seating
             .get(&seat)
-            .and_then(|id| *id)
-            .expect("player id for seat");
-        let identity = ctx.players.get(&player_id).expect("player identity");
+            .and_then(|id| id.clone())
+            .expect("player key for seat");
+        let identity = ctx.players.get(&player_key).expect("player identity");
         (
             PlayerActor {
                 seat_id: seat,
-                player_id,
+                player_id: identity.player_id,
                 player_key: identity.player_key.clone(),
             },
-            player_id,
+            identity.player_id,
             identity.public_key,
         )
     }
@@ -1506,7 +1538,12 @@ mod tests {
         let prefinal_deck = swap_deck_entries(&snapshot.shuffling.final_deck, 0, 1);
         let identity = ctx
             .shufflers
-            .get(&10)
+            .as_ref()
+            .get(
+                ctx.shuffler_keys
+                    .get(&10)
+                    .expect("first shuffler key should exist"),
+            )
             .expect("first shuffler identity should exist");
         snapshot.shuffling.steps.push(ShufflingStep {
             shuffler_public_key: identity.public_key.clone(),
@@ -1540,11 +1577,11 @@ mod tests {
     fn first_player<C: CurveGroup>(ctx: &FixtureContext<C>) -> (SeatId, PlayerId, C) {
         ctx.seating
             .iter()
-            .find_map(|(&seat, player)| player.map(|id| (seat, id)))
-            .and_then(|(seat, id)| {
-                ctx.players
-                    .get(&id)
-                    .map(|identity| (seat, id, identity.public_key))
+            .find_map(|(&seat, player)| player.as_ref().map(|key| (seat, key.clone())))
+            .and_then(|(seat, key)| {
+                ctx.players.get(&key).map(|identity| {
+                    (seat, identity.player_id, identity.public_key.clone())
+                })
             })
             .expect("fixture to contain at least one player")
     }
@@ -1618,10 +1655,14 @@ mod tests {
 
         match result {
             AnyTableSnapshot::Dealing(next) => {
+                let shuffler_key = ctx
+                    .shuffler_keys
+                    .get(&10)
+                    .expect("shuffler key");
                 assert!(
                     next.dealing
                         .player_blinding_contribs
-                        .contains_key(&(10, seat, 0)),
+                        .contains_key(&(shuffler_key.clone(), seat, 0)),
                     "contribution recorded in snapshot"
                 );
                 assert!(
@@ -1661,20 +1702,26 @@ mod tests {
 
         let mut current_snapshot = AnyTableSnapshot::Dealing(snapshot);
         for (hole_index, &card_pos) in hole_positions.iter().enumerate() {
-            for (order, shuffler_id) in ctx.expected_shuffler_order.iter().enumerate() {
+            for (order, shuffler_key) in ctx.expected_shuffler_order.iter().enumerate() {
+                let shuffler_identity = ctx
+                    .shufflers
+                    .as_ref()
+                    .get(shuffler_key)
+                    .expect("shuffler identity");
+                let shuffler_id = shuffler_identity.shuffler_id;
                 let dealing_snapshot = match current_snapshot {
                     AnyTableSnapshot::Dealing(ref dealing) => dealing.clone(),
                     _ => panic!("unexpected snapshot state during blinding sequence"),
                 };
                 let share = generate_blinding_contribution(
                     &ctx,
-                    *shuffler_id,
+                    shuffler_id,
                     player_pk.clone(),
                     (hole_index as u64) * 10 + order as u64,
                 );
                 let message =
                     GameBlindingDecryptionMessage::new(card_pos, share, player_pk.clone());
-                let envelope = build_blinding_envelope(&ctx, *shuffler_id, message);
+                let envelope = build_blinding_envelope(&ctx, shuffler_id, message);
                 let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
                     dealing_snapshot,
                     &envelope,

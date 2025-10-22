@@ -234,7 +234,7 @@ where
     let mut assignments = Vec::with_capacity(descriptors.len());
 
     for descriptor in descriptors {
-        let public_key_bytes = serialize_curve_bytes(&descriptor.public_key)
+        let public_key_bytes = serialize_curve_bytes(descriptor.public_key.value())
             .context("failed to serialize shuffler public key")?;
         let aggregated_bytes = serialize_curve_bytes(&descriptor.aggregated_public_key)
             .context("failed to serialize aggregated shuffler key")?;
@@ -383,7 +383,7 @@ where
         .all(db)
         .await?;
     let (player_roster, seating) = build_player_roster::<C>(db, &player_rows).await?;
-    let player_stacks = parse_player_stacks(&snapshot_model.player_stacks)?;
+    let player_stacks = parse_player_stacks::<C>(&snapshot_model.player_stacks)?;
 
     let shuffler_rows = hand_shufflers::Entity::find()
         .filter(hand_shufflers::Column::HandId.eq(hand_id))
@@ -483,12 +483,12 @@ fn state_hash_from_vec(bytes: Vec<u8>) -> Result<StateHash> {
 async fn build_player_roster<C>(
     db: &sea_orm::DatabaseConnection,
     rows: &[hand_player::Model],
-) -> Result<(PlayerRoster<C>, SeatingMap)>
+) -> Result<(PlayerRoster<C>, SeatingMap<C>)>
 where
     C: CurveGroup + CanonicalDeserialize,
 {
     let mut roster: PlayerRoster<C> = BTreeMap::new();
-    let mut seating: SeatingMap = BTreeMap::new();
+    let mut seating: SeatingMap<C> = BTreeMap::new();
 
     let player_ids: Vec<i64> = rows.iter().map(|row| row.player_id).collect();
     let player_models = players::Entity::find()
@@ -514,37 +514,47 @@ where
             .context("player row missing public key")?;
         let public_key = deserialize_curve_bytes::<C>(&player.public_key)
             .context("failed to deserialize player public key")?;
+        let player_key = crate::ledger::CanonicalKey::new(public_key.clone());
 
         roster.insert(
-            player_id,
+            player_key.clone(),
             PlayerIdentity {
-                public_key: public_key.clone(),
-                player_key: crate::ledger::CanonicalKey::new(public_key),
+                public_key,
+                player_key: player_key.clone(),
+                player_id,
                 nonce,
                 seat,
             },
         );
-        seating.insert(seat, Some(player_id));
+        seating.insert(seat, Some(player_key));
     }
 
     Ok((roster, seating))
 }
 
-fn parse_player_stacks(value: &JsonValue) -> Result<PlayerStacks> {
-    match serde_json::from_value::<PlayerStacks>(value.clone()) {
+fn parse_player_stacks<C>(value: &JsonValue) -> Result<PlayerStacks<C>>
+where
+    C: CurveGroup + CanonicalDeserialize,
+{
+    match serde_json::from_value::<PlayerStacks<C>>(value.clone()) {
         Ok(stacks) => Ok(stacks),
         Err(primary_err) => {
             let entries = value.as_array().ok_or_else(|| {
                 anyhow!("player stacks payload not array-compatible: {primary_err}")
             })?;
 
-            let mut stacks = BTreeMap::new();
+            let mut stacks: PlayerStacks<C> = BTreeMap::new();
             for entry in entries {
                 let seat = entry
                     .get("seat")
                     .and_then(JsonValue::as_u64)
                     .ok_or_else(|| anyhow!("player stack entry missing seat"))?;
-                let player_id = entry.get("player_id").and_then(JsonValue::as_u64);
+                let player_key = entry
+                    .get("player_key")
+                    .cloned()
+                    .map(|value| serde_json::from_value::<crate::ledger::CanonicalKey<C>>(value))
+                    .transpose()
+                    .context("failed to deserialize player canonical key")?;
                 let starting_stack = entry
                     .get("starting_stack")
                     .and_then(JsonValue::as_u64)
@@ -564,7 +574,7 @@ fn parse_player_stacks(value: &JsonValue) -> Result<PlayerStacks> {
                     PlayerStackInfo {
                         seat: u8::try_from(seat)
                             .map_err(|_| anyhow!("seat {} exceeds u8 range", seat))?,
-                        player_id,
+                        player_key,
                         starting_stack,
                         committed_blind,
                         status,
@@ -610,11 +620,13 @@ where
 
     let mut roster: ShufflerRoster<C> = BTreeMap::new();
     for (shuffler_id, point) in points {
+        let canonical = crate::ledger::CanonicalKey::new(point.clone());
         roster.insert(
-            shuffler_id,
+            canonical.clone(),
             ShufflerIdentity {
-                public_key: point.clone(),
-                shuffler_key: crate::ledger::CanonicalKey::new(point),
+                public_key: point,
+                shuffler_key: canonical,
+                shuffler_id,
                 aggregated_public_key: aggregated.clone(),
             },
         );
@@ -685,9 +697,8 @@ where
         .context("expected_order is not an array")?
         .iter()
         .map(|entry| {
-            entry
-                .as_i64()
-                .ok_or_else(|| anyhow!("expected_order entry not an integer"))
+            serde_json::from_value::<crate::ledger::CanonicalKey<C>>(entry.clone())
+                .context("expected_order entry not a canonical key")
         })
         .collect::<Result<Vec<_>>>()?;
 
