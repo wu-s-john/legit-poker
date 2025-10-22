@@ -1,8 +1,9 @@
 use anyhow::Result;
 use ark_crypto_primitives::signature::{schnorr::Signature as SchnorrSignature, SignatureScheme};
 use ark_ec::CurveGroup;
-use ark_serialize::CanonicalSerialize;
-use serde::{Serialize, Deserialize};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 use crate::chaum_pedersen::ChaumPedersenProof;
@@ -26,7 +27,7 @@ use super::snapshot::phases::{
 use super::snapshot::{SnapshotSeq, SnapshotStatus};
 use super::types::{EventPhase, HandStatus, SignatureBytes};
 
-pub trait Street: Clone + Default + Serialize {
+pub trait Street: Clone + Default + Serialize + DeserializeOwned {
     fn status() -> HandStatus;
     fn transcript_kind() -> &'static str;
 }
@@ -77,8 +78,8 @@ impl Street for RiverStreet {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(bound(serialize = ""))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(serialize = "", deserialize = ""))]
 pub struct GamePlayerMessage<R, C>
 where
     R: Street,
@@ -120,13 +121,19 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
     pub turn_index: u16,
+    #[serde(with = "crate::crypto_serde::elgamal_array")]
     pub deck_in: [ElGamalCiphertext<C>; DECK_SIZE],
+    #[serde(with = "crate::crypto_serde::elgamal_array")]
     pub deck_out: [ElGamalCiphertext<C>; DECK_SIZE],
     pub proof: ShuffleProof<C>,
     pub _curve: PhantomData<C>,
@@ -173,13 +180,18 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct GameBlindingDecryptionMessage<C>
 where
     C: CurveGroup,
 {
     pub card_in_deck_position: u8,
     pub share: PlayerTargetedBlindingContribution<C>,
+    #[serde(with = "crate::crypto_serde::curve")]
     pub target_player_public_key: C,
     pub _curve: PhantomData<C>,
 }
@@ -218,13 +230,18 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct GamePartialUnblindingShareMessage<C>
 where
     C: CurveGroup,
 {
     pub card_in_deck_position: u8,
     pub share: PartialUnblindingShare<C>,
+    #[serde(with = "crate::crypto_serde::curve")]
     pub target_player_public_key: C,
     pub _curve: PhantomData<C>,
 }
@@ -263,7 +280,11 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct GameShowdownMessage<C>
 where
     C: CurveGroup,
@@ -314,7 +335,11 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub enum AnyGameMessage<C>
 where
     C: CurveGroup,
@@ -393,7 +418,11 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, M: Serialize, M::Actor: Serialize",
+    deserialize = "C: CanonicalDeserialize, M: DeserializeOwned, M::Actor: DeserializeOwned"
+))]
 pub struct EnvelopedMessage<C, M = AnyGameMessage<C>>
 where
     C: CurveGroup,
@@ -403,11 +432,16 @@ where
     pub game_id: GameId,
     pub actor: M::Actor,
     pub nonce: u64,
+    #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
     pub message: WithSignature<SignatureBytes, M>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct AnyMessageEnvelope<C>
 where
     C: CurveGroup,
@@ -416,11 +450,16 @@ where
     pub game_id: GameId,
     pub actor: AnyActor,
     pub nonce: u64,
+    #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
     pub message: WithSignature<SignatureBytes, AnyGameMessage<C>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct FinalizedAnyMessageEnvelope<C>
 where
     C: CurveGroup,

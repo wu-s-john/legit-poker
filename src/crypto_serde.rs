@@ -1,8 +1,8 @@
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::Error as DeError;
 use serde::ser::Error as SerError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ledger::serialization::{
     canonical_deserialize_hex, canonical_serialize_hex, deserialize_curve_hex, serialize_curve_hex,
@@ -67,7 +67,10 @@ pub mod elgamal {
         c2: C,
     }
 
-    pub fn serialize<C, S>(value: &ElGamalCiphertext<C>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<C, S>(
+        value: &ElGamalCiphertext<C>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         C: CurveGroup + CanonicalSerialize,
         S: Serializer,
@@ -79,7 +82,9 @@ pub mod elgamal {
         .serialize(serializer)
     }
 
-    pub fn deserialize<'de, C, D>(deserializer: D) -> std::result::Result<ElGamalCiphertext<C>, D::Error>
+    pub fn deserialize<'de, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<ElGamalCiphertext<C>, D::Error>
     where
         C: CurveGroup + CanonicalDeserialize,
         D: Deserializer<'de>,
@@ -94,7 +99,10 @@ pub mod chaum_pedersen {
     use super::*;
     use crate::chaum_pedersen::ChaumPedersenProof;
 
-    pub fn serialize<C, S>(value: &ChaumPedersenProof<C>, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<C, S>(
+        value: &ChaumPedersenProof<C>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         C: CurveGroup + CanonicalSerialize,
         C::ScalarField: CanonicalSerialize,
@@ -118,7 +126,9 @@ pub mod chaum_pedersen {
         .serialize(serializer)
     }
 
-    pub fn deserialize<'de, C, D>(deserializer: D) -> std::result::Result<ChaumPedersenProof<C>, D::Error>
+    pub fn deserialize<'de, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<ChaumPedersenProof<C>, D::Error>
     where
         C: CurveGroup + CanonicalDeserialize,
         C::ScalarField: CanonicalDeserialize,
@@ -185,7 +195,10 @@ pub mod shuffle_sorted_deck {
         randomizer: C::BaseField,
     }
 
-    pub fn serialize<C, S>(value: &[(ElGamalCiphertext<C>, C::BaseField)], serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<C, S>(
+        value: &[(ElGamalCiphertext<C>, C::BaseField)],
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         C: CurveGroup + CanonicalSerialize,
         C::BaseField: CanonicalSerialize,
@@ -201,7 +214,9 @@ pub mod shuffle_sorted_deck {
         entries.serialize(serializer)
     }
 
-    pub fn deserialize<'de, C, D>(deserializer: D) -> std::result::Result<Vec<(ElGamalCiphertext<C>, C::BaseField)>, D::Error>
+    pub fn deserialize<'de, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<Vec<(ElGamalCiphertext<C>, C::BaseField)>, D::Error>
     where
         C: CurveGroup + CanonicalDeserialize,
         C::BaseField: CanonicalDeserialize,
@@ -221,7 +236,10 @@ pub mod elgamal_array {
     use crate::shuffling::data_structures::ElGamalCiphertext;
     use std::convert::TryInto;
 
-    pub fn serialize<C, S>(value: &[ElGamalCiphertext<C>; crate::shuffling::data_structures::DECK_SIZE], serializer: S) -> std::result::Result<S::Ok, S::Error>
+    pub fn serialize<C, S>(
+        value: &[ElGamalCiphertext<C>; crate::shuffling::data_structures::DECK_SIZE],
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
     where
         C: CurveGroup + CanonicalSerialize,
         S: Serializer,
@@ -230,7 +248,12 @@ pub mod elgamal_array {
         vec.serialize(serializer)
     }
 
-    pub fn deserialize<'de, C, D>(deserializer: D) -> std::result::Result<[ElGamalCiphertext<C>; crate::shuffling::data_structures::DECK_SIZE], D::Error>
+    pub fn deserialize<'de, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<
+        [ElGamalCiphertext<C>; crate::shuffling::data_structures::DECK_SIZE],
+        D::Error,
+    >
     where
         C: CurveGroup + CanonicalDeserialize,
         D: Deserializer<'de>,

@@ -8,8 +8,8 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::rand::Rng;
 use ark_std::{collections::HashMap, sync::Mutex};
-use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
 use tracing::{instrument, warn};
 
 use crate::signing::{Signable, TranscriptBuilder};
@@ -19,12 +19,10 @@ const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption";
 /// Player-targeted blinding contribution from a single shuffler
 /// Each shuffler contributes their secret δ_j to add blinding specifically allowing the target player access
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct PlayerTargetedBlindingContribution<C: CurveGroup> {
     /// g^δ_j - shuffler's blinding contribution to the base element
     #[serde(with = "crate::crypto_serde::curve")]
@@ -131,12 +129,10 @@ where
 /// This is the complete public transcript that gets posted on-chain,
 /// specifically structured so only the target player can access the card value
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct PlayerAccessibleCiphertext<C: CurveGroup> {
     /// g^(r+Δ) where r is initial randomness and Δ = Σδ_j - the blinded base element
     #[serde(with = "crate::crypto_serde::curve")]
@@ -173,12 +169,10 @@ where
 /// Partial unblinding share from a single committee member
 /// Each committee member j provides their portion of unblinding: blinded_base^x_j where x_j is their secret share
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct PartialUnblindingShare<C: CurveGroup> {
     /// blinded_base^x_j - the partial unblinding from committee member j
     #[serde(with = "crate::crypto_serde::curve")]

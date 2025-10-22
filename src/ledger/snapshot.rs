@@ -6,16 +6,18 @@ use anyhow::{anyhow, Context, Result};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use serde::{de::DeserializeOwned, ser::SerializeMap, Deserialize, Serialize, Deserializer, Serializer};
 use serde::de::Error as DeError;
 use serde::ser::Error as SerError;
+use serde::{
+    de::DeserializeOwned, ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer,
+};
 use serde_json::Value as JsonValue;
 
+use crate::db::entity::sea_orm_active_enums::{ApplicationStatus, PhaseKind};
 use crate::db::entity::{
     hand_configs, hand_player, hand_shufflers, phases as phase_table, players, shufflers,
     table_snapshots,
 };
-use crate::db::entity::sea_orm_active_enums::{ApplicationStatus, PhaseKind};
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL};
 use crate::engine::nl::events::NormalizedAction;
@@ -25,12 +27,12 @@ use crate::engine::nl::types::{
     Street,
 };
 use crate::ledger::hash::{chain_hash, initial_snapshot_hash, message_hash, LedgerHasher};
-use crate::ledger::serialization::{
-    canonical_deserialize_hex, deserialize_curve_bytes, deserialize_curve_hex, serialize_curve_hex,
-};
 use crate::ledger::messages::{
     EnvelopedMessage, FlopStreet, GameMessage, GamePlayerMessage, PreflopStreet, RiverStreet,
     TurnStreet,
+};
+use crate::ledger::serialization::{
+    canonical_deserialize_hex, deserialize_curve_bytes, deserialize_curve_hex, serialize_curve_hex,
 };
 use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId, StateHash};
 use crate::showdown::HandCategory;
@@ -59,12 +61,10 @@ pub type SnapshotSeq = u32;
 // ---- Player identity / seating --------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct PlayerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
@@ -81,12 +81,10 @@ impl<C: CurveGroup> PlayerIdentity<C> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct ShufflerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
@@ -130,12 +128,10 @@ impl<C: CurveGroup> Signable for ShufflerIdentity<C> {
 // ---- Shuffling -----------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct ShufflingStep<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub shuffler_public_key: C,
@@ -143,12 +139,10 @@ pub struct ShufflingStep<C: CurveGroup> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct ShufflingSnapshot<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::elgamal_array")]
     pub initial_deck: [ElGamalCiphertext<C>; DECK_SIZE],
@@ -161,12 +155,10 @@ pub struct ShufflingSnapshot<C: CurveGroup> {
 // ---- Dealing -------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct DealtCard<C: CurveGroup> {
     pub cipher: ElGamalCiphertext<C>,
     pub source_index: Option<u8>,
@@ -363,12 +355,10 @@ mod tests {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct DealingSnapshot<C: CurveGroup> {
     pub assignments: BTreeMap<u8, DealtCard<C>>,
     pub player_ciphertexts: BTreeMap<(SeatId, u8), PlayerAccessibleCiphertext<C>>,
@@ -457,12 +447,10 @@ where
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize"
+))]
 pub struct BettingSnapshot<C: CurveGroup> {
     pub state: BettingStateNL,
     pub last_events: Vec<AnyPlayerActionMsg<C>>,
@@ -473,12 +461,10 @@ pub struct BettingSnapshot<C: CurveGroup> {
 pub type CardIndex = u8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct RevealedHand<C: CurveGroup> {
     pub hole: [CardIndex; 2],
     pub hole_ciphertexts: [PlayerAccessibleCiphertext<C>; 2],
@@ -489,12 +475,10 @@ pub struct RevealedHand<C: CurveGroup> {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct RevealsSnapshot<C: CurveGroup> {
     pub board: Vec<CardIndex>,
     pub revealed_holes: BTreeMap<SeatId, RevealedHand<C>>,
@@ -503,12 +487,10 @@ pub struct RevealsSnapshot<C: CurveGroup> {
 // ---- Table snapshot ------------------------------------------------------------------------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(
-    bound(
-        serialize = "P::ShufflingS: Serialize, P::DealingS: Serialize, P::BettingS: Serialize, P::RevealsS: Serialize, C: CanonicalSerialize",
-        deserialize = "P::ShufflingS: DeserializeOwned, P::DealingS: DeserializeOwned, P::BettingS: DeserializeOwned, P::RevealsS: DeserializeOwned, C: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "P::ShufflingS: Serialize, P::DealingS: Serialize, P::BettingS: Serialize, P::RevealsS: Serialize, C: CanonicalSerialize",
+    deserialize = "P::ShufflingS: DeserializeOwned, P::DealingS: DeserializeOwned, P::BettingS: DeserializeOwned, P::RevealsS: DeserializeOwned, C: CanonicalDeserialize"
+))]
 pub struct TableSnapshot<P, C>
 where
     P: HandPhase<C>,
@@ -739,8 +721,7 @@ where
     D: Deserializer<'de>,
 {
     let raw: BTreeMap<(SeatId, u8), String> = BTreeMap::deserialize(deserializer)?;
-    raw
-        .into_iter()
+    raw.into_iter()
         .map(|(key, hex)| {
             let point = deserialize_curve_hex(&hex).map_err(DeError::custom)?;
             Ok((key, point))
@@ -785,8 +766,8 @@ pub fn deserialize_player_stacks(value: &JsonValue) -> Result<PlayerStacks> {
         status: PlayerStatus,
     }
 
-    let entries: Vec<Entry> = serde_json::from_value(value.clone())
-        .context("player stacks payload invalid")?;
+    let entries: Vec<Entry> =
+        serde_json::from_value(value.clone()).context("player stacks payload invalid")?;
 
     let mut stacks = BTreeMap::new();
     for entry in entries {
@@ -906,14 +887,15 @@ where
     Ok(roster)
 }
 
-async fn load_phase_payload<T>(
+async fn load_phase_payload<T, F>(
     conn: &DatabaseConnection,
     hash: &Option<Vec<u8>>,
     expected: PhaseKind,
     label: &str,
+    parser: F,
 ) -> Result<Option<T>>
 where
-    T: for<'de> Deserialize<'de>,
+    F: FnOnce(&JsonValue) -> Result<T>,
 {
     if let Some(bytes) = hash {
         let row = phase_table::Entity::find_by_id(bytes.clone())
@@ -928,7 +910,7 @@ where
             row.phase_type
         );
 
-        let payload = serde_json::from_value(row.payload)
+        let payload = parser(&row.payload)
             .with_context(|| format!("failed to decode {label} phase payload"))?;
         Ok(Some(payload))
     } else {
@@ -943,12 +925,7 @@ pub async fn rehydrate_snapshot_by_hash<C>(
     state_hash: StateHash,
 ) -> Result<AnyTableSnapshot<C>>
 where
-    C: CurveGroup
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + Send
-        + Sync
-        + 'static,
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize + CanonicalDeserialize,
     C::BaseField: PrimeField + CanonicalSerialize + CanonicalDeserialize,
     C::Affine: Absorb,
@@ -961,8 +938,12 @@ where
         .await?
         .with_context(|| format!("snapshot {:?} not found", state_hash))?;
 
-    let snapshot_sequence = u32::try_from(snapshot_model.sequence)
-        .map_err(|_| anyhow!("snapshot sequence {} exceeds u32::MAX", snapshot_model.sequence))?;
+    let snapshot_sequence = u32::try_from(snapshot_model.sequence).map_err(|_| {
+        anyhow!(
+            "snapshot sequence {} exceeds u32::MAX",
+            snapshot_model.sequence
+        )
+    })?;
     let previous_hash = snapshot_model
         .previous_hash
         .map(state_hash_from_vec)
@@ -993,6 +974,7 @@ where
         &snapshot_model.shuffling_hash,
         PhaseKind::Shuffling,
         "shuffling",
+        |value| deserialize_shuffling_snapshot::<C>(value),
     )
     .await?
     .context("snapshot missing shuffling payload")?;
@@ -1001,6 +983,7 @@ where
         &snapshot_model.dealing_hash,
         PhaseKind::Dealing,
         "dealing",
+        |value| deserialize_dealing_snapshot::<C>(value),
     )
     .await?;
     let betting: Option<BettingSnapshot<C>> = load_phase_payload(
@@ -1008,6 +991,7 @@ where
         &snapshot_model.betting_hash,
         PhaseKind::Betting,
         "betting",
+        |value| deserialize_betting_snapshot::<C>(value),
     )
     .await?;
     let reveals: Option<RevealsSnapshot<C>> = load_phase_payload(
@@ -1015,6 +999,7 @@ where
         &snapshot_model.reveals_hash,
         PhaseKind::Reveals,
         "reveals",
+        |value| serde_json::from_value(value.clone()).map_err(Into::into),
     )
     .await?;
 
@@ -1063,23 +1048,25 @@ where
         };
 
         let table = match betting_snapshot.state.street {
-            Street::Preflop => AnyTableSnapshot::Preflop(TableSnapshot::<PhaseBetting<PreflopStreet>, C> {
-                game_id,
-                hand_id: Some(hand_id),
-                sequence: snapshot_sequence,
-                cfg: Arc::clone(&cfg_arc),
-                shufflers: Arc::clone(&shufflers_arc),
-                players: Arc::clone(&players_arc),
-                seating: Arc::clone(&seating_arc),
-                stacks: Arc::clone(&stacks_arc),
-                previous_hash,
-                state_hash,
-                status,
-                shuffling: shuffling.clone(),
-                dealing: dealing_snapshot,
-                betting: betting_snapshot,
-                reveals: empty_reveals(),
-            }),
+            Street::Preflop => {
+                AnyTableSnapshot::Preflop(TableSnapshot::<PhaseBetting<PreflopStreet>, C> {
+                    game_id,
+                    hand_id: Some(hand_id),
+                    sequence: snapshot_sequence,
+                    cfg: Arc::clone(&cfg_arc),
+                    shufflers: Arc::clone(&shufflers_arc),
+                    players: Arc::clone(&players_arc),
+                    seating: Arc::clone(&seating_arc),
+                    stacks: Arc::clone(&stacks_arc),
+                    previous_hash,
+                    state_hash,
+                    status,
+                    shuffling: shuffling.clone(),
+                    dealing: dealing_snapshot,
+                    betting: betting_snapshot,
+                    reveals: empty_reveals(),
+                })
+            }
             Street::Flop => AnyTableSnapshot::Flop(TableSnapshot::<PhaseBetting<FlopStreet>, C> {
                 game_id,
                 hand_id: Some(hand_id),
@@ -1114,23 +1101,25 @@ where
                 betting: betting_snapshot,
                 reveals: empty_reveals(),
             }),
-            Street::River => AnyTableSnapshot::River(TableSnapshot::<PhaseBetting<RiverStreet>, C> {
-                game_id,
-                hand_id: Some(hand_id),
-                sequence: snapshot_sequence,
-                cfg: Arc::clone(&cfg_arc),
-                shufflers: Arc::clone(&shufflers_arc),
-                players: Arc::clone(&players_arc),
-                seating: Arc::clone(&seating_arc),
-                stacks: Arc::clone(&stacks_arc),
-                previous_hash,
-                state_hash,
-                status,
-                shuffling: shuffling.clone(),
-                dealing: dealing_snapshot,
-                betting: betting_snapshot,
-                reveals: empty_reveals(),
-            }),
+            Street::River => {
+                AnyTableSnapshot::River(TableSnapshot::<PhaseBetting<RiverStreet>, C> {
+                    game_id,
+                    hand_id: Some(hand_id),
+                    sequence: snapshot_sequence,
+                    cfg: Arc::clone(&cfg_arc),
+                    shufflers: Arc::clone(&shufflers_arc),
+                    players: Arc::clone(&players_arc),
+                    seating: Arc::clone(&seating_arc),
+                    stacks: Arc::clone(&stacks_arc),
+                    previous_hash,
+                    state_hash,
+                    status,
+                    shuffling: shuffling.clone(),
+                    dealing: dealing_snapshot,
+                    betting: betting_snapshot,
+                    reveals: empty_reveals(),
+                })
+            }
         };
 
         return Ok(table);
@@ -1194,7 +1183,9 @@ where
     Ok(ElGamalCiphertext::new(c1, c2))
 }
 
-fn deserialize_chaum_pedersen_proof<C>(value: &JsonValue) -> Result<crate::chaum_pedersen::ChaumPedersenProof<C>>
+fn deserialize_chaum_pedersen_proof<C>(
+    value: &JsonValue,
+) -> Result<crate::chaum_pedersen::ChaumPedersenProof<C>>
 where
     C: CurveGroup + CanonicalDeserialize,
     C::ScalarField: CanonicalDeserialize,
@@ -1543,9 +1534,7 @@ fn deserialize_pot(entry: &JsonValue) -> Result<Pot> {
 }
 
 fn deserialize_pots(value: &JsonValue) -> Result<Pots> {
-    let main = value
-        .get("main")
-        .context("pots missing main")?;
+    let main = value.get("main").context("pots missing main")?;
     let sides_array = value
         .get("sides")
         .context("pots missing sides")?
@@ -1563,9 +1552,7 @@ fn deserialize_pots(value: &JsonValue) -> Result<Pots> {
 }
 
 fn deserialize_hand_config(value: &JsonValue) -> Result<HandConfig> {
-    let stakes_value = value
-        .get("stakes")
-        .context("hand config missing stakes")?;
+    let stakes_value = value.get("stakes").context("hand config missing stakes")?;
     let small_blind = stakes_value
         .get("small_blind")
         .and_then(JsonValue::as_u64)
@@ -1682,7 +1669,9 @@ where
         .get("last_full_raise_amount")
         .and_then(JsonValue::as_u64)
         .ok_or_else(|| anyhow!("betting state missing last_full_raise_amount"))?;
-    let last_aggressor = state_value.get("last_aggressor").and_then(JsonValue::as_u64);
+    let last_aggressor = state_value
+        .get("last_aggressor")
+        .and_then(JsonValue::as_u64);
     let voluntary_bet_opened = state_value
         .get("voluntary_bet_opened")
         .and_then(JsonValue::as_bool)
@@ -1753,7 +1742,8 @@ where
     Ok(BettingSnapshot {
         state: BettingState {
             street: deserialize_street(street_label)?,
-            button: u8::try_from(button).map_err(|_| anyhow!("button {button} exceeds u8 range"))?,
+            button: u8::try_from(button)
+                .map_err(|_| anyhow!("button {button} exceeds u8 range"))?,
             first_to_act: u8::try_from(first_to_act)
                 .map_err(|_| anyhow!("first_to_act {first_to_act} exceeds u8 range"))?,
             to_act: u8::try_from(to_act)
@@ -1761,7 +1751,9 @@ where
             current_bet_to_match,
             last_full_raise_amount,
             last_aggressor: last_aggressor
-                .map(|value| u8::try_from(value).map_err(|_| anyhow!("last_aggressor exceeds u8 range")))
+                .map(|value| {
+                    u8::try_from(value).map_err(|_| anyhow!("last_aggressor exceeds u8 range"))
+                })
                 .transpose()?,
             voluntary_bet_opened,
             players,
@@ -1775,7 +1767,9 @@ where
     })
 }
 
-fn deserialize_player_accessible_ciphertext<C>(value: &JsonValue) -> Result<PlayerAccessibleCiphertext<C>>
+fn deserialize_player_accessible_ciphertext<C>(
+    value: &JsonValue,
+) -> Result<PlayerAccessibleCiphertext<C>>
 where
     C: CurveGroup + CanonicalDeserialize,
     C::ScalarField: CanonicalDeserialize,
@@ -1814,7 +1808,9 @@ where
     })
 }
 
-fn deserialize_blinding_contribution<C>(value: &JsonValue) -> Result<PlayerTargetedBlindingContribution<C>>
+fn deserialize_blinding_contribution<C>(
+    value: &JsonValue,
+) -> Result<PlayerTargetedBlindingContribution<C>>
 where
     C: CurveGroup + CanonicalDeserialize,
     C::ScalarField: CanonicalDeserialize,

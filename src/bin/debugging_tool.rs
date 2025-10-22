@@ -1,17 +1,19 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde::Serialize;
 use sea_orm::DatabaseConnection;
+use serde::Serialize;
 use std::io::Write;
+use std::sync::Arc;
 
-use zk_poker::debugging_tools::fetch_hand_archive;
-use zk_poker::ledger::{GameId, HandId};
-use zk_poker::ledger::snapshot::rehydrate_snapshot_by_hash;
-use zk_poker::ledger::types::StateHash;
-use zk_poker::db;
-use zk_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
-use zk_poker::ledger::messages::FinalizedAnyMessageEnvelope;
 use ark_bn254::G1Projective as Curve;
+use zk_poker::db;
+use zk_poker::debugging_tools::fetch_hand_archive;
+use zk_poker::ledger::messages::FinalizedAnyMessageEnvelope;
+use zk_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
+use zk_poker::ledger::snapshot::rehydrate_snapshot_by_hash;
+use zk_poker::ledger::store::SeaOrmEventStore;
+use zk_poker::ledger::types::StateHash;
+use zk_poker::ledger::{GameId, HandId};
 
 #[derive(Parser)]
 #[command(author, version, about = "Ledger debugging utilities", long_about = None)]
@@ -70,12 +72,10 @@ struct ArchiveOutput<T> {
 }
 
 #[derive(Serialize)]
-struct LatestSnapshotOutput<T> {
+struct LatestSnapshotOutput<T, M> {
     snapshot: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(skip)]
-    #[allow(dead_code)]
-    messages: Option<Vec<FinalizedAnyMessageEnvelope<Curve>>>,
+    messages: Option<Vec<M>>,
 }
 
 fn write_json<T: Serialize>(value: &T, pretty: bool) -> Result<()> {
@@ -124,38 +124,29 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
     let conn = db::connect().await?;
 
     let state_hash = match args.state_hash {
-        Some(ref hex) => parse_state_hash(hex)
-            .with_context(|| format!("invalid state hash {hex}"))?,
+        Some(ref hex) => {
+            parse_state_hash(hex).with_context(|| format!("invalid state hash {hex}"))?
+        }
         None => fetch_tip_hash(&conn, args.hand)
             .await?
             .context("hand has no current_state_hash")?,
     };
 
-    let snapshot = rehydrate_snapshot_by_hash::<Curve>(&conn, args.game, args.hand, state_hash).await?;
+    let snapshot =
+        rehydrate_snapshot_by_hash::<Curve>(&conn, args.game, args.hand, state_hash).await?;
 
     let messages = if args.include_messages {
-        // TODO: JSON serialization for finalized messages
-        let store = zk_poker::ledger::store::SeaOrmEventStore::<Curve>::new(conn.clone());
-        let query = HandMessagesQuery::new(std::sync::Arc::new(store));
-        let events = query
-            .execute(
-                args.hand,
-                &SequenceBounds {
-                    from: None,
-                    to: None,
-                },
-            )
-            .await
-            .unwrap_or_default();
+        let store = SeaOrmEventStore::<Curve>::new(conn.clone());
+        let query = HandMessagesQuery::new(Arc::new(store));
+        let bounds = SequenceBounds::new(None, Some(snapshot.sequence()))?;
+        let events = query.execute(args.hand, &bounds).await?;
         Some(events)
     } else {
         None
     };
 
-    let payload = LatestSnapshotOutput {
-        snapshot,
-        messages,
-    };
+    let payload =
+        LatestSnapshotOutput::<_, FinalizedAnyMessageEnvelope<Curve>> { snapshot, messages };
 
     write_json(&payload, pretty)
 }
@@ -171,10 +162,7 @@ fn parse_state_hash(input: &str) -> Result<StateHash> {
     Ok(StateHash::from(array))
 }
 
-async fn fetch_tip_hash(
-    conn: &DatabaseConnection,
-    hand_id: HandId,
-) -> Result<Option<StateHash>> {
+async fn fetch_tip_hash(conn: &DatabaseConnection, hand_id: HandId) -> Result<Option<StateHash>> {
     use sea_orm::EntityTrait;
     use zk_poker::db::entity::hands;
 

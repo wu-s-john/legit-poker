@@ -16,12 +16,10 @@ const LOG_TARGET: &str = "legit_poker::shuffling::chaum_pedersen";
 /// Proves that the same secret was used to compute α = g^secret and β = H^secret
 /// This is a non-interactive proof using the Fiat-Shamir heuristic
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
-#[serde(
-    bound(
-        serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
-        deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
-    )
-)]
+#[serde(bound(
+    serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
+    deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
+))]
 pub struct ChaumPedersenProof<C: CurveGroup> {
     /// First commitment: T_g = g^w
     #[serde(with = "crate::crypto_serde::curve")]
