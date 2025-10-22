@@ -243,6 +243,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::serde::assert_round_trip_json;
     use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
     use ark_std::test_rng;
@@ -316,5 +317,17 @@ mod tests {
             !batch_verify_chaum_pedersen_with_poseidon(&proofs, g, h, &alphas, &betas, &mut rng),
             "Batch verification with tampered proof should fail"
         );
+    }
+
+    #[test]
+    fn proof_serializes_with_serde() {
+        type ScalarField = <G1Projective as PrimeGroup>::ScalarField;
+        let proof = ChaumPedersenProof {
+            t_g: G1Projective::generator(),
+            t_h: G1Projective::generator(),
+            z: ScalarField::from(42u64),
+        };
+
+        assert_round_trip_json(&proof);
     }
 }

@@ -87,3 +87,26 @@ impl From<StateHash> for [u8; 32] {
         hash.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::serde::assert_round_trip_eq;
+
+    #[test]
+    fn ledger_enums_round_trip_with_serde() {
+        assert_round_trip_eq(&EntityKind::Shuffler);
+        assert_round_trip_eq(&HandStatus::Showdown);
+        assert_round_trip_eq(&EventPhase::Reveals);
+    }
+
+    #[test]
+    fn nonce_key_round_trips_with_serde() {
+        let key = NonceKey {
+            hand_id: 12,
+            entity_kind: EntityKind::Player,
+            entity_id: 44,
+        };
+        assert_round_trip_eq(&key);
+    }
+}

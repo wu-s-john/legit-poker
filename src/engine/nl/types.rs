@@ -112,3 +112,72 @@ pub struct ActionLogEntry {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ActionLog(pub Vec<ActionLogEntry>);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::serde::assert_round_trip_eq;
+
+    #[test]
+    fn enums_round_trip_with_serde() {
+        assert_round_trip_eq(&Street::Turn);
+        assert_round_trip_eq(&PlayerStatus::AllIn);
+    }
+
+    #[test]
+    fn structs_round_trip_with_serde() {
+        let stakes = TableStakes {
+            small_blind: 1,
+            big_blind: 2,
+            ante: 0,
+        };
+        assert_round_trip_eq(&stakes);
+
+        let cfg = HandConfig {
+            stakes: stakes.clone(),
+            button: 0,
+            small_blind_seat: 1,
+            big_blind_seat: 2,
+            check_raise_allowed: true,
+        };
+        assert_round_trip_eq(&cfg);
+
+        let pot = Pot {
+            amount: 120,
+            eligible: vec![0, 1],
+        };
+        assert_round_trip_eq(&pot);
+
+        let pots = Pots {
+            main: pot.clone(),
+            sides: vec![pot.clone()],
+        };
+        assert_round_trip_eq(&pots);
+
+        let player_state = PlayerState {
+            seat: 3,
+            player_id: Some(99),
+            stack: 450,
+            committed_this_round: 10,
+            committed_total: 20,
+            status: PlayerStatus::Active,
+            has_acted_this_round: false,
+        };
+        assert_round_trip_eq(&player_state);
+
+        let entry = ActionLogEntry {
+            street: Street::Flop,
+            seat: 1,
+            action: NormalizedAction::Call {
+                call_amount: 40,
+                full_call: true,
+            },
+            price_to_call_before: 30,
+            current_bet_to_match_after: 40,
+        };
+        assert_round_trip_eq(&entry);
+
+        let log = ActionLog(vec![entry]);
+        assert_round_trip_eq(&log);
+    }
+}

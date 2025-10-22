@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use sea_orm::DatabaseConnection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::Arc;
 
@@ -71,7 +71,7 @@ struct ArchiveOutput<T> {
     data: T,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct LatestSnapshotOutput<T, M> {
     snapshot: T,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,4 +182,158 @@ fn state_hash_from_bytes(bytes: Vec<u8>) -> Result<StateHash> {
         .try_into()
         .map_err(|_| anyhow::anyhow!("state hash must be 32 bytes"))?;
     Ok(StateHash::from(array))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LatestSnapshotOutput;
+    use ark_bn254::G1Projective;
+    use ark_ec::PrimeGroup;
+    use serde::{de::DeserializeOwned, Serialize};
+    use serde_json;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use zk_poker::engine::nl::actions::PlayerBetAction;
+    use zk_poker::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
+    use zk_poker::ledger::actor::AnyActor;
+    use zk_poker::ledger::messages::{
+        AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
+        PreflopStreet,
+    };
+    use zk_poker::ledger::snapshot::{
+        phases::PhaseShuffling, AnyTableSnapshot, PlayerIdentity, PlayerStackInfo,
+        ShufflerIdentity, ShufflingSnapshot, SnapshotStatus, TableSnapshot,
+    };
+    use zk_poker::ledger::types::{EventPhase, ShufflerId, StateHash};
+    use zk_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
+    use zk_poker::signing::{Signable, WithSignature};
+
+    type Curve = G1Projective;
+
+    fn assert_round_trip_json<T>(value: &T)
+    where
+        T: Serialize + DeserializeOwned,
+    {
+        let json = serde_json::to_value(value).expect("serialization should succeed");
+        let restored: T =
+            serde_json::from_value(json.clone()).expect("deserialization should succeed");
+        let json_after = serde_json::to_value(restored).expect("re-serialization should succeed");
+        assert_eq!(json_after, json, "serde_json round-trip altered payload");
+    }
+
+    fn sample_ciphertext() -> ElGamalCiphertext<Curve> {
+        let generator = Curve::generator();
+        ElGamalCiphertext::new(generator, generator)
+    }
+
+    #[test]
+    fn latest_snapshot_output_round_trips_with_serde() {
+        let cfg = HandConfig {
+            stakes: TableStakes {
+                small_blind: 1,
+                big_blind: 2,
+                ante: 0,
+            },
+            button: 0,
+            small_blind_seat: 1,
+            big_blind_seat: 2,
+            check_raise_allowed: true,
+        };
+
+        let mut shufflers = BTreeMap::<ShufflerId, ShufflerIdentity<Curve>>::new();
+        shufflers.insert(
+            100,
+            ShufflerIdentity {
+                public_key: Curve::generator(),
+                aggregated_public_key: Curve::generator(),
+            },
+        );
+
+        let mut players = BTreeMap::new();
+        players.insert(
+            200u64,
+            PlayerIdentity {
+                public_key: Curve::generator(),
+                nonce: 0,
+                seat: 0,
+            },
+        );
+
+        let mut seating = BTreeMap::new();
+        seating.insert(0, Some(200u64));
+
+        let mut stacks = BTreeMap::new();
+        stacks.insert(
+            0,
+            PlayerStackInfo {
+                seat: 0,
+                player_id: Some(200u64),
+                starting_stack: 1_000,
+                committed_blind: 0,
+                status: PlayerStatus::Active,
+            },
+        );
+
+        let deck: [ElGamalCiphertext<Curve>; DECK_SIZE] =
+            std::array::from_fn(|_| sample_ciphertext());
+        let shuffling = ShufflingSnapshot {
+            initial_deck: deck.clone(),
+            steps: Vec::new(),
+            final_deck: deck,
+            expected_order: vec![100],
+        };
+
+        let table: TableSnapshot<PhaseShuffling, Curve> = TableSnapshot {
+            game_id: 1,
+            hand_id: Some(2),
+            sequence: 0,
+            cfg: Arc::new(cfg),
+            shufflers: Arc::new(shufflers),
+            players: Arc::new(players),
+            seating: Arc::new(seating),
+            stacks: Arc::new(stacks),
+            previous_hash: None,
+            state_hash: StateHash::zero(),
+            status: SnapshotStatus::Success,
+            shuffling,
+            dealing: (),
+            betting: (),
+            reveals: (),
+        };
+
+        let snapshot = AnyTableSnapshot::Shuffling(table);
+
+        let game_message = AnyGameMessage::PlayerPreflop(
+            GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Call),
+        );
+        let transcript = game_message.to_signing_bytes();
+        let envelope = AnyMessageEnvelope {
+            hand_id: 2,
+            game_id: 1,
+            actor: AnyActor::Player {
+                seat_id: 0,
+                player_id: 200,
+            },
+            nonce: 3,
+            public_key: Curve::generator(),
+            message: WithSignature {
+                value: game_message,
+                signature: vec![0, 1, 2, 3],
+                transcript,
+            },
+        };
+        let finalized = FinalizedAnyMessageEnvelope {
+            envelope,
+            snapshot_status: SnapshotStatus::Success,
+            applied_phase: EventPhase::Shuffling,
+            snapshot_sequence_id: 1,
+        };
+
+        let payload = LatestSnapshotOutput {
+            snapshot,
+            messages: Some(vec![finalized]),
+        };
+
+        assert_round_trip_json(&payload);
+    }
 }

@@ -530,44 +530,50 @@ where
 }
 
 fn parse_player_stacks(value: &JsonValue) -> Result<PlayerStacks> {
-    let entries = value
-        .as_array()
-        .context("player stacks payload not an array")?;
+    match serde_json::from_value::<PlayerStacks>(value.clone()) {
+        Ok(stacks) => Ok(stacks),
+        Err(primary_err) => {
+            let entries = value.as_array().ok_or_else(|| {
+                anyhow!("player stacks payload not array-compatible: {primary_err}")
+            })?;
 
-    let mut stacks = BTreeMap::new();
-    for entry in entries {
-        let seat = entry
-            .get("seat")
-            .and_then(JsonValue::as_u64)
-            .ok_or_else(|| anyhow!("player stack entry missing seat"))?;
-        let player_id = entry.get("player_id").and_then(JsonValue::as_u64);
-        let starting_stack = entry
-            .get("starting_stack")
-            .and_then(JsonValue::as_u64)
-            .ok_or_else(|| anyhow!("player stack entry missing starting_stack"))?;
-        let committed_blind = entry
-            .get("committed_blind")
-            .and_then(JsonValue::as_u64)
-            .ok_or_else(|| anyhow!("player stack entry missing committed_blind"))?;
-        let status_label = entry
-            .get("status")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| anyhow!("player stack entry missing status"))?;
-        let status = parse_player_status(status_label)?;
+            let mut stacks = BTreeMap::new();
+            for entry in entries {
+                let seat = entry
+                    .get("seat")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| anyhow!("player stack entry missing seat"))?;
+                let player_id = entry.get("player_id").and_then(JsonValue::as_u64);
+                let starting_stack = entry
+                    .get("starting_stack")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| anyhow!("player stack entry missing starting_stack"))?;
+                let committed_blind = entry
+                    .get("committed_blind")
+                    .and_then(JsonValue::as_u64)
+                    .ok_or_else(|| anyhow!("player stack entry missing committed_blind"))?;
+                let status_label = entry
+                    .get("status")
+                    .and_then(JsonValue::as_str)
+                    .ok_or_else(|| anyhow!("player stack entry missing status"))?;
+                let status = parse_player_status(status_label)?;
 
-        stacks.insert(
-            u8::try_from(seat).map_err(|_| anyhow!("seat {} exceeds u8 range", seat))?,
-            PlayerStackInfo {
-                seat: u8::try_from(seat).map_err(|_| anyhow!("seat {} exceeds u8 range", seat))?,
-                player_id,
-                starting_stack,
-                committed_blind,
-                status,
-            },
-        );
+                stacks.insert(
+                    u8::try_from(seat).map_err(|_| anyhow!("seat {} exceeds u8 range", seat))?,
+                    PlayerStackInfo {
+                        seat: u8::try_from(seat)
+                            .map_err(|_| anyhow!("seat {} exceeds u8 range", seat))?,
+                        player_id,
+                        starting_stack,
+                        committed_blind,
+                        status,
+                    },
+                );
+            }
+
+            Ok(stacks)
+        }
     }
-
-    Ok(stacks)
 }
 
 async fn build_shuffler_roster<C>(
@@ -621,6 +627,10 @@ where
     C::BaseField: CanonicalDeserialize,
     C::ScalarField: CanonicalDeserialize,
 {
+    if let Ok(snapshot) = serde_json::from_value::<ShufflingSnapshot<C>>(value.clone()) {
+        return Ok(snapshot);
+    }
+
     let initial = value
         .get("initial_deck")
         .context("shuffling payload missing initial_deck")?
@@ -710,6 +720,10 @@ where
     C::BaseField: CanonicalDeserialize,
     C::ScalarField: CanonicalDeserialize,
 {
+    if let Ok(proof) = serde_json::from_value::<ShuffleProof<C>>(value.clone()) {
+        return Ok(proof);
+    }
+
     let input_deck = value
         .get("input_deck")
         .context("shuffle proof missing input_deck")?

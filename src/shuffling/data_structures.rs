@@ -192,6 +192,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::serde::{assert_round_trip_eq, assert_round_trip_json};
     use ark_ec::{CurveGroup, PrimeGroup};
     use ark_grumpkin::Projective as GrumpkinProjective;
 
@@ -239,6 +240,17 @@ mod tests {
         different.rerandomization_values[0] = Scalar::from(1u64);
 
         assert_ne!(proof_a.to_signing_bytes(), different.to_signing_bytes());
+    }
+
+    #[test]
+    fn ciphertext_round_trips_with_serde() {
+        assert_round_trip_eq(&sample_ciphertext());
+    }
+
+    #[test]
+    fn shuffle_proof_round_trips_with_serde() {
+        let proof = sample_shuffle_proof();
+        assert_round_trip_json(&proof);
     }
 }
 

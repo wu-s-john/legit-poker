@@ -303,6 +303,18 @@ debug-ledger-hand game hand include-events="true" include-snapshots="true":
     fi
     RUST_LOG={{ RUST_LOG }} "${cmd[@]}"
 
+debug-latest game hand state-hash='' pretty='true':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cmd=(cargo run --bin debugging_tool -- latest --game {{ game }} --hand {{ hand }} --include-messages)
+    if [[ -n "{{ state-hash }}" ]]; then
+        cmd+=(--state-hash "{{ state-hash }}")
+    fi
+    if [[ "{{ pretty }}" != "true" ]]; then
+        cmd+=(--pretty=false)
+    fi
+    RUST_LOG={{ RUST_LOG }} "${cmd[@]}"
+
 # --- SeaORM entities ---
 
 # Install SeaORM generator CLI

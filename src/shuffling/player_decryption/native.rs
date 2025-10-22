@@ -548,11 +548,47 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chaum_pedersen::ChaumPedersenProof;
+    use crate::test_utils::serde::assert_round_trip_json;
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
+
+    type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
+
+    fn sample_cp_proof() -> ChaumPedersenProof<GrumpkinProjective> {
+        ChaumPedersenProof {
+            t_g: GrumpkinProjective::generator(),
+            t_h: GrumpkinProjective::generator(),
+            z: ScalarField::from(7u64),
+        }
+    }
+
+    fn sample_blinding_contribution() -> PlayerTargetedBlindingContribution<GrumpkinProjective> {
+        PlayerTargetedBlindingContribution {
+            blinding_base_contribution: GrumpkinProjective::generator(),
+            blinding_combined_contribution: GrumpkinProjective::generator(),
+            proof: sample_cp_proof(),
+        }
+    }
+
+    fn sample_accessible_ciphertext() -> PlayerAccessibleCiphertext<GrumpkinProjective> {
+        PlayerAccessibleCiphertext {
+            blinded_base: GrumpkinProjective::generator(),
+            blinded_message_with_player_key: GrumpkinProjective::generator(),
+            player_unblinding_helper: GrumpkinProjective::generator(),
+            shuffler_proofs: vec![sample_cp_proof()],
+        }
+    }
+
+    fn sample_partial_unblinding_share() -> PartialUnblindingShare<GrumpkinProjective> {
+        PartialUnblindingShare {
+            share: GrumpkinProjective::generator(),
+            member_index: 0,
+        }
+    }
 
     #[test]
     fn test_player_targeted_blinding_contribution_proof() {
@@ -602,7 +638,6 @@ mod tests {
     #[test]
     fn test_complete_blinding_and_recovery_protocol() {
         let mut rng = test_rng();
-        type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
 
         // ============ SETUP PHASE ============
         // Three shufflers with their own keys
@@ -893,6 +928,24 @@ mod tests {
                 card_value
             );
         }
+    }
+
+    #[test]
+    fn blinding_contribution_round_trips_with_serde() {
+        let contribution = sample_blinding_contribution();
+        assert_round_trip_json(&contribution);
+    }
+
+    #[test]
+    fn accessible_ciphertext_round_trips_with_serde() {
+        let ciphertext = sample_accessible_ciphertext();
+        assert_round_trip_json(&ciphertext);
+    }
+
+    #[test]
+    fn partial_unblinding_share_round_trips_with_serde() {
+        let share = sample_partial_unblinding_share();
+        assert_round_trip_json(&share);
     }
 
     #[test]

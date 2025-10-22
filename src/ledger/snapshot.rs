@@ -296,6 +296,87 @@ pub fn build_initial_betting_state(cfg: &HandConfig, stacks: &PlayerStacks) -> B
 mod tests {
     use super::*;
     use crate::engine::nl::types::Street;
+    use crate::ledger::snapshot::phases::AnyPhase;
+    use crate::ledger::test_support::{
+        fixture_complete_snapshot, fixture_dealing_snapshot, fixture_flop_snapshot,
+        fixture_preflop_snapshot, fixture_river_snapshot, fixture_showdown_snapshot,
+        fixture_shuffling_snapshot, fixture_turn_snapshot, FixtureContext,
+    };
+    use crate::test_utils::serde::{assert_round_trip_eq, assert_round_trip_json};
+    use crate::{
+        chaum_pedersen::ChaumPedersenProof,
+        shuffling::{
+            community_decryption::CommunityDecryptionShare,
+            data_structures::ElGamalCiphertext,
+            player_decryption::{
+                PartialUnblindingShare, PlayerAccessibleCiphertext,
+                PlayerTargetedBlindingContribution,
+            },
+        },
+    };
+    use ark_bn254::G1Projective;
+    use ark_ec::PrimeGroup;
+    use serde::{de::DeserializeOwned, Serialize};
+
+    type Curve = G1Projective;
+
+    fn assert_named_round_trip<T>(label: &str, value: &T)
+    where
+        T: Serialize + DeserializeOwned,
+    {
+        let json = serde_json::to_value(value)
+            .unwrap_or_else(|err| panic!("{label} serialization failed: {err}"));
+        let restored: T = serde_json::from_value(json.clone())
+            .unwrap_or_else(|err| panic!("{label} deserialization failed: {err}"));
+        let json_after = serde_json::to_value(restored)
+            .unwrap_or_else(|err| panic!("{label} reserialization failed: {err}"));
+        assert_eq!(json_after, json, "{label} round-trip altered payload");
+    }
+
+    fn sample_cipher<C: CurveGroup>() -> ElGamalCiphertext<C> {
+        let generator = C::generator();
+        ElGamalCiphertext::new(generator, generator)
+    }
+
+    fn sample_cp_proof<C: CurveGroup>() -> ChaumPedersenProof<C> {
+        ChaumPedersenProof {
+            t_g: C::generator(),
+            t_h: C::generator(),
+            z: <C as PrimeGroup>::ScalarField::from(7u64),
+        }
+    }
+
+    fn sample_accessible_ciphertext<C: CurveGroup>() -> PlayerAccessibleCiphertext<C> {
+        PlayerAccessibleCiphertext {
+            blinded_base: C::generator(),
+            blinded_message_with_player_key: C::generator(),
+            player_unblinding_helper: C::generator(),
+            shuffler_proofs: vec![sample_cp_proof::<C>()],
+        }
+    }
+
+    fn sample_blinding_contribution<C: CurveGroup>() -> PlayerTargetedBlindingContribution<C> {
+        PlayerTargetedBlindingContribution {
+            blinding_base_contribution: C::generator(),
+            blinding_combined_contribution: C::generator(),
+            proof: sample_cp_proof::<C>(),
+        }
+    }
+
+    fn sample_partial_unblinding_share<C: CurveGroup>() -> PartialUnblindingShare<C> {
+        PartialUnblindingShare {
+            share: C::generator(),
+            member_index: 0,
+        }
+    }
+
+    fn sample_community_share<C: CurveGroup>() -> CommunityDecryptionShare<C> {
+        CommunityDecryptionShare {
+            share: C::generator(),
+            proof: sample_cp_proof::<C>(),
+            member_index: 0,
+        }
+    }
 
     #[ignore]
     #[test]
@@ -343,6 +424,138 @@ mod tests {
         assert_eq!(bb.committed_this_round, 2);
         assert_eq!(state.pots.main.amount, 3);
     }
+
+    #[test]
+    fn snapshot_components_round_trip_with_serde() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11, 12]);
+        let shuffling = fixture_shuffling_snapshot(&ctx);
+        let dealing = fixture_dealing_snapshot(&ctx);
+        let preflop = fixture_preflop_snapshot(&ctx);
+        let showdown = fixture_showdown_snapshot(&ctx);
+
+        let player_identity = ctx
+            .players
+            .iter()
+            .next()
+            .map(|(_, identity)| identity.clone())
+            .expect("fixture players present");
+        assert_round_trip_json(&player_identity);
+
+        let shuffler_identity = ctx
+            .shufflers
+            .iter()
+            .next()
+            .map(|(_, identity)| identity.clone())
+            .expect("fixture shufflers present");
+        assert_round_trip_json(&shuffler_identity);
+
+        let player_stack = ctx
+            .stacks
+            .iter()
+            .next()
+            .map(|(_, stack)| stack.clone())
+            .expect("fixture stacks present");
+        assert_round_trip_json(&player_stack);
+
+        assert_round_trip_eq(&SnapshotStatus::Failure("boom".to_string()));
+        assert_round_trip_eq(&CardDestination::Hole {
+            seat: 1,
+            hole_index: 0,
+        });
+
+        assert_named_round_trip("shuffling", &shuffling.shuffling);
+        assert_named_round_trip("dealing", &dealing.dealing);
+        assert_named_round_trip("betting", &preflop.betting);
+        assert_named_round_trip("reveals", &showdown.reveals);
+
+        let action = AnyPlayerActionMsg::Turn(GamePlayerMessage::<TurnStreet, Curve>::new(
+            crate::engine::nl::actions::PlayerBetAction::Call,
+        ));
+        assert_round_trip_json(&action);
+
+        let phase = AnyPhase::Dealing(dealing.dealing.clone());
+        assert_round_trip_json(&phase);
+    }
+
+    #[test]
+    fn table_snapshots_round_trip_with_serde() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11, 12]);
+        let shuffling = fixture_shuffling_snapshot(&ctx);
+        let dealing = fixture_dealing_snapshot(&ctx);
+        let preflop = fixture_preflop_snapshot(&ctx);
+        let flop = fixture_flop_snapshot(&ctx);
+        let turn = fixture_turn_snapshot(&ctx);
+        let river = fixture_river_snapshot(&ctx);
+        let showdown = fixture_showdown_snapshot(&ctx);
+        let complete = fixture_complete_snapshot(&ctx);
+
+        assert_round_trip_json(&shuffling);
+        assert_round_trip_json(&dealing);
+        assert_round_trip_json(&preflop);
+        assert_round_trip_json(&flop);
+        assert_round_trip_json(&turn);
+        assert_round_trip_json(&river);
+        assert_round_trip_json(&showdown);
+        assert_round_trip_json(&complete);
+
+        let any_shuffling = AnyTableSnapshot::Shuffling(shuffling.clone());
+        let any_dealing = AnyTableSnapshot::Dealing(dealing.clone());
+        let any_preflop = AnyTableSnapshot::Preflop(preflop.clone());
+        let any_flop = AnyTableSnapshot::Flop(flop.clone());
+        let any_turn = AnyTableSnapshot::Turn(turn.clone());
+        let any_river = AnyTableSnapshot::River(river.clone());
+        let any_showdown = AnyTableSnapshot::Showdown(showdown.clone());
+        let any_complete = AnyTableSnapshot::Complete(complete.clone());
+
+        assert_named_round_trip("any_shuffling", &any_shuffling);
+        assert_named_round_trip("any_dealing", &any_dealing);
+        assert_named_round_trip("any_preflop", &any_preflop);
+        assert_named_round_trip("any_flop", &any_flop);
+        assert_named_round_trip("any_turn", &any_turn);
+        assert_named_round_trip("any_river", &any_river);
+        assert_named_round_trip("any_showdown", &any_showdown);
+        assert_named_round_trip("any_complete", &any_complete);
+    }
+
+    #[test]
+    fn dealing_snapshot_tuple_maps_serialize() {
+        let mut assignments = BTreeMap::new();
+        assignments.insert(
+            0,
+            DealtCard {
+                cipher: sample_cipher::<Curve>(),
+                source_index: Some(0),
+            },
+        );
+
+        let mut player_ciphertexts = BTreeMap::new();
+        player_ciphertexts.insert((0, 0), sample_accessible_ciphertext::<Curve>());
+
+        let mut player_blinding_contribs = BTreeMap::new();
+        player_blinding_contribs.insert((1, 0, 0), sample_blinding_contribution::<Curve>());
+
+        let mut shares_map = BTreeMap::new();
+        shares_map.insert(0, sample_partial_unblinding_share::<Curve>());
+        let mut player_unblinding_shares = BTreeMap::new();
+        player_unblinding_shares.insert((0, 0), shares_map);
+
+        let mut community_shares = BTreeMap::new();
+        community_shares.insert((1, 0), sample_community_share::<Curve>());
+
+        let snapshot = DealingSnapshot {
+            assignments,
+            player_ciphertexts,
+            player_blinding_contribs,
+            player_unblinding_shares,
+            player_unblinding_combined: BTreeMap::new(),
+            community_decryption_shares: community_shares,
+            community_cards: BTreeMap::new(),
+            card_plan: BTreeMap::new(),
+        };
+
+        let json = serde_json::to_string(&snapshot).expect("dealing snapshot should serialize");
+        println!("serialized dealing snapshot: {json}");
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -351,16 +564,44 @@ mod tests {
     deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
 ))]
 pub struct DealingSnapshot<C: CurveGroup> {
+    #[serde(
+        serialize_with = "crate::crypto_serde::array_map::serialize",
+        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+    )]
     pub assignments: BTreeMap<u8, DealtCard<C>>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
+        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+    )]
     pub player_ciphertexts: BTreeMap<(SeatId, u8), PlayerAccessibleCiphertext<C>>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::tuple_map3::serialize",
+        deserialize_with = "crate::crypto_serde::tuple_map3::deserialize"
+    )]
     pub player_blinding_contribs:
         BTreeMap<(ShufflerId, SeatId, u8), PlayerTargetedBlindingContribution<C>>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
+        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+    )]
     pub player_unblinding_shares:
         BTreeMap<(SeatId, u8), BTreeMap<usize, PartialUnblindingShare<C>>>,
     #[serde(with = "crate::crypto_serde::curve_map")]
     pub player_unblinding_combined: BTreeMap<(SeatId, u8), C>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
+        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+    )]
     pub community_decryption_shares: BTreeMap<(ShufflerId, u8), CommunityDecryptionShare<C>>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::array_map::serialize",
+        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+    )]
     pub community_cards: BTreeMap<u8, CardIndex>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::array_map::serialize",
+        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+    )]
     pub card_plan: CardPlan,
 }
 

@@ -34,24 +34,34 @@ pub mod curve {
 /// Serde helpers for BTreeMap<_, Curve> values encoded as hex strings.
 pub mod curve_map {
     use super::*;
-    use serde::ser::SerializeMap;
     use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry<K> {
+        key: K,
+        value: String,
+    }
 
     pub fn serialize<K, C, S>(
         value: &BTreeMap<K, C>,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error>
     where
-        K: Serialize + Ord,
+        K: Serialize + Clone + Ord,
         C: CurveGroup + CanonicalSerialize,
         S: Serializer,
     {
-        let mut map = serializer.serialize_map(Some(value.len()))?;
-        for (key, point) in value {
-            let hex = serialize_curve_hex(point).map_err(SerError::custom)?;
-            map.serialize_entry(key, &hex)?;
-        }
-        map.end()
+        let entries: Vec<Entry<K>> = value
+            .iter()
+            .map(|(key, point)| {
+                let hex = serialize_curve_hex(point).map_err(SerError::custom)?;
+                Ok(Entry {
+                    key: key.clone(),
+                    value: hex,
+                })
+            })
+            .collect::<std::result::Result<_, _>>()?;
+        entries.serialize(serializer)
     }
 
     pub fn deserialize<'de, K, C, D>(
@@ -62,13 +72,173 @@ pub mod curve_map {
         C: CurveGroup + CanonicalDeserialize,
         D: Deserializer<'de>,
     {
-        let raw = BTreeMap::<K, String>::deserialize(deserializer)?;
-        raw.into_iter()
-            .map(|(key, hex)| {
-                let point = deserialize_curve_hex(&hex).map_err(DeError::custom)?;
-                Ok((key, point))
+        let entries = Vec::<Entry<K>>::deserialize(deserializer)?;
+        entries
+            .into_iter()
+            .map(|entry| {
+                let point = deserialize_curve_hex(&entry.value).map_err(DeError::custom)?;
+                Ok((entry.key, point))
             })
             .collect()
+    }
+}
+
+/// Serde helpers for maps serialized as sorted arrays of `[key, value]` pairs.
+pub mod array_map {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    pub fn serialize<K, V, S>(
+        value: &BTreeMap<K, V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K: Serialize + Clone + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<(K, &V)> = value.iter().map(|(key, v)| (key.clone(), v)).collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<(K, V)>::deserialize(deserializer)?;
+        Ok(entries.into_iter().collect())
+    }
+}
+
+/// Serde helpers for maps keyed by 2-tuples.
+pub mod tuple_map2 {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry<K1, K2, V> {
+        k1: K1,
+        k2: K2,
+        value: V,
+    }
+
+    pub fn serialize<K1, K2, V, S>(
+        value: &BTreeMap<(K1, K2), V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K1: Serialize + Clone + Ord,
+        K2: Serialize + Clone + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<K1, K2, &V>> = value
+            .iter()
+            .map(|((k1, k2), v)| Entry {
+                k1: k1.clone(),
+                k2: k2.clone(),
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K1, K2, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(K1, K2), V>, D::Error>
+    where
+        K1: Deserialize<'de> + Ord,
+        K2: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<K1, K2, V>>::deserialize(deserializer)?;
+        entries
+            .into_iter()
+            .map(|entry| Ok(((entry.k1, entry.k2), entry.value)))
+            .collect()
+    }
+}
+
+/// Serde helpers for maps keyed by 3-tuples.
+pub mod tuple_map3 {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry<K1, K2, K3, V> {
+        k1: K1,
+        k2: K2,
+        k3: K3,
+        value: V,
+    }
+
+    pub fn serialize<K1, K2, K3, V, S>(
+        value: &BTreeMap<(K1, K2, K3), V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K1: Serialize + Clone + Ord,
+        K2: Serialize + Clone + Ord,
+        K3: Serialize + Clone + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<K1, K2, K3, &V>> = value
+            .iter()
+            .map(|((k1, k2, k3), v)| Entry {
+                k1: k1.clone(),
+                k2: k2.clone(),
+                k3: k3.clone(),
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K1, K2, K3, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(K1, K2, K3), V>, D::Error>
+    where
+        K1: Deserialize<'de> + Ord,
+        K2: Deserialize<'de> + Ord,
+        K3: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<K1, K2, K3, V>>::deserialize(deserializer)?;
+        entries
+            .into_iter()
+            .map(|entry| Ok(((entry.k1, entry.k2, entry.k3), entry.value)))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+    struct TupleMap2Wrapper {
+        #[serde(
+            serialize_with = "tuple_map2::serialize",
+            deserialize_with = "tuple_map2::deserialize"
+        )]
+        map: std::collections::BTreeMap<(u8, u8), u64>,
+    }
+
+    #[test]
+    fn tuple_map2_round_trip() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert((1, 2), 3);
+        let wrapper = TupleMap2Wrapper { map };
+        let json = serde_json::to_string(&wrapper).expect("serialize");
+        let restored: TupleMap2Wrapper = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.map.get(&(1, 2)), Some(&3));
     }
 }
 

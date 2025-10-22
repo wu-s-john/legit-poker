@@ -593,6 +593,7 @@ mod tests {
     use super::*;
     use crate::player::signing::PlayerActionBet;
     use crate::signing::{Signable, WithSignature};
+    use crate::test_utils::serde::assert_round_trip_json;
     use anyhow::Result;
     use ark_crypto_primitives::signature::{schnorr::Schnorr, SignatureScheme};
     use ark_ec::CurveGroup;
@@ -716,6 +717,105 @@ mod tests {
             nonce: 0,
         })?;
         Ok(())
+    }
+
+    #[test]
+    fn game_messages_round_trip_with_serde() {
+        for message in sample_ledger_messages() {
+            assert_round_trip_json(&message);
+        }
+
+        assert_round_trip_json(&GameShuffleMessage::<GrumpkinProjective>::new(
+            sample_deck(),
+            sample_deck(),
+            sample_shuffle_proof(),
+            3,
+        ));
+        assert_round_trip_json(&GameBlindingDecryptionMessage::<GrumpkinProjective>::new(
+            11,
+            sample_blinding_contribution(),
+            sample_public_key(),
+        ));
+        assert_round_trip_json(
+            &GamePartialUnblindingShareMessage::<GrumpkinProjective>::new(
+                21,
+                sample_partial_unblinding_share(),
+                sample_public_key(),
+            ),
+        );
+        assert_round_trip_json(&GameShowdownMessage::<GrumpkinProjective>::new(
+            [sample_cp_proof(), sample_cp_proof()],
+            [7, 8],
+            [
+                sample_accessible_ciphertext(),
+                sample_accessible_ciphertext(),
+            ],
+        ));
+        assert_round_trip_json(
+            &GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(PlayerBetAction::Call),
+        );
+        assert_round_trip_json(&GamePlayerMessage::<FlopStreet, GrumpkinProjective>::new(
+            PlayerBetAction::Check,
+        ));
+        assert_round_trip_json(&GamePlayerMessage::<TurnStreet, GrumpkinProjective>::new(
+            PlayerBetAction::BetTo { to: 55 },
+        ));
+        assert_round_trip_json(&GamePlayerMessage::<RiverStreet, GrumpkinProjective>::new(
+            PlayerBetAction::RaiseTo { to: 75 },
+        ));
+    }
+
+    #[test]
+    fn envelopes_round_trip_with_serde() {
+        let player_message =
+            GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(PlayerBetAction::Call);
+        let transcript_player = player_message.to_signing_bytes();
+        let player_envelope = EnvelopedMessage::<GrumpkinProjective, _> {
+            hand_id: 10,
+            game_id: 20,
+            actor: crate::ledger::actor::PlayerActor {
+                seat_id: 1,
+                player_id: 42,
+            },
+            nonce: 5,
+            public_key: sample_public_key(),
+            message: WithSignature {
+                value: player_message,
+                signature: vec![0, 1, 2],
+                transcript: transcript_player,
+            },
+        };
+        assert_round_trip_json(&player_envelope);
+
+        let any_message = AnyGameMessage::PlayerPreflop(GamePlayerMessage::<
+            PreflopStreet,
+            GrumpkinProjective,
+        >::new(PlayerBetAction::Check));
+        let transcript_any = any_message.to_signing_bytes();
+        let envelope = AnyMessageEnvelope {
+            hand_id: 30,
+            game_id: 40,
+            actor: AnyActor::Player {
+                seat_id: 2,
+                player_id: 99,
+            },
+            nonce: 8,
+            public_key: sample_public_key(),
+            message: WithSignature {
+                value: any_message,
+                signature: vec![4, 5, 6],
+                transcript: transcript_any,
+            },
+        };
+        assert_round_trip_json(&envelope);
+
+        let finalized = FinalizedAnyMessageEnvelope {
+            envelope,
+            snapshot_status: SnapshotStatus::Failure("error".to_string()),
+            applied_phase: EventPhase::Betting,
+            snapshot_sequence_id: 12,
+        };
+        assert_round_trip_json(&finalized);
     }
 
     fn sample_cipher<C: CurveGroup>() -> ElGamalCiphertext<C> {

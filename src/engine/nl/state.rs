@@ -33,6 +33,90 @@ pub struct BettingState {
     pub action_log: ActionLog,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::nl::{events::NormalizedAction, types};
+    use crate::test_utils::serde::assert_round_trip_json;
+
+    #[test]
+    fn betting_state_round_trips_with_serde() {
+        let stakes = types::TableStakes {
+            small_blind: 1,
+            big_blind: 2,
+            ante: 0,
+        };
+        let cfg = HandConfig {
+            stakes: stakes.clone(),
+            button: 0,
+            small_blind_seat: 1,
+            big_blind_seat: 2,
+            check_raise_allowed: true,
+        };
+        let players = vec![
+            PlayerState {
+                seat: 0,
+                player_id: Some(1),
+                stack: 900,
+                committed_this_round: 50,
+                committed_total: 150,
+                status: PlayerStatus::Active,
+                has_acted_this_round: true,
+            },
+            PlayerState {
+                seat: 1,
+                player_id: Some(2),
+                stack: 750,
+                committed_this_round: 40,
+                committed_total: 120,
+                status: PlayerStatus::AllIn,
+                has_acted_this_round: true,
+            },
+        ];
+        let main_pot = types::Pot {
+            amount: 200,
+            eligible: vec![0, 1],
+        };
+        let pots = Pots {
+            main: main_pot.clone(),
+            sides: vec![types::Pot {
+                amount: 40,
+                eligible: vec![0],
+            }],
+        };
+        let action_log = ActionLog(vec![types::ActionLogEntry {
+            street: Street::Turn,
+            seat: 0,
+            action: NormalizedAction::Raise {
+                to: 90,
+                raise_amount: 40,
+                full_raise: true,
+            },
+            price_to_call_before: 50,
+            current_bet_to_match_after: 90,
+        }]);
+
+        let state = BettingState {
+            street: Street::Turn,
+            button: 0,
+            first_to_act: 0,
+            to_act: 0,
+            current_bet_to_match: 90,
+            last_full_raise_amount: 40,
+            last_aggressor: Some(0),
+            voluntary_bet_opened: true,
+            players,
+            pots,
+            cfg,
+            pending_to_match: vec![0],
+            betting_locked_all_in: false,
+            action_log,
+        };
+
+        assert_round_trip_json(&state);
+    }
+}
+
 impl BettingState {
     pub fn active_non_allin_seats(&self) -> Vec<SeatId> {
         self.players

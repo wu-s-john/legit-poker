@@ -290,11 +290,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chaum_pedersen::ChaumPedersenProof;
+    use crate::test_utils::serde::assert_round_trip_json;
     use ark_ec::PrimeGroup;
     use ark_grumpkin::Projective as GrumpkinProjective;
     use ark_std::test_rng;
     use ark_std::UniformRand;
     use ark_std::Zero;
+
+    type ScalarField = <GrumpkinProjective as PrimeGroup>::ScalarField;
+
+    fn sample_cp_proof() -> ChaumPedersenProof<GrumpkinProjective> {
+        ChaumPedersenProof {
+            t_g: GrumpkinProjective::generator(),
+            t_h: GrumpkinProjective::generator(),
+            z: ScalarField::from(3u64),
+        }
+    }
 
     #[test]
     fn test_community_decryption_share_proof() {
@@ -330,6 +342,17 @@ mod tests {
             !bad_share.verify(&ciphertext, committee_public_key),
             "Tampered share should fail verification"
         );
+    }
+
+    #[test]
+    fn community_decryption_share_round_trips_with_serde() {
+        let share = CommunityDecryptionShare {
+            share: GrumpkinProjective::generator(),
+            proof: sample_cp_proof(),
+            member_index: 0,
+        };
+
+        assert_round_trip_json(&share);
     }
 
     #[test]

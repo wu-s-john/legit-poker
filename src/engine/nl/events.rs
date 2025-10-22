@@ -32,6 +32,23 @@ pub enum NormalizedAction {
     },
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::serde::assert_round_trip_eq;
+
+    #[test]
+    fn normalized_action_round_trips_with_serde() {
+        let action = NormalizedAction::Raise {
+            to: 42,
+            raise_amount: 17,
+            full_raise: true,
+        };
+
+        assert_round_trip_eq(&action);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GameEvent {
     ActionApplied {
