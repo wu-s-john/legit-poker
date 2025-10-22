@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use ark_bn254::G1Projective as Curve;
 use hex;
-use serde_json::{self, Value};
+use serde_json;
 use sha2::{Digest, Sha256};
 use zk_poker::db;
 use zk_poker::debugging_tools::fetch_hand_archive;
@@ -64,7 +64,7 @@ struct LatestArgs {
 
     /// Optional state hash (0x-prefixed hex). If omitted, uses the tip hash.
     #[arg(long)]
-    state_hash: Option<String>,
+    state_hash: Option<StateHash>,
 
     /// Fetch finalized messages up to the snapshot (messages are not serialized yet).
     #[arg(long)]
@@ -78,7 +78,7 @@ struct ArchiveOutput<T> {
 
 #[derive(Serialize, Deserialize)]
 struct LatestSnapshotOutput {
-    snapshot: Value,
+    snapshot: zk_poker::ledger::snapshot::AnyTableSnapshot<Curve>,
     #[serde(skip_serializing_if = "Option::is_none")]
     messages: Option<Vec<FinalizedEnvelopeDisplay>>,
 }
@@ -129,9 +129,7 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
     let conn = db::connect().await?;
 
     let state_hash = match args.state_hash {
-        Some(ref hex) => {
-            parse_state_hash(hex).with_context(|| format!("invalid state hash {hex}"))?
-        }
+        Some(hash) => hash,
         None => fetch_tip_hash(&conn, args.hand)
             .await?
             .context("hand has no current_state_hash")?,
@@ -139,9 +137,6 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
 
     let snapshot =
         rehydrate_snapshot_by_hash::<Curve>(&conn, args.game, args.hand, state_hash).await?;
-
-    let mut snapshot_json = serde_json::to_value(&snapshot)?;
-    normalize_hash_fields(&mut snapshot_json);
 
     let messages = if args.include_messages {
         let store = SeaOrmEventStore::<Curve>::new(conn.clone());
@@ -157,22 +152,11 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
         messages.map(|m| m.into_iter().map(FinalizedEnvelopeDisplay::from).collect());
 
     let payload = LatestSnapshotOutput {
-        snapshot: snapshot_json,
+        snapshot,
         messages: normalized_messages,
     };
 
     write_json(&payload, pretty)
-}
-
-fn parse_state_hash(input: &str) -> Result<StateHash> {
-    let trimmed = input.trim();
-    let without_prefix = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-    let bytes = hex::decode(without_prefix)?;
-    let array: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("state hash must be 32 bytes"))?;
-    Ok(StateHash::from(array))
 }
 
 async fn fetch_tip_hash(conn: &DatabaseConnection, hand_id: HandId) -> Result<Option<StateHash>> {
@@ -181,69 +165,19 @@ async fn fetch_tip_hash(conn: &DatabaseConnection, hand_id: HandId) -> Result<Op
 
     let row = hands::Entity::find_by_id(hand_id).one(conn).await?;
     if let Some(model) = row {
-        Ok(model
-            .current_state_hash
-            .map(|bytes| state_hash_from_bytes(bytes).unwrap_or_else(|_| StateHash::zero())))
+        match model.current_state_hash {
+            Some(bytes) => Ok(Some(StateHash::from_bytes(bytes)?)),
+            None => Ok(None),
+        }
     } else {
         anyhow::bail!("hand {hand_id} not found");
     }
-}
-
-fn state_hash_from_bytes(bytes: Vec<u8>) -> Result<StateHash> {
-    let array: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("state hash must be 32 bytes"))?;
-    Ok(StateHash::from(array))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("0x{}", hex::encode(hasher.finalize()))
-}
-
-fn normalize_hash_fields(value: &mut Value) {
-    match value {
-        Value::Object(map) => {
-            if let Some(hash) = map.get_mut("state_hash") {
-                if let Some(hex) = array_to_hex(hash) {
-                    *hash = Value::String(hex);
-                }
-            }
-            if let Some(prev) = map.get_mut("previous_hash") {
-                if let Some(hex) = array_to_hex(prev) {
-                    *prev = Value::String(hex);
-                }
-            }
-            for v in map.values_mut() {
-                normalize_hash_fields(v);
-            }
-        }
-        Value::Array(arr) => {
-            for v in arr {
-                normalize_hash_fields(v);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn array_to_hex(value: &Value) -> Option<String> {
-    if let Value::Array(arr) = value {
-        if arr.len() == 32 {
-            let mut bytes = [0u8; 32];
-            for (i, v) in arr.iter().enumerate() {
-                let n = v.as_u64()?;
-                if n > 255 {
-                    return None;
-                }
-                bytes[i] = n as u8;
-            }
-            return Some(format!("0x{}", hex::encode(bytes)));
-        }
-    }
-    None
 }
 
 #[derive(Serialize, Deserialize)]
@@ -422,8 +356,6 @@ mod tests {
         };
 
         let snapshot = AnyTableSnapshot::Shuffling(table);
-        let mut snapshot_json = serde_json::to_value(&snapshot).expect("serialize snapshot");
-        super::normalize_hash_fields(&mut snapshot_json);
 
         let game_message = AnyGameMessage::PlayerPreflop(
             GamePlayerMessage::<PreflopStreet, Curve>::new(PlayerBetAction::Call),
@@ -453,7 +385,7 @@ mod tests {
         };
 
         let payload = LatestSnapshotOutput {
-            snapshot: snapshot_json,
+            snapshot,
             messages: Some(vec![finalized.into()]),
         };
 

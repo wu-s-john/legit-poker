@@ -396,9 +396,9 @@ where
 
     let sequence = u32::try_from(snapshot_model.sequence)
         .map_err(|_| anyhow!("snapshot sequence {} out of range", snapshot_model.sequence))?;
-    let state_hash = state_hash_from_vec(snapshot_model.state_hash.clone())?;
+    let state_hash = StateHash::from_bytes(snapshot_model.state_hash.clone())?;
     let previous_hash = match snapshot_model.previous_hash.clone() {
-        Some(bytes) => Some(state_hash_from_vec(bytes)?),
+        Some(bytes) => Some(StateHash::from_bytes(bytes)?),
         None => None,
     };
     let status = match snapshot_model.application_status {
@@ -470,14 +470,6 @@ fn hand_config_from_model(
             .map_err(|_| anyhow!("big blind seat exceeds u8 range"))?,
         check_raise_allowed: model.check_raise_allowed,
     })
-}
-
-fn state_hash_from_vec(bytes: Vec<u8>) -> Result<StateHash> {
-    let array: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow!("state hash must be 32 bytes"))?;
-    Ok(StateHash::from(array))
 }
 
 async fn build_player_roster<C>(
