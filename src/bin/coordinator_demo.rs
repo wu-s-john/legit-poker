@@ -29,8 +29,8 @@ use zk_poker::ledger::state::LedgerState;
 use zk_poker::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
 use zk_poker::ledger::typestate::MaybeSaved;
 use zk_poker::ledger::verifier::{LedgerVerifier, Verifier};
-use zk_poker::ledger::LedgerLobby;
 use zk_poker::ledger::HandId;
+use zk_poker::ledger::LedgerLobby;
 use zk_poker::shuffling::{draw_shuffler_public_key, make_global_public_keys};
 
 const LOG_TARGET: &str = "bin::coordinator_demo";

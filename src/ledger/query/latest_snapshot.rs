@@ -17,7 +17,6 @@ where
     state: Arc<LedgerState<C>>,
 }
 
-
 impl<C> LatestSnapshotQuery<C>
 where
     C: CurveGroup,

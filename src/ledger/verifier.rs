@@ -518,11 +518,11 @@ fn validate_blinding<C: CurveGroup>(
         CardDestination::Hole { seat, hole_index } => (seat, *hole_index),
         _ => return Err(VerifyError::InvalidMessage),
     };
-    if table
-        .dealing
-        .player_blinding_contribs
-        .contains_key(&(actor.shuffler_key.clone(), *seat, hole_index))
-    {
+    if table.dealing.player_blinding_contribs.contains_key(&(
+        actor.shuffler_key.clone(),
+        *seat,
+        hole_index,
+    )) {
         return Err(VerifyError::InvalidMessage);
     }
     let player_key = seating
@@ -641,8 +641,7 @@ fn validate_showdown<C: CurveGroup>(
     players: &PlayerRoster<C>,
     actor: &PlayerActor<C>,
     message: &GameShowdownMessage<C>,
-) -> Result<(), VerifyError>
-{
+) -> Result<(), VerifyError> {
     if table.reveals.revealed_holes.contains_key(&actor.seat_id) {
         return Err(VerifyError::InvalidMessage);
     }
@@ -716,7 +715,6 @@ fn validate_showdown<C: CurveGroup>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
     use crate::chaum_pedersen::ChaumPedersenProof;
     use crate::engine::nl::state::BettingState;
     use crate::engine::nl::types::{ActionLog, HandConfig, PlayerState, PlayerStatus, TableStakes};
@@ -733,10 +731,11 @@ mod tests {
         PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
     };
     use crate::signing::Signable;
-    use ark_ec::PrimeGroup;
     use ark_bn254::G1Projective as Curve;
+    use ark_ec::PrimeGroup;
     use ark_ff::Zero;
     use ark_std::UniformRand;
+    use std::collections::BTreeMap;
 
     const GAME_ID: GameId = 1;
     const HAND_ID: HandId = 99;
@@ -1119,30 +1118,27 @@ mod tests {
         }
 
         fn blinding_envelope(&self) -> AnyMessageEnvelope<Curve> {
-            let target_player_public_key = self
-                .player_identity(PLAYER_ID)
-                .public_key
-                .clone();
-        let shuffler_identity = self
-            .shufflers
-            .get(self.shuffler_key(SHUFFLER_ID))
-            .expect("shuffler identity");
-        let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
-            0,
-            dummy_blinding_share(),
-            target_player_public_key,
-        ));
-        build_envelope(
-            HAND_ID,
-            message,
-            AnyActor::Shuffler {
-                shuffler_id: SHUFFLER_ID,
-                shuffler_key: shuffler_identity.shuffler_key.clone(),
-            },
-            shuffler_identity.public_key.clone(),
-            0,
-        )
-    }
+            let target_player_public_key = self.player_identity(PLAYER_ID).public_key.clone();
+            let shuffler_identity = self
+                .shufflers
+                .get(self.shuffler_key(SHUFFLER_ID))
+                .expect("shuffler identity");
+            let message = AnyGameMessage::Blinding(GameBlindingDecryptionMessage::new(
+                0,
+                dummy_blinding_share(),
+                target_player_public_key,
+            ));
+            build_envelope(
+                HAND_ID,
+                message,
+                AnyActor::Shuffler {
+                    shuffler_id: SHUFFLER_ID,
+                    shuffler_key: shuffler_identity.shuffler_key.clone(),
+                },
+                shuffler_identity.public_key.clone(),
+                0,
+            )
+        }
 
         fn partial_unblinding_envelope(
             &self,
@@ -1150,11 +1146,11 @@ mod tests {
             _member_index: usize,
             nonce: u64,
         ) -> AnyMessageEnvelope<Curve> {
-        let shuffler_identity = self
-            .shufflers
-            .get(self.shuffler_key(shuffler_id))
-            .expect("shuffler identity");
-        let message =
+            let shuffler_identity = self
+                .shufflers
+                .get(self.shuffler_key(shuffler_id))
+                .expect("shuffler identity");
+            let message =
                 AnyGameMessage::PartialUnblinding(GamePartialUnblindingShareMessage::new(
                     0,
                     PartialUnblindingShare {

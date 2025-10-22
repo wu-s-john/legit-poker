@@ -42,8 +42,6 @@ where
     }
 }
 
-
-
 #[derive(Serialize)]
 #[serde(bound(serialize = "C: CanonicalSerialize"))]
 pub struct HandMessagesResponse<C>
@@ -87,6 +85,3 @@ where
         })
     }
 }
-
-
-

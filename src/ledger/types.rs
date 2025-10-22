@@ -44,10 +44,7 @@ pub type SignatureBytes = Vec<u8>;
 pub type PublicKeyBytes = Vec<u8>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct StateHash(
-    #[serde(with = "state_hash_hex")]
-    [u8; 32]
-);
+pub struct StateHash(#[serde(with = "state_hash_hex")] [u8; 32]);
 
 impl StateHash {
     pub const fn new(bytes: [u8; 32]) -> Self {
@@ -108,9 +105,11 @@ impl std::str::FromStr for StateHash {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let trimmed = s.trim();
         let without_prefix = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-        let bytes = hex::decode(without_prefix)
-            .map_err(|e| anyhow::anyhow!("invalid hex: {}", e))?;
-        let array: [u8; 32] = bytes.as_slice().try_into()
+        let bytes =
+            hex::decode(without_prefix).map_err(|e| anyhow::anyhow!("invalid hex: {}", e))?;
+        let array: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
             .map_err(|_| anyhow::anyhow!("state hash must be 32 bytes"))?;
         Ok(StateHash::from(array))
     }
@@ -133,9 +132,9 @@ mod state_hash_hex {
         let s = String::deserialize(deserializer)?;
         let trimmed = s.strip_prefix("0x").unwrap_or(&s);
         let bytes = hex::decode(trimmed).map_err(serde::de::Error::custom)?;
-        bytes.try_into().map_err(|_| {
-            serde::de::Error::custom("state hash must be exactly 32 bytes")
-        })
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("state hash must be exactly 32 bytes"))
     }
 }
 

@@ -427,12 +427,11 @@ where
             });
 
         if all_hole_cards_ready {
-            let betting_state =
-                build_initial_betting_state(
-                    snapshot.cfg.as_ref(),
-                    snapshot.stacks.as_ref(),
-                    snapshot.players.as_ref(),
-                );
+            let betting_state = build_initial_betting_state(
+                snapshot.cfg.as_ref(),
+                snapshot.stacks.as_ref(),
+                snapshot.players.as_ref(),
+            );
             let betting = BettingSnapshot {
                 state: betting_state,
                 last_events: Vec::new(),
@@ -1287,14 +1286,8 @@ mod tests {
             transcript,
         };
 
-        let shuffler_key = ctx
-            .shuffler_keys
-            .get(&shuffler_id)
-            .expect("shuffler key");
-        let shuffler_identity = ctx
-            .shufflers
-            .get(shuffler_key)
-            .expect("shuffler identity");
+        let shuffler_key = ctx.shuffler_keys.get(&shuffler_id).expect("shuffler key");
+        let shuffler_identity = ctx.shufflers.get(shuffler_key).expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 
@@ -1323,14 +1316,8 @@ mod tests {
             transcript,
         };
 
-        let shuffler_key = ctx
-            .shuffler_keys
-            .get(&shuffler_id)
-            .expect("shuffler key");
-        let shuffler_identity = ctx
-            .shufflers
-            .get(shuffler_key)
-            .expect("shuffler identity");
+        let shuffler_key = ctx.shuffler_keys.get(&shuffler_id).expect("shuffler key");
+        let shuffler_identity = ctx.shufflers.get(shuffler_key).expect("shuffler identity");
         let public_key = shuffler_identity.public_key.clone();
         let shuffler_key = shuffler_identity.shuffler_key.clone();
 
@@ -1579,9 +1566,9 @@ mod tests {
             .iter()
             .find_map(|(&seat, player)| player.as_ref().map(|key| (seat, key.clone())))
             .and_then(|(seat, key)| {
-                ctx.players.get(&key).map(|identity| {
-                    (seat, identity.player_id, identity.public_key.clone())
-                })
+                ctx.players
+                    .get(&key)
+                    .map(|identity| (seat, identity.player_id, identity.public_key.clone()))
             })
             .expect("fixture to contain at least one player")
     }
@@ -1655,14 +1642,13 @@ mod tests {
 
         match result {
             AnyTableSnapshot::Dealing(next) => {
-                let shuffler_key = ctx
-                    .shuffler_keys
-                    .get(&10)
-                    .expect("shuffler key");
+                let shuffler_key = ctx.shuffler_keys.get(&10).expect("shuffler key");
                 assert!(
-                    next.dealing
-                        .player_blinding_contribs
-                        .contains_key(&(shuffler_key.clone(), seat, 0)),
+                    next.dealing.player_blinding_contribs.contains_key(&(
+                        shuffler_key.clone(),
+                        seat,
+                        0
+                    )),
                     "contribution recorded in snapshot"
                 );
                 assert!(
