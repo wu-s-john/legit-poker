@@ -27,8 +27,8 @@ pub struct CommunityDecryptionShare<C: CurveGroup> {
     pub share: C,
     /// Proof that log_g(pk_j) = log_c1(share_j)
     pub proof: ChaumPedersenProof<C>,
-    /// Index of the committee member providing this share
-    pub member_index: usize,
+    /// Canonical key of the committee member providing this share
+    pub member_key: crate::ledger::CanonicalKey<C>,
 }
 
 impl<C> CommunityDecryptionShare<C>

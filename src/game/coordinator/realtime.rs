@@ -658,7 +658,10 @@ where
     };
 
     let shuffler_actor = match actor {
-        AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+        AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor {
+            shuffler_id,
+            shuffler_key,
+        },
         other => {
             warn!(
                 target = LOG_TARGET,

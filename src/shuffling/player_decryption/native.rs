@@ -177,8 +177,8 @@ pub struct PartialUnblindingShare<C: CurveGroup> {
     /// blinded_base^x_j - the partial unblinding from committee member j
     #[serde(with = "crate::crypto_serde::curve")]
     pub share: C,
-    /// Index of the committee member providing this share
-    pub member_index: usize,
+    /// Canonical key of the committee member providing this share
+    pub member_key: crate::ledger::CanonicalKey<C>,
 }
 
 impl<C> Signable for PartialUnblindingShare<C>
@@ -190,7 +190,7 @@ where
     }
 
     fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(self.member_index as u8);
+        self.member_key.write_transcript(builder);
         append_curve_point(builder, &self.share);
     }
 }

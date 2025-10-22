@@ -448,7 +448,7 @@ where
 {
     pub hand_id: HandId,
     pub game_id: GameId,
-    pub actor: AnyActor,
+    pub actor: AnyActor<C>,
     pub nonce: u64,
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
@@ -550,42 +550,42 @@ where
 
 impl<C: CurveGroup> GameMessage<C> for GameShuffleMessage<C> {
     type Phase = PhaseShuffling;
-    type Actor = ShufflerActor;
+    type Actor = ShufflerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GameBlindingDecryptionMessage<C> {
     type Phase = PhaseDealing;
-    type Actor = ShufflerActor;
+    type Actor = ShufflerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GamePartialUnblindingShareMessage<C> {
     type Phase = PhaseDealing;
-    type Actor = ShufflerActor;
+    type Actor = ShufflerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<PreflopStreet, C> {
     type Phase = PhaseBetting<PreflopStreet>;
-    type Actor = PlayerActor;
+    type Actor = PlayerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<FlopStreet, C> {
     type Phase = PhaseBetting<FlopStreet>;
-    type Actor = PlayerActor;
+    type Actor = PlayerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<TurnStreet, C> {
     type Phase = PhaseBetting<TurnStreet>;
-    type Actor = PlayerActor;
+    type Actor = PlayerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GamePlayerMessage<RiverStreet, C> {
     type Phase = PhaseBetting<RiverStreet>;
-    type Actor = PlayerActor;
+    type Actor = PlayerActor<C>;
 }
 
 impl<C: CurveGroup> GameMessage<C> for GameShowdownMessage<C> {
     type Phase = PhaseShowdown;
-    type Actor = PlayerActor;
+    type Actor = PlayerActor<C>;
 }
 
 #[cfg(test)]

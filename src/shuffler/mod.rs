@@ -460,6 +460,7 @@ where
         let public_key = self.public_key.clone();
         let actor = ShufflerActor {
             shuffler_id: self.shuffler_id,
+            shuffler_key: crate::ledger::CanonicalKey::new(public_key.clone()),
         };
         let events_rx = {
             let guard = self.events_rx.lock();
@@ -481,7 +482,7 @@ where
             events_rx,
             history_cap,
             public_key.clone(),
-            actor,
+            &actor,
         );
 
         let (deal_tx, deal_rx) = broadcast::channel(DEAL_CHANNEL_CAPACITY);
@@ -496,7 +497,7 @@ where
             Arc::clone(&params),
             Arc::clone(&secret),
             public_key.clone(),
-            actor,
+            &actor,
         );
 
         let mut subscription =
@@ -537,6 +538,10 @@ where
             }
         }
 
+        let actor = ShufflerActor {
+            shuffler_id: self.shuffler_id,
+            shuffler_key: crate::ledger::CanonicalKey::new(self.public_key),
+        };
         Self::emit_shuffle(
             &self.api,
             &self.params,
@@ -544,9 +549,7 @@ where
             &self.submit,
             &runtime_arc,
             &self.public_key,
-            ShufflerActor {
-                shuffler_id: self.shuffler_id,
-            },
+            &actor,
         )
         .await
     }
@@ -561,7 +564,7 @@ where
         shuffle_updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
         history_cap: usize,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> JoinHandle<()>
     where
         C: Send + Sync + 'static,
@@ -572,6 +575,7 @@ where
         S::Parameters: Send + Sync + 'static,
         S::SecretKey: Send + Sync + 'static,
     {
+        let actor_clone = actor.clone();
         tokio::spawn(async move {
             let game_id = runtime.game_id;
             let hand_id = runtime.hand_id;
@@ -584,7 +588,7 @@ where
                 shuffle_updates,
                 history_cap,
                 public_key,
-                actor,
+                &actor_clone,
                 shuffler_index,
             )
             .await
@@ -615,7 +619,7 @@ where
         mut updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
         history_cap: usize,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         shuffler_index: usize,
     ) -> Result<()>
     where
@@ -723,7 +727,7 @@ where
         params: Arc<S::Parameters>,
         secret: Arc<S::SecretKey>,
         public_key: C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         shuffler_index: usize,
     ) -> Result<()>
     where
@@ -803,7 +807,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -838,7 +842,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -974,7 +978,7 @@ where
         _params: &Arc<S::Parameters>,
         _secret: &Arc<S::SecretKey>,
         _public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -1013,7 +1017,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         message: GameBlindingDecryptionMessage<C>,
     ) -> Result<AnyMessageEnvelope<C>>
     where
@@ -1025,7 +1029,7 @@ where
         let meta = MetadataEnvelope {
             hand_id: runtime.hand_id,
             game_id: runtime.game_id,
-            actor,
+            actor: actor.clone(),
             nonce: state.next_nonce,
             public_key: public_key.clone(),
         };
@@ -1049,7 +1053,7 @@ where
         params: &Arc<S::Parameters>,
         secret: &Arc<S::SecretKey>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
         message: GamePartialUnblindingShareMessage<C>,
     ) -> Result<AnyMessageEnvelope<C>>
     where
@@ -1061,7 +1065,7 @@ where
         let meta = MetadataEnvelope {
             hand_id: runtime.hand_id,
             game_id: runtime.game_id,
-            actor,
+            actor: actor.clone(),
             nonce: state.next_nonce,
             public_key: public_key.clone(),
         };
@@ -1123,8 +1127,11 @@ where
     fn as_shuffle_envelope(
         finalized: &FinalizedAnyMessageEnvelope<C>,
     ) -> Option<EnvelopedMessage<C, GameShuffleMessage<C>>> {
-        let actor = match finalized.envelope.actor {
-            AnyActor::Shuffler { shuffler_id } => ShufflerActor { shuffler_id },
+        let actor = match &finalized.envelope.actor {
+            AnyActor::Shuffler { shuffler_id, shuffler_key } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
             _ => return None,
         };
 
@@ -1152,7 +1159,7 @@ where
         submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: &Arc<HandRuntime<C>>,
         public_key: &C,
-        actor: ShufflerActor,
+        actor: &ShufflerActor<C>,
     ) -> Result<()>
     where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
@@ -1191,7 +1198,7 @@ where
             let meta = MetadataEnvelope {
                 hand_id: runtime.hand_id,
                 game_id: runtime.game_id,
-                actor,
+                actor: actor.clone(),
                 nonce: state.next_nonce,
                 public_key: public_key.clone(),
             };
@@ -1243,7 +1250,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1267,7 +1277,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1291,7 +1304,10 @@ where
         AnyMessageEnvelope {
             hand_id: envelope.hand_id,
             game_id: envelope.game_id,
-            actor: AnyActor::Shuffler { shuffler_id },
+            actor: AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key: crate::ledger::CanonicalKey::new(envelope.public_key.clone()),
+            },
             nonce: envelope.nonce,
             public_key: envelope.public_key,
             message: WithSignature {
@@ -1312,7 +1328,7 @@ fn spawn_deal_loop_per_hand<C, S>(
     params: Arc<S::Parameters>,
     secret: Arc<S::SecretKey>,
     public_key: C,
-    actor: ShufflerActor,
+    actor: &ShufflerActor<C>,
 ) -> JoinHandle<()>
 where
     C: CurveGroup + Send + Sync + 'static,
@@ -1326,6 +1342,7 @@ where
     S::Parameters: Send + Sync + 'static,
     S::SecretKey: Send + Sync + 'static,
 {
+    let actor_clone = actor.clone();
     tokio::spawn(async move {
         let result = Shuffler::<C, S>::deal_loop(
             runtime.clone(),
@@ -1335,7 +1352,7 @@ where
             params,
             secret,
             public_key,
-            actor,
+            &actor_clone,
             shuffler_index,
         )
         .await;

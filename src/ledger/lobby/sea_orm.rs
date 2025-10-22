@@ -467,6 +467,7 @@ where
             player.player_id,
             PlayerIdentity {
                 public_key: player.public_key.clone(),
+                player_key: crate::ledger::CanonicalKey::new(player.public_key.clone()),
                 nonce: 0,
                 seat: player.seat,
             },
@@ -493,6 +494,7 @@ where
             shuffler.shuffler_id,
             ShufflerIdentity {
                 public_key: shuffler.public_key.clone(),
+                shuffler_key: crate::ledger::CanonicalKey::new(shuffler.public_key.clone()),
                 aggregated_public_key: shuffler.aggregated_public_key.clone(),
             },
         );

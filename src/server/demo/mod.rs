@@ -518,7 +518,8 @@ where
         roster.insert(
             player_id,
             PlayerIdentity {
-                public_key,
+                public_key: public_key.clone(),
+                player_key: crate::ledger::CanonicalKey::new(public_key),
                 nonce,
                 seat,
             },
@@ -606,7 +607,8 @@ where
         roster.insert(
             shuffler_id,
             ShufflerIdentity {
-                public_key: point,
+                public_key: point.clone(),
+                shuffler_key: crate::ledger::CanonicalKey::new(point),
                 aggregated_public_key: aggregated.clone(),
             },
         );
