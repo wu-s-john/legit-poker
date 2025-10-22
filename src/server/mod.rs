@@ -6,9 +6,8 @@ pub mod routes;
 
 pub use bootstrap::{run_server, ServerConfig};
 pub use dto::{
-    ActorResponse, DemoCreateRequest, DemoCreateResponse, DemoStartResponse, HandMessageResponse,
-    HandMessagesResponse, LatestSnapshotResponse, MessageTypeResponse, SnapshotPhaseResponse,
-    SnapshotStatusResponse,
+    DemoCreateRequest, DemoCreateResponse, DemoStartResponse, HandMessagesResponse,
+    LatestSnapshotResponse,
 };
 pub use error::ApiError;
 pub use routes::{LegitPokerServer, ServerContext};

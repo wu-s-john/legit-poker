@@ -2,13 +2,6 @@ use anyhow::{anyhow, Result};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
-use crate::ledger::types::StateHash;
-
-/// Encodes a [`StateHash`] into a lowercase hex string without a leading prefix.
-pub fn encode_state_hash(hash: StateHash) -> String {
-    hex::encode(hash.into_bytes())
-}
-
 /// Canonically serializes any arkworks type into a compressed byte vector.
 pub fn canonical_serialize_bytes<T>(value: &T) -> Result<Vec<u8>>
 where

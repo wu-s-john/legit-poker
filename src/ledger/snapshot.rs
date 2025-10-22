@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, HashMap};
-use std::convert::TryInto;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -863,8 +862,6 @@ where
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(
-    tag = "phase",
-    content = "snapshot",
     rename_all = "snake_case",
     bound(
         serialize = "C: CanonicalSerialize",
@@ -1025,14 +1022,6 @@ where
     table.sequence = table.sequence.saturating_add(1);
     table.state_hash = failure_chain_hash(previous, reason, hasher);
     table.status = SnapshotStatus::Failure(reason.to_string());
-}
-
-fn state_hash_from_vec(bytes: Vec<u8>) -> Result<StateHash> {
-    let array: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow!("state hash must be 32 bytes"))?;
-    Ok(StateHash::from(array))
 }
 
 fn hand_config_from_model(model: &hand_configs::Model) -> Result<HandConfig> {
@@ -1219,7 +1208,7 @@ where
     })?;
     let previous_hash = snapshot_model
         .previous_hash
-        .map(state_hash_from_vec)
+        .map(StateHash::from_bytes)
         .transpose()?;
     let status = match snapshot_model.application_status {
         ApplicationStatus::Success => SnapshotStatus::Success,
@@ -1230,7 +1219,7 @@ where
                 .unwrap_or_else(|| "unknown failure".to_string()),
         ),
     };
-    let state_hash = state_hash_from_vec(snapshot_model.state_hash)?;
+    let state_hash = StateHash::from_bytes(snapshot_model.state_hash)?;
     let player_stacks: PlayerStacks<C> =
         serde_json::from_value(snapshot_model.player_stacks.clone())
             .context("failed to deserialize player stacks")?;
