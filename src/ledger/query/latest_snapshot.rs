@@ -4,9 +4,9 @@ use ark_ec::CurveGroup;
 use thiserror::Error;
 
 use crate::ledger::{
-    snapshot::{AnyTableSnapshot, SnapshotSeq, SnapshotStatus},
+    snapshot::AnyTableSnapshot,
     state::LedgerState,
-    types::{EventPhase, GameId, HandId, StateHash},
+    types::{GameId, HandId},
 };
 
 #[derive(Clone)]
@@ -17,17 +17,6 @@ where
     state: Arc<LedgerState<C>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct LatestSnapshot {
-    pub game_id: GameId,
-    pub hand_id: HandId,
-    pub sequence: SnapshotSeq,
-    pub state_hash: StateHash,
-    pub previous_hash: Option<StateHash>,
-    pub phase: EventPhase,
-    pub status: SnapshotStatus,
-    pub snapshot_debug: String,
-}
 
 impl<C> LatestSnapshotQuery<C>
 where
@@ -41,8 +30,8 @@ where
         &self,
         game_id: GameId,
         hand_id: HandId,
-    ) -> Result<LatestSnapshot, LatestSnapshotError> {
-        let (state_hash, snapshot) = self
+    ) -> Result<AnyTableSnapshot<C>, LatestSnapshotError> {
+        let (_state_hash, snapshot) = self
             .state
             .tip_snapshot(hand_id)
             .ok_or(LatestSnapshotError::HandNotFound { hand_id })?;
@@ -66,16 +55,7 @@ where
             });
         }
 
-        Ok(LatestSnapshot {
-            game_id: snapshot_game_id,
-            hand_id: actual_hand_id,
-            sequence: snapshot.sequence(),
-            state_hash,
-            previous_hash: snapshot.previous_hash(),
-            phase: snapshot.event_phase(),
-            status: snapshot.status().clone(),
-            snapshot_debug: format!("{snapshot:?}"),
-        })
+        Ok(snapshot)
     }
 }
 
@@ -131,11 +111,16 @@ mod tests {
             .execute(ctx.game_id, ctx.hand_id)
             .expect("snapshot should exist");
 
-        assert_eq!(snapshot.game_id, ctx.game_id);
-        assert_eq!(snapshot.hand_id, ctx.hand_id);
-        assert_eq!(snapshot.sequence, snapshot_ref.sequence);
-        assert_eq!(snapshot.state_hash, snapshot_ref.state_hash);
-        assert_eq!(snapshot.previous_hash, snapshot_ref.previous_hash);
-        assert!(snapshot.snapshot_debug.contains("TableSnapshot"));
+        // Verify the returned snapshot matches expectations
+        match snapshot {
+            AnyTableSnapshot::Shuffling(table) => {
+                assert_eq!(table.game_id, ctx.game_id);
+                assert_eq!(table.hand_id, Some(ctx.hand_id));
+                assert_eq!(table.sequence, snapshot_ref.sequence);
+                assert_eq!(table.state_hash, snapshot_ref.state_hash);
+                assert_eq!(table.previous_hash, snapshot_ref.previous_hash);
+            }
+            _ => panic!("expected Shuffling snapshot"),
+        }
     }
 }

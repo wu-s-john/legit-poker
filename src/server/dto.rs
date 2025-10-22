@@ -4,10 +4,8 @@ use ark_serialize::CanonicalSerialize;
 use serde::{Deserialize, Serialize};
 
 use crate::ledger::messages::FinalizedAnyMessageEnvelope;
-use crate::ledger::query::LatestSnapshot;
-use crate::ledger::serialization::encode_state_hash;
-use crate::ledger::snapshot::{SnapshotSeq, SnapshotStatus};
-use crate::ledger::types::{EventPhase, GameId, HandId};
+use crate::ledger::snapshot::AnyTableSnapshot;
+use crate::ledger::types::{GameId, HandId};
 
 #[derive(Deserialize)]
 pub struct DemoCreateRequest {
@@ -27,75 +25,24 @@ pub struct DemoStartResponse {
 }
 
 #[derive(Serialize)]
-pub struct LatestSnapshotResponse {
-    pub game_id: GameId,
-    pub hand_id: HandId,
-    pub sequence: SnapshotSeq,
-    pub state_hash: String,
-    pub previous_hash: Option<String>,
-    pub phase: SnapshotPhaseResponse,
-    pub status: SnapshotStatusResponse,
-    pub snapshot_debug: String,
+#[serde(bound(serialize = "C: CanonicalSerialize"))]
+pub struct LatestSnapshotResponse<C>
+where
+    C: CurveGroup + CanonicalSerialize,
+{
+    pub snapshot: AnyTableSnapshot<C>,
 }
 
-impl LatestSnapshotResponse {
-    pub fn from_domain(snapshot: LatestSnapshot) -> Self {
-        Self {
-            game_id: snapshot.game_id,
-            hand_id: snapshot.hand_id,
-            sequence: snapshot.sequence,
-            state_hash: encode_state_hash(snapshot.state_hash),
-            previous_hash: snapshot.previous_hash.map(encode_state_hash),
-            phase: SnapshotPhaseResponse::from(snapshot.phase),
-            status: SnapshotStatusResponse::from(snapshot.status),
-            snapshot_debug: snapshot.snapshot_debug,
-        }
+impl<C> LatestSnapshotResponse<C>
+where
+    C: CurveGroup + CanonicalSerialize,
+{
+    pub fn from_domain(snapshot: AnyTableSnapshot<C>) -> Self {
+        Self { snapshot }
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotPhaseResponse {
-    Pending,
-    Shuffling,
-    Dealing,
-    Betting,
-    Reveals,
-    Showdown,
-    Complete,
-    Cancelled,
-}
 
-impl From<EventPhase> for SnapshotPhaseResponse {
-    fn from(phase: EventPhase) -> Self {
-        match phase {
-            EventPhase::Pending => SnapshotPhaseResponse::Pending,
-            EventPhase::Shuffling => SnapshotPhaseResponse::Shuffling,
-            EventPhase::Dealing => SnapshotPhaseResponse::Dealing,
-            EventPhase::Betting => SnapshotPhaseResponse::Betting,
-            EventPhase::Reveals => SnapshotPhaseResponse::Reveals,
-            EventPhase::Showdown => SnapshotPhaseResponse::Showdown,
-            EventPhase::Complete => SnapshotPhaseResponse::Complete,
-            EventPhase::Cancelled => SnapshotPhaseResponse::Cancelled,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SnapshotStatusResponse {
-    Success,
-    Failure { reason: String },
-}
-
-impl From<SnapshotStatus> for SnapshotStatusResponse {
-    fn from(value: SnapshotStatus) -> Self {
-        match value {
-            SnapshotStatus::Success => SnapshotStatusResponse::Success,
-            SnapshotStatus::Failure(reason) => SnapshotStatusResponse::Failure { reason },
-        }
-    }
-}
 
 #[derive(Serialize)]
 #[serde(bound(serialize = "C: CanonicalSerialize"))]

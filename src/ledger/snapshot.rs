@@ -793,8 +793,6 @@ where
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(
-    tag = "phase",
-    content = "snapshot",
     rename_all = "snake_case",
     bound(
         serialize = "C: CanonicalSerialize",

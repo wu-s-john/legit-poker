@@ -124,7 +124,7 @@ struct MessagesQuery {
 async fn get_hand_snapshot<C>(
     Extension(ctx): Extension<Arc<ServerContext<C>>>,
     Path(path): Path<HandPath>,
-) -> Result<Json<LatestSnapshotResponse>, ApiError>
+) -> Result<Json<LatestSnapshotResponse<C>>, ApiError>
 where
     C: CurveGroup
         + CanonicalSerialize
