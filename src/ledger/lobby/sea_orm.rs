@@ -388,22 +388,18 @@ struct PreparedShuffler<C: CurveGroup> {
     aggregated_public_key: C,
 }
 
-fn prepare_players<C>(
-    players: &[PlayerSeatSnapshot<C>],
-) -> Result<Vec<PreparedPlayer<C>>, GameSetupError>
+fn prepare_players<C>(players: &[PlayerSeatSnapshot<C>]) -> Result<Vec<PreparedPlayer<C>>, GameSetupError>
 where
-    C: CurveGroup + CanonicalDeserialize,
+    C: CurveGroup,
 {
     players
         .iter()
         .map(|seat| {
-            let message = format!("invalid public key for player in seat {}", seat.seat_id);
-            let public_key = deserialize_curve_point::<C>(&seat.public_key, message)?;
             Ok(PreparedPlayer {
                 player_id: seat.player.state.id,
                 seat: seat.seat_id,
                 starting_stack: seat.starting_stack,
-                public_key,
+                public_key: seat.public_key.clone(),
             })
         })
         .collect()

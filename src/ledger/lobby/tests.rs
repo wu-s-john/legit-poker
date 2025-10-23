@@ -65,7 +65,7 @@ async fn join_game_inserts_membership() -> Result<()> {
 
     let joiner = PlayerRecord {
         display_name: "Bob".into(),
-        public_key: keys.player.clone(),
+        public_key: keys.player.bytes.clone(),
         seat_preference: Some(1),
         state: MaybeSaved { id: None },
     };
@@ -92,13 +92,13 @@ async fn register_shuffler_assigns_sequence() -> Result<()> {
 
     let shuffler_one = ShufflerRecord {
         display_name: "Shuffler One".into(),
-        public_key: keys.shuffler.clone(),
+        public_key: keys.shuffler.bytes.clone(),
         state: MaybeSaved { id: None },
     };
 
     let shuffler_two = ShufflerRecord {
         display_name: "Shuffler Two".into(),
-        public_key: TestKeys::new().shuffler,
+        public_key: TestKeys::new().shuffler.bytes.clone(),
         state: MaybeSaved { id: None },
     };
 
@@ -135,7 +135,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Bob".into(),
-            public_key: keys.player.clone(),
+            public_key: keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         },
@@ -149,7 +149,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Carol".into(),
-            public_key: extra_keys.player.clone(),
+            public_key: extra_keys.player.bytes.clone(),
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         },
@@ -163,7 +163,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         &metadata.record,
         ShufflerRecord {
             display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
+            public_key: keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         },
         ShufflerRegistrationConfig { sequence: Some(0) },
@@ -183,19 +183,29 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         hand_no: 1,
         hand_config: hand_cfg,
         players: vec![
-            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                host_player.clone(),
+                0,
+                config.buy_in,
+                keys.host.point.clone(),
+            ),
+            PlayerSeatSnapshot::new(
+                joiner.clone(),
+                1,
+                config.buy_in,
+                keys.player.point.clone(),
+            ),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 2,
                 config.buy_in,
-                extra_keys.player.clone(),
+                extra_keys.player.point.clone(),
             ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             registered.shuffler.clone(),
             registered.assigned_sequence,
-            keys.shuffler.clone(),
+            keys.shuffler.bytes.clone(),
             keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
@@ -253,7 +263,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Bob".into(),
-            public_key: keys.player.clone(),
+            public_key: keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         },
@@ -267,7 +277,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Carol".into(),
-            public_key: extra_keys.player.clone(),
+            public_key: extra_keys.player.bytes.clone(),
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         },
@@ -280,7 +290,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         &metadata.record,
         ShufflerRecord {
             display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
+            public_key: keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         },
         ShufflerRegistrationConfig { sequence: Some(0) },
@@ -299,19 +309,29 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
             check_raise_allowed: true,
         },
         players: vec![
-            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                host_player.clone(),
+                0,
+                config.buy_in,
+                keys.host.point.clone(),
+            ),
+            PlayerSeatSnapshot::new(
+                joiner.clone(),
+                1,
+                config.buy_in,
+                keys.player.point.clone(),
+            ),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 1,
                 config.buy_in,
-                extra_keys.player.clone(),
+                extra_keys.player.point.clone(),
             ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
             0,
-            keys.shuffler.clone(),
+            keys.shuffler.bytes.clone(),
             keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
@@ -341,7 +361,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Bob".into(),
-            public_key: keys.player.clone(),
+            public_key: keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         },
@@ -354,7 +374,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
         &metadata.record,
         ShufflerRecord {
             display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
+            public_key: keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         },
         ShufflerRegistrationConfig { sequence: Some(0) },
@@ -373,13 +393,23 @@ async fn commence_game_requires_min_players() -> Result<()> {
             check_raise_allowed: true,
         },
         players: vec![
-            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                host_player.clone(),
+                0,
+                config.buy_in,
+                keys.host.point.clone(),
+            ),
+            PlayerSeatSnapshot::new(
+                joiner.clone(),
+                1,
+                config.buy_in,
+                keys.player.point.clone(),
+            ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
             0,
-            keys.shuffler.clone(),
+            keys.shuffler.bytes.clone(),
             keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
@@ -409,7 +439,7 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Bob".into(),
-            public_key: keys.player.clone(),
+            public_key: keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         },
@@ -423,7 +453,7 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Carol".into(),
-            public_key: extra_keys.player.clone(),
+            public_key: extra_keys.player.bytes.clone(),
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         },
@@ -436,7 +466,7 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         &metadata.record,
         ShufflerRecord {
             display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
+            public_key: keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         },
         ShufflerRegistrationConfig { sequence: Some(0) },
@@ -455,19 +485,29 @@ async fn commence_game_requires_buy_in() -> Result<()> {
             check_raise_allowed: true,
         },
         players: vec![
-            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in - 1, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                host_player.clone(),
+                0,
+                config.buy_in,
+                keys.host.point.clone(),
+            ),
+            PlayerSeatSnapshot::new(
+                joiner.clone(),
+                1,
+                config.buy_in - 1,
+                keys.player.point.clone(),
+            ),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 2,
                 config.buy_in,
-                extra_keys.player.clone(),
+                extra_keys.player.point.clone(),
             ),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
             0,
-            keys.shuffler.clone(),
+            keys.shuffler.bytes.clone(),
             keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
@@ -497,7 +537,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Bob".into(),
-            public_key: keys.player.clone(),
+            public_key: keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         },
@@ -512,7 +552,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
         &metadata.record,
         ShufflerRecord {
             display_name: "Shuffler".into(),
-            public_key: keys.shuffler.clone(),
+            public_key: keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         },
         ShufflerRegistrationConfig { sequence: Some(0) },
@@ -524,7 +564,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
         &metadata.record,
         PlayerRecord {
             display_name: "Carol".into(),
-            public_key: extra_keys.player.clone(),
+            public_key: extra_keys.player.bytes.clone(),
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         },
@@ -533,7 +573,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
     .await?
     .player;
 
-    let invalid_player_key = vec![0u8; 10];
+    let invalid_player_key = keys.player.point.clone();
 
     let params = CommenceGameParams {
         game: metadata.record.clone(),
@@ -546,11 +586,21 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
             check_raise_allowed: true,
         },
         players: vec![
-            PlayerSeatSnapshot::new(host_player.clone(), 0, config.buy_in, keys.host.clone()),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.clone()),
+            PlayerSeatSnapshot::new(
+                host_player.clone(),
+                0,
+                config.buy_in,
+                keys.host.point.clone(),
+            ),
+            PlayerSeatSnapshot::new(
+                joiner.clone(),
+                1,
+                config.buy_in,
+                keys.player.point.clone(),
+            ),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
-                2,
+                1,
                 config.buy_in,
                 invalid_player_key.clone(),
             ),
@@ -558,7 +608,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
         shufflers: vec![ShufflerAssignment::new(
             registered.shuffler.clone(),
             registered.assigned_sequence,
-            keys.shuffler.clone(),
+            keys.shuffler.bytes.clone(),
             keys.shuffler_aggregated.clone(),
         )],
         deck_commitment: None,
@@ -577,9 +627,9 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
 
 #[derive(Clone)]
 struct TestKeys {
-    host: Vec<u8>,
-    player: Vec<u8>,
-    shuffler: Vec<u8>,
+    host: GeneratedKey,
+    player: GeneratedKey,
+    shuffler: GeneratedKey,
     shuffler_aggregated: Vec<u8>,
 }
 
@@ -595,14 +645,15 @@ impl TestKeys {
         let shuffler = sample_key(&mut rng);
         let aggregated = serialize_point(&shuffler.point);
         Self {
-            host: host.bytes,
-            player: player.bytes,
-            shuffler: shuffler.bytes,
+            host,
+            player,
+            shuffler,
             shuffler_aggregated: aggregated,
         }
     }
 }
 
+#[derive(Clone)]
 struct GeneratedKey {
     point: TestCurve,
     bytes: Vec<u8>,
@@ -680,7 +731,7 @@ async fn create_game(
     };
     let host = PlayerRecord {
         display_name: "Host".into(),
-        public_key: keys.host.clone(),
+        public_key: keys.host.bytes.clone(),
         seat_preference: Some(0),
         state: MaybeSaved { id: None },
     };

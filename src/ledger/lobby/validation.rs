@@ -1,6 +1,7 @@
 use super::types::{CommenceGameParams, GameLobbyConfig, PlayerSeatSnapshot, ShufflerAssignment};
 use crate::engine::nl::types::Chips;
 use crate::ledger::GameSetupError;
+use ark_ec::CurveGroup;
 use std::collections::HashSet;
 
 pub fn validate_lobby_config(cfg: &GameLobbyConfig) -> Result<(), GameSetupError> {
@@ -30,7 +31,9 @@ pub fn validate_lobby_config(cfg: &GameLobbyConfig) -> Result<(), GameSetupError
     Ok(())
 }
 
-pub fn ensure_unique_seats<C>(players: &[PlayerSeatSnapshot<C>]) -> Result<(), GameSetupError> {
+pub fn ensure_unique_seats<C: CurveGroup>(
+    players: &[PlayerSeatSnapshot<C>],
+) -> Result<(), GameSetupError> {
     let mut seen = HashSet::new();
     for snapshot in players {
         if !seen.insert(snapshot.seat_id) {
@@ -42,7 +45,7 @@ pub fn ensure_unique_seats<C>(players: &[PlayerSeatSnapshot<C>]) -> Result<(), G
     Ok(())
 }
 
-pub fn ensure_min_players<C>(
+pub fn ensure_min_players<C: CurveGroup>(
     min_players: i16,
     players: &[PlayerSeatSnapshot<C>],
 ) -> Result<(), GameSetupError> {
@@ -74,7 +77,7 @@ pub fn ensure_shuffler_sequence<C>(
     Ok(())
 }
 
-pub fn ensure_buy_in<C>(
+pub fn ensure_buy_in<C: CurveGroup>(
     required_buy_in: Chips,
     players: &[PlayerSeatSnapshot<C>],
 ) -> Result<(), GameSetupError> {
@@ -88,7 +91,9 @@ pub fn ensure_buy_in<C>(
     Ok(())
 }
 
-pub fn validate_commence_params<C>(params: &CommenceGameParams<C>) -> Result<(), GameSetupError> {
+pub fn validate_commence_params<C: CurveGroup>(
+    params: &CommenceGameParams<C>,
+) -> Result<(), GameSetupError> {
     ensure_unique_seats(&params.players)?;
     ensure_min_players(params.min_players, &params.players)?;
     ensure_shuffler_sequence(&params.shufflers)?;

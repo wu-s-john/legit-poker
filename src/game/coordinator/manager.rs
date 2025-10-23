@@ -121,7 +121,7 @@ where
         .collect()
 }
 
-const LOG_TARGET: &str = "game::coordinator";
+const LOG_TARGET: &str = "legit_poker::game::coordinator";
 
 fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
 where

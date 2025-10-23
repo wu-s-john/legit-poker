@@ -319,9 +319,9 @@ mod tests {
 
     #[derive(Clone)]
     struct TestKeys {
-        host: Vec<u8>,
-        player: Vec<u8>,
-        shuffler: Vec<u8>,
+        host: GeneratedKey,
+        player: GeneratedKey,
+        shuffler: GeneratedKey,
         aggregated: Vec<u8>,
     }
 
@@ -336,14 +336,15 @@ mod tests {
             let player = sample_key(&mut rng);
             let shuffler = sample_key(&mut rng);
             Self {
-                host: host.bytes,
-                player: player.bytes,
-                shuffler: shuffler.bytes.clone(),
+                host,
+                player,
+                shuffler: shuffler.clone(),
                 aggregated: serialize_point(&shuffler.point),
             }
         }
     }
 
+    #[derive(Clone)]
     struct GeneratedKey {
         point: Curve,
         bytes: Vec<u8>,
@@ -455,7 +456,7 @@ mod tests {
 
         let host = PlayerRecord {
             display_name: "Host".into(),
-            public_key: host_keys.host.clone(),
+            public_key: host_keys.host.bytes.clone(),
             seat_preference: Some(0),
             state: MaybeSaved { id: None },
         };
@@ -484,7 +485,7 @@ mod tests {
         let guest_keys = TestKeys::new();
         let guest = PlayerRecord {
             display_name: "Guest".into(),
-            public_key: guest_keys.player.clone(),
+            public_key: guest_keys.player.bytes.clone(),
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         };
@@ -502,7 +503,7 @@ mod tests {
         let third_keys = TestKeys::new();
         let third_player = PlayerRecord {
             display_name: "Third".into(),
-            public_key: third_keys.player.clone(),
+            public_key: third_keys.player.bytes.clone(),
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         };
@@ -519,7 +520,7 @@ mod tests {
 
         let shuffler = ShufflerRecord {
             display_name: "Primary Shuffler".into(),
-            public_key: host_keys.shuffler.clone(),
+            public_key: host_keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         };
         let shuffler_output = <SeaOrmLobby as LedgerLobby<Curve>>::register_shuffler(
@@ -546,25 +547,25 @@ mod tests {
                     host_registered,
                     0,
                     lobby_cfg.buy_in,
-                    metadata.host.public_key.clone(),
+                    host_keys.host.point.clone(),
                 ),
                 PlayerSeatSnapshot::new(
                     guest_saved.clone(),
                     1,
                     lobby_cfg.buy_in,
-                    guest_saved.public_key.clone(),
+                    guest_keys.player.point.clone(),
                 ),
                 PlayerSeatSnapshot::new(
                     third_saved.clone(),
                     2,
                     lobby_cfg.buy_in,
-                    third_saved.public_key.clone(),
+                    third_keys.player.point.clone(),
                 ),
             ],
             shufflers: vec![ShufflerAssignment::new(
                 shuffler_output.shuffler,
                 shuffler_output.assigned_sequence,
-                host_keys.shuffler.clone(),
+                host_keys.shuffler.bytes.clone(),
                 host_keys.aggregated.clone(),
             )],
             deck_commitment: None,
