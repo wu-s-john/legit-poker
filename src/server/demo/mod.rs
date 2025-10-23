@@ -1,3 +1,4 @@
+pub mod stream;
 pub mod stream_event;
 
 pub use stream_event::DemoStreamEvent;
@@ -30,9 +31,9 @@ use crate::shuffling::draw_shuffler_public_key;
 
 use crate::engine::nl::types::{SeatId, TableStakes};
 
-const DEMO_PLAYER_COUNT: usize = 8;
-const NPC_COUNT: usize = DEMO_PLAYER_COUNT - 1;
-const NPC_NAMES: [&str; NPC_COUNT] = [
+pub(crate) const DEMO_PLAYER_COUNT: usize = 8;
+pub(crate) const NPC_COUNT: usize = DEMO_PLAYER_COUNT - 1;
+pub(crate) const NPC_NAMES: [&str; NPC_COUNT] = [
     "demo-npc-1",
     "demo-npc-2",
     "demo-npc-3",
@@ -41,10 +42,10 @@ const NPC_NAMES: [&str; NPC_COUNT] = [
     "demo-npc-6",
     "demo-npc-7",
 ];
-const LOBBY_NAME: &str = "Coordinator Demo Table";
-const LOBBY_CURRENCY: &str = "chips";
-const VIEWER_NAME: &str = "demo-viewer";
-const RNG_SEED: u64 = 1337;
+pub(crate) const LOBBY_NAME: &str = "Coordinator Demo Table";
+pub(crate) const LOBBY_CURRENCY: &str = "chips";
+pub(crate) const VIEWER_NAME: &str = "demo-viewer";
+pub(crate) const RNG_SEED: u64 = 1337;
 
 pub struct SeedDemoResult<C: CurveGroup> {
     pub game_id: GameId,
@@ -214,7 +215,7 @@ where
     Ok(snapshots)
 }
 
-async fn register_shufflers<C>(
+pub(crate) async fn register_shufflers<C>(
     lobby: &Arc<dyn LobbyService<C>>,
     metadata: &GameMetadata,
     descriptors: &[ShufflerDescriptor<C>],
@@ -267,12 +268,12 @@ where
     Ok(assignments)
 }
 
-struct NpcSpec<C> {
-    display_name: String,
-    public_key: C,
+pub(crate) struct NpcSpec<C> {
+    pub(crate) display_name: String,
+    pub(crate) public_key: C,
 }
 
-fn generate_npc_specs<C>(rng: &mut StdRng) -> Result<Vec<NpcSpec<C>>>
+pub(crate) fn generate_npc_specs<C>(rng: &mut StdRng) -> Result<Vec<NpcSpec<C>>>
 where
     C: CurveGroup + CanonicalSerialize,
 {
@@ -287,7 +288,7 @@ where
     Ok(specs)
 }
 
-fn build_lobby_config() -> GameLobbyConfig {
+pub(crate) fn build_lobby_config() -> GameLobbyConfig {
     GameLobbyConfig {
         stakes: TableStakes {
             small_blind: 50,
@@ -305,7 +306,7 @@ fn build_lobby_config() -> GameLobbyConfig {
     }
 }
 
-fn build_hand_config() -> crate::engine::nl::types::HandConfig {
+pub(crate) fn build_hand_config() -> crate::engine::nl::types::HandConfig {
     crate::engine::nl::types::HandConfig {
         stakes: TableStakes {
             small_blind: 50,

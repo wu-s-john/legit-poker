@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import Link from "next/link";
 import {
@@ -70,11 +70,12 @@ export default function LandingPage() {
       content: (
         <p>
           We use Incrementally Verifiable Computation (IVC) with Nova-style
-          folding schemes to aggregate proofs across every action in a hand—bets,
-          raises, reveals. Instead of verifying hundreds of individual proofs,
-          our folding scheme compresses the entire hand history into a single
-          succinct proof. This enables real-time gameplay with cryptographic
-          guarantees and minimal gas costs for on-chain settlement.
+          folding schemes to aggregate proofs across every action in a
+          hand—bets, raises, reveals. Instead of verifying hundreds of
+          individual proofs, our folding scheme compresses the entire hand
+          history into a single succinct proof. This enables real-time gameplay
+          with cryptographic guarantees and minimal gas costs for on-chain
+          settlement.
         </p>
       ),
     },
@@ -130,29 +131,29 @@ export default function LandingPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-primary-950">
+    <div className="bg-primary-950 min-h-screen">
       <LandingNav />
       <AnnouncementRibbon />
 
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800 pb-16 pt-12 md:pb-24 md:pt-16 lg:pt-24">
+      <section className="from-primary-950 via-primary-900 to-primary-800 bg-gradient-to-br pt-12 pb-16 md:pt-16 md:pb-24 lg:pt-24">
         <div
           ref={heroAnimation.ref}
           className={`mx-auto max-w-5xl px-4 text-center transition-all duration-1000 sm:px-6 ${
             heroAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
-          <Shield className="mx-auto mb-6 h-10 w-10 text-primary-400 md:h-12 md:w-12" />
+          <Shield className="text-primary-400 mx-auto mb-6 h-10 w-10 md:h-12 md:w-12" />
 
-          <h1 className="mb-6 text-3xl font-bold leading-tight text-white sm:text-4xl md:text-5xl lg:text-6xl">
+          <h1 className="mb-6 text-3xl leading-tight font-bold text-white sm:text-4xl md:text-5xl lg:text-6xl">
             Bringing cryptographic integrity
             <br className="hidden sm:inline" />
             to a $100B market.
           </h1>
 
-          <p className="mx-auto mb-8 max-w-2xl text-base leading-relaxed text-primary-200 md:mb-12 md:text-lg lg:text-xl">
+          <p className="text-primary-200 mx-auto mb-8 max-w-2xl text-base leading-relaxed md:mb-12 md:text-lg lg:text-xl">
             The first high-performance, trustless poker platform. 2.5% rake
             (half the industry), 1.5s cryptographically fair shuffles, instant
             stablecoin settlements.
@@ -161,21 +162,21 @@ export default function LandingPage() {
           <div className="flex flex-col justify-center gap-3 sm:flex-row sm:gap-4">
             <Link
               href="/demo"
-              className="group flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-6 py-4 text-base font-semibold text-white shadow-lg shadow-primary-600/50 transition-all duration-300 hover:scale-105 hover:bg-primary-500 hover:shadow-xl hover:shadow-primary-500/50 sm:inline-flex sm:px-8 sm:py-3"
+              className="group bg-primary-600 shadow-primary-600/50 hover:bg-primary-500 hover:shadow-primary-500/50 flex items-center justify-center gap-2 rounded-lg px-6 py-4 text-base font-semibold text-white shadow-lg transition-all duration-300 hover:scale-105 hover:shadow-xl sm:inline-flex sm:px-8 sm:py-3"
             >
               <Play className="h-5 w-5 transition-transform duration-300 group-hover:scale-110" />
               Play Demo
             </Link>
             <Link
               href="/private-table"
-              className="group flex items-center justify-center gap-2 rounded-lg border-2 border-primary-400 px-6 py-4 text-base font-semibold text-primary-400 transition-all duration-300 hover:scale-105 hover:border-primary-300 hover:bg-primary-400/10 hover:shadow-lg hover:shadow-primary-400/20 sm:inline-flex sm:px-8 sm:py-3"
+              className="group border-primary-400 text-primary-400 hover:border-primary-300 hover:bg-primary-400/10 hover:shadow-primary-400/20 flex items-center justify-center gap-2 rounded-lg border-2 px-6 py-4 text-base font-semibold transition-all duration-300 hover:scale-105 hover:shadow-lg sm:inline-flex sm:px-8 sm:py-3"
             >
               <UserPlus className="h-5 w-5 transition-transform duration-300 group-hover:scale-110" />
               Create Private Table
             </Link>
             <Link
               href="/whitepaper"
-              className="group inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-primary-300 transition-all duration-300 hover:translate-x-1 hover:text-primary-100"
+              className="group text-primary-300 hover:text-primary-100 inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-300 hover:translate-x-1"
             >
               Get the whitepaper
               <span className="transition-transform duration-300 group-hover:translate-x-1">
@@ -192,8 +193,8 @@ export default function LandingPage() {
           ref={demoAnimation.ref}
           className={`mx-auto max-w-6xl px-4 transition-all duration-1000 sm:px-6 ${
             demoAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -201,7 +202,7 @@ export default function LandingPage() {
           </h2>
 
           {/* Placeholder for poker table */}
-          <div className="mx-auto max-w-4xl rounded-xl border-2 border-table-border bg-felt p-4 shadow-2xl sm:p-6 md:rounded-2xl md:border-4 md:p-8">
+          <div className="border-table-border bg-felt mx-auto max-w-4xl rounded-xl border-2 p-4 shadow-2xl sm:p-6 md:rounded-2xl md:border-4 md:p-8">
             <div className="flex min-h-[280px] items-center justify-center text-center sm:min-h-[400px]">
               <div>
                 <Spade className="mx-auto mb-4 h-12 w-12 text-white/80 sm:h-16 sm:w-16" />
@@ -215,20 +216,20 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <p className="mt-6 text-center text-base text-primary-200 md:mt-8 md:text-lg">
+          <p className="text-primary-200 mt-6 text-center text-base md:mt-8 md:text-lg">
             Real poker. Real opponents. Mathematically guaranteed fairness.
           </p>
 
           <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row sm:gap-4 md:mt-8">
             <Link
               href="/lobby"
-              className="flex items-center justify-center gap-2 rounded-lg border-2 border-primary-400 px-6 py-3 text-base font-semibold text-primary-400 transition-colors hover:bg-primary-400/10 sm:inline-flex sm:py-2"
+              className="border-primary-400 text-primary-400 hover:bg-primary-400/10 flex items-center justify-center gap-2 rounded-lg border-2 px-6 py-3 text-base font-semibold transition-colors sm:inline-flex sm:py-2"
             >
               Start Your Own Game
             </Link>
             <Link
               href="/invite"
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-primary-300 transition-colors hover:text-primary-100"
+              className="text-primary-300 hover:text-primary-100 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-colors"
             >
               Invite Friends
             </Link>
@@ -242,8 +243,8 @@ export default function LandingPage() {
           ref={marketAnimation.ref}
           className={`mx-auto max-w-5xl px-4 transition-all duration-1000 sm:px-6 ${
             marketAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -251,51 +252,54 @@ export default function LandingPage() {
           </h2>
 
           <div className="grid gap-4 md:grid-cols-3 md:gap-6">
-            <div className="group rounded-lg border-2 border-primary-700 bg-primary-900/50 p-6 text-center transition-all duration-300 hover:scale-105 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95">
-              <div className="mb-2 text-5xl font-bold text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 md:text-4xl">
+            <div className="group border-primary-700 bg-primary-900/50 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-primary-600/20 rounded-lg border-2 p-6 text-center transition-all duration-300 hover:scale-105 hover:shadow-xl active:scale-95">
+              <div className="text-primary-400 group-hover:text-primary-300 mb-2 text-5xl font-bold transition-all duration-300 group-hover:scale-110 md:text-4xl">
                 $100B+
               </div>
-              <div className="text-base text-primary-300 transition-colors duration-300 group-hover:text-primary-200 md:text-sm">
+              <div className="text-primary-300 group-hover:text-primary-200 text-base transition-colors duration-300 md:text-sm">
                 Value locked in market
               </div>
             </div>
 
-            <div className="group rounded-lg border-2 border-primary-700 bg-primary-900/50 p-6 text-center transition-all duration-300 hover:scale-105 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95">
-              <div className="mb-2 text-5xl font-bold text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 md:text-4xl">
+            <div className="group border-primary-700 bg-primary-900/50 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-primary-600/20 rounded-lg border-2 p-6 text-center transition-all duration-300 hover:scale-105 hover:shadow-xl active:scale-95">
+              <div className="text-primary-400 group-hover:text-primary-300 mb-2 text-5xl font-bold transition-all duration-300 group-hover:scale-110 md:text-4xl">
                 73%
               </div>
-              <div className="text-base text-primary-300 transition-colors duration-300 group-hover:text-primary-200 md:text-sm">
+              <div className="text-primary-300 group-hover:text-primary-200 text-base transition-colors duration-300 md:text-sm">
                 Players who distrust operators
               </div>
             </div>
 
-            <div className="group rounded-lg border-2 border-primary-700 bg-primary-900/50 p-6 text-center transition-all duration-300 hover:scale-105 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95">
-              <div className="mb-2 text-5xl font-bold text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 md:text-4xl">
+            <div className="group border-primary-700 bg-primary-900/50 hover:border-primary-500 hover:bg-primary-900/70 hover:shadow-primary-600/20 rounded-lg border-2 p-6 text-center transition-all duration-300 hover:scale-105 hover:shadow-xl active:scale-95">
+              <div className="text-primary-400 group-hover:text-primary-300 mb-2 text-5xl font-bold transition-all duration-300 group-hover:scale-110 md:text-4xl">
                 2.5%
               </div>
-              <div className="text-base text-primary-300 transition-colors duration-300 group-hover:text-primary-200 md:text-sm">
+              <div className="text-primary-300 group-hover:text-primary-200 text-base transition-colors duration-300 md:text-sm">
                 Our rake vs 5% standard
               </div>
             </div>
           </div>
 
-          <p className="mx-auto mt-6 max-w-3xl text-center text-sm leading-relaxed text-primary-200 sm:text-base md:mt-8">
+          <p className="text-primary-200 mx-auto mt-6 max-w-3xl text-center text-sm leading-relaxed sm:text-base md:mt-8">
             Every year, millions of players abandon online poker due to opaque
             dealing, 2+ week withdrawal delays, and bot/collusion concerns.
-            After "gambling" and "poker", the most common word in player
-            reviews is "rigged". Zero-knowledge proofs solve this—finally.
+            After "gambling" and "poker", the most common word in player reviews
+            is "rigged". Zero-knowledge proofs solve this—finally.
           </p>
         </div>
       </section>
 
       {/* Built Different - Feature Cards */}
-      <section id="why-different" className="bg-primary-900 py-12 md:py-20 lg:py-32">
+      <section
+        id="why-different"
+        className="bg-primary-900 py-12 md:py-20 lg:py-32"
+      >
         <div
           ref={featuresAnimation.ref}
           className={`mx-auto max-w-6xl px-4 transition-all duration-1000 sm:px-6 ${
             featuresAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -303,45 +307,45 @@ export default function LandingPage() {
           </h2>
 
           <div className="grid gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-4">
-            <div className="group rounded-lg border border-primary-700 bg-primary-800/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95 sm:p-6">
-              <ShieldCheck className="mb-3 h-8 w-8 text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 sm:mb-4" />
+            <div className="group border-primary-700 bg-primary-800/50 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-primary-600/20 rounded-lg border p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl active:scale-95 sm:p-6">
+              <ShieldCheck className="text-primary-400 group-hover:text-primary-300 mb-3 h-8 w-8 transition-all duration-300 group-hover:scale-110 sm:mb-4" />
               <h3 className="mb-2 text-base font-semibold text-white sm:text-lg">
                 Fairness you can verify
               </h3>
-              <p className="text-sm leading-relaxed text-primary-300">
+              <p className="text-primary-300 text-sm leading-relaxed">
                 1.5s shuffle for 7 players. Every shuffle generates a SNARK. No
                 trust required—just math.
               </p>
             </div>
 
-            <div className="group rounded-lg border border-primary-700 bg-primary-800/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95 sm:p-6">
-              <Coins className="mb-3 h-8 w-8 text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 sm:mb-4" />
+            <div className="group border-primary-700 bg-primary-800/50 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-primary-600/20 rounded-lg border p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl active:scale-95 sm:p-6">
+              <Coins className="text-primary-400 group-hover:text-primary-300 mb-3 h-8 w-8 transition-all duration-300 group-hover:scale-110 sm:mb-4" />
               <h3 className="mb-2 text-base font-semibold text-white sm:text-lg">
                 2.5% rake changes everything
               </h3>
-              <p className="text-sm leading-relaxed text-primary-300">
+              <p className="text-primary-300 text-sm leading-relaxed">
                 Half the industry standard means 2x more profitable players.
                 From 15% winners to 30% winners.
               </p>
             </div>
 
-            <div className="group rounded-lg border border-primary-700 bg-primary-800/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95 sm:p-6">
-              <Users className="mb-3 h-8 w-8 text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 sm:mb-4" />
+            <div className="group border-primary-700 bg-primary-800/50 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-primary-600/20 rounded-lg border p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl active:scale-95 sm:p-6">
+              <Users className="text-primary-400 group-hover:text-primary-300 mb-3 h-8 w-8 transition-all duration-300 group-hover:scale-110 sm:mb-4" />
               <h3 className="mb-2 text-base font-semibold text-white sm:text-lg">
                 Real people, real poker
               </h3>
-              <p className="text-sm leading-relaxed text-primary-300">
+              <p className="text-primary-300 text-sm leading-relaxed">
                 Proof-of-unique-humanity onboarding. Biometric login. Periodic
                 BeCAPTCHA challenges. Device attestation.
               </p>
             </div>
 
-            <div className="group rounded-lg border border-primary-700 bg-primary-800/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-xl hover:shadow-primary-600/20 active:scale-95 sm:p-6">
-              <Coins className="mb-3 h-8 w-8 text-primary-400 transition-all duration-300 group-hover:scale-110 group-hover:text-primary-300 sm:mb-4" />
+            <div className="group border-primary-700 bg-primary-800/50 hover:border-primary-500 hover:bg-primary-800/70 hover:shadow-primary-600/20 rounded-lg border p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-2 hover:shadow-xl active:scale-95 sm:p-6">
+              <Coins className="text-primary-400 group-hover:text-primary-300 mb-3 h-8 w-8 transition-all duration-300 group-hover:scale-110 sm:mb-4" />
               <h3 className="mb-2 text-base font-semibold text-white sm:text-lg">
                 Instant settlements
               </h3>
-              <p className="text-sm leading-relaxed text-primary-300">
+              <p className="text-primary-300 text-sm leading-relaxed">
                 Stablecoin cash-ins and payouts settle in minutes, not weeks.
                 Publicly verifiable escrow reserves.
               </p>
@@ -351,13 +355,16 @@ export default function LandingPage() {
       </section>
 
       {/* Competitive Moat - Table */}
-      <section id="investors" className="bg-primary-950 py-12 md:py-20 lg:py-32">
+      <section
+        id="investors"
+        className="bg-primary-950 py-12 md:py-20 lg:py-32"
+      >
         <div
           ref={competitiveAnimation.ref}
           className={`mx-auto max-w-5xl px-4 transition-all duration-1000 sm:px-6 ${
             competitiveAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -365,95 +372,123 @@ export default function LandingPage() {
           </h2>
 
           <div className="overflow-x-auto">
-            <table className="w-full rounded-lg border border-primary-700 bg-primary-800/30 backdrop-blur-sm">
+            <table className="border-primary-700 bg-primary-800/30 w-full rounded-lg border backdrop-blur-sm">
               <thead className="bg-primary-900">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-primary-200 sm:px-4 sm:py-3 sm:text-sm">
+                  <th className="text-primary-200 px-3 py-2 text-left text-xs font-semibold sm:px-4 sm:py-3 sm:text-sm">
                     Feature
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-semibold text-primary-200 sm:px-4 sm:py-3 sm:text-sm">
+                  <th className="text-primary-200 px-3 py-2 text-center text-xs font-semibold sm:px-4 sm:py-3 sm:text-sm">
                     Us
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-semibold text-primary-200 sm:px-4 sm:py-3 sm:text-sm">
+                  <th className="text-primary-200 px-3 py-2 text-center text-xs font-semibold sm:px-4 sm:py-3 sm:text-sm">
                     Trad Sites
                   </th>
-                  <th className="px-3 py-2 text-center text-xs font-semibold text-primary-200 sm:px-4 sm:py-3 sm:text-sm">
+                  <th className="text-primary-200 px-3 py-2 text-center text-xs font-semibold sm:px-4 sm:py-3 sm:text-sm">
                     Blockchain Poker
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">Rake</td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">2.5%</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    Rake
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    2.5%
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     5%
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     4-5%
                   </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">Shuffle Speed</td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">1.5s</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    Shuffle Speed
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    1.5s
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     N/A
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     38s (zkH)
                   </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">Provably Fair</td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    Provably Fair
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ✗
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ⚠️ Post-hoc
                   </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
                     Instant Withdraw
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ✗ 2+ weeks
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
                     Bot Prevention
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ⚠️ Weak
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ✗
                   </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">Consumer UX</td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">✓</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
+                    Consumer UX
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    ✓
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ✗ Wallet
                   </td>
                 </tr>
-                <tr className="border-t border-primary-800 hover:bg-primary-800/40">
-                  <td className="px-3 py-2 text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                <tr className="border-primary-800 hover:bg-primary-800/40 border-t">
+                  <td className="text-primary-300 px-3 py-2 text-xs sm:px-4 sm:py-3 sm:text-sm">
                     Operational Expenses
                     <br />
-                    <span className="text-[10px] sm:text-xs">(% of revenue)</span>
+                    <span className="text-[10px] sm:text-xs">
+                      (% of revenue)
+                    </span>
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">&lt;10%</td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="px-3 py-2 text-center text-xs text-white sm:px-4 sm:py-3 sm:text-sm">
+                    &lt;10%
+                  </td>
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     27-40%
                   </td>
-                  <td className="px-3 py-2 text-center text-xs text-primary-300 sm:px-4 sm:py-3 sm:text-sm">
+                  <td className="text-primary-300 px-3 py-2 text-center text-xs sm:px-4 sm:py-3 sm:text-sm">
                     ?
                   </td>
                 </tr>
@@ -461,7 +496,7 @@ export default function LandingPage() {
             </table>
           </div>
 
-          <p className="mx-auto mt-6 max-w-3xl text-center text-sm text-primary-200 sm:text-base md:mt-8">
+          <p className="text-primary-200 mx-auto mt-6 max-w-3xl text-center text-sm sm:text-base md:mt-8">
             We're the only platform that combines cryptographic fairness with
             consumer-grade UX and economics that benefit players.
           </p>
@@ -469,13 +504,16 @@ export default function LandingPage() {
       </section>
 
       {/* How It Works Section - Interactive Accordions */}
-      <section id="whitepaper" className="bg-primary-900 py-12 md:py-20 lg:py-32">
+      <section
+        id="whitepaper"
+        className="bg-primary-900 py-12 md:py-20 lg:py-32"
+      >
         <div
           ref={technicalAnimation.ref}
           className={`mx-auto max-w-4xl px-4 transition-all duration-1000 sm:px-6 ${
             technicalAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -487,7 +525,7 @@ export default function LandingPage() {
           <div className="mt-6 text-center md:mt-8">
             <Link
               href="/whitepaper"
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-300 transition-colors hover:text-primary-100"
+              className="text-primary-300 hover:text-primary-100 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors"
             >
               Read the Technical Whitepaper →
             </Link>
@@ -501,8 +539,8 @@ export default function LandingPage() {
           ref={teamAnimation.ref}
           className={`mx-auto max-w-5xl px-4 transition-all duration-1000 sm:px-6 ${
             teamAnimation.isVisible
-              ? 'translate-y-0 opacity-100'
-              : 'translate-y-10 opacity-0'
+              ? "translate-y-0 opacity-100"
+              : "translate-y-10 opacity-0"
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
@@ -511,17 +549,19 @@ export default function LandingPage() {
 
           <div className="mx-auto grid max-w-4xl gap-6 md:grid-cols-2 md:gap-8">
             {/* Daniel Rubin */}
-            <div className="rounded-lg border border-primary-700 bg-primary-800/50 p-6 text-center sm:p-8">
-              <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary-700 sm:h-24 sm:w-24">
-                <span className="text-2xl font-bold text-white sm:text-3xl">DR</span>
+            <div className="border-primary-700 bg-primary-800/50 rounded-lg border p-6 text-center sm:p-8">
+              <div className="bg-primary-700 mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full sm:h-24 sm:w-24">
+                <span className="text-2xl font-bold text-white sm:text-3xl">
+                  DR
+                </span>
               </div>
               <h3 className="mb-1 text-lg font-bold text-white sm:text-xl">
                 Daniel Rubin
               </h3>
-              <p className="mb-3 text-sm font-semibold text-primary-400 sm:mb-4">
+              <p className="text-primary-400 mb-3 text-sm font-semibold sm:mb-4">
                 CEO/CSO
               </p>
-              <ul className="space-y-1 text-left text-xs text-primary-200 sm:text-sm">
+              <ul className="text-primary-200 space-y-1 text-left text-xs sm:text-sm">
                 <li>• Math PhD Columbia</li>
                 <li>• NSF SBIR Award Winner (FHE)</li>
                 <li>• 19K YouTube subscribers</li>
@@ -529,15 +569,19 @@ export default function LandingPage() {
             </div>
 
             {/* John S. Wu */}
-            <div className="rounded-lg border border-primary-700 bg-primary-800/50 p-6 text-center sm:p-8">
-              <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-primary-700 sm:h-24 sm:w-24">
-                <span className="text-2xl font-bold text-white sm:text-3xl">JW</span>
+            <div className="border-primary-700 bg-primary-800/50 rounded-lg border p-6 text-center sm:p-8">
+              <div className="bg-primary-700 mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full sm:h-24 sm:w-24">
+                <span className="text-2xl font-bold text-white sm:text-3xl">
+                  JW
+                </span>
               </div>
-              <h3 className="mb-1 text-lg font-bold text-white sm:text-xl">John S. Wu</h3>
-              <p className="mb-3 text-sm font-semibold text-primary-400 sm:mb-4">
+              <h3 className="mb-1 text-lg font-bold text-white sm:text-xl">
+                John S. Wu
+              </h3>
+              <p className="text-primary-400 mb-3 text-sm font-semibold sm:mb-4">
                 CTO
               </p>
-              <ul className="space-y-1 text-left text-xs text-primary-200 sm:text-sm">
+              <ul className="text-primary-200 space-y-1 text-left text-xs sm:text-sm">
                 <li>• Math UCLA, CS NYU</li>
                 <li>• Ex-Mina Protocol (networking lead)</li>
                 <li>• Ex-Apple (Kubernetes security)</li>
@@ -558,19 +602,19 @@ export default function LandingPage() {
           <div className="flex flex-col justify-center gap-3 sm:flex-row sm:gap-4">
             <Link
               href="/demo"
-              className="flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-8 py-4 text-base font-semibold text-white transition-colors hover:bg-primary-500 sm:inline-flex sm:py-3"
+              className="bg-primary-600 hover:bg-primary-500 flex items-center justify-center gap-2 rounded-lg px-8 py-4 text-base font-semibold text-white transition-colors sm:inline-flex sm:py-3"
             >
               Play Demo
             </Link>
             <Link
               href="/private-table"
-              className="flex items-center justify-center gap-2 rounded-lg border-2 border-primary-400 px-8 py-4 text-base font-semibold text-primary-400 transition-colors hover:bg-primary-400/10 sm:inline-flex sm:py-3"
+              className="border-primary-400 text-primary-400 hover:bg-primary-400/10 flex items-center justify-center gap-2 rounded-lg border-2 px-8 py-4 text-base font-semibold transition-colors sm:inline-flex sm:py-3"
             >
               Create Private Table
             </Link>
             <Link
               href="/whitepaper"
-              className="inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-primary-300 transition-colors hover:text-primary-100"
+              className="text-primary-300 hover:text-primary-100 inline-flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors"
             >
               Get Whitepaper
             </Link>
@@ -579,35 +623,44 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-primary-800 bg-primary-950 py-8 sm:py-12">
+      <footer className="border-primary-800 bg-primary-950 border-t py-8 sm:py-12">
         <div className="mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-4 flex flex-wrap justify-center gap-4 text-sm text-primary-300 sm:gap-6">
-            <Link href="/about" className="py-1 hover:text-primary-100">
+          <div className="text-primary-300 mb-4 flex flex-wrap justify-center gap-4 text-sm sm:gap-6">
+            <Link href="/about" className="hover:text-primary-100 py-1">
               About
             </Link>
-            <Link href="/whitepaper" className="py-1 hover:text-primary-100">
+            <Link href="/whitepaper" className="hover:text-primary-100 py-1">
               Whitepaper
             </Link>
-            <Link href="/terms" className="py-1 hover:text-primary-100">
+            <Link href="/terms" className="hover:text-primary-100 py-1">
               Terms
             </Link>
-            <Link href="/privacy" className="py-1 hover:text-primary-100">
+            <Link href="/privacy" className="hover:text-primary-100 py-1">
               Privacy
             </Link>
           </div>
 
-          <p className="mt-4 text-center text-xs text-primary-400 sm:text-sm">
+          <p className="text-primary-400 mt-4 text-center text-xs sm:text-sm">
             © 2025 Legit Poker by BASIS LABS. Open-source protocol.
           </p>
 
-          <div className="mt-3 flex justify-center gap-4 text-sm text-primary-400 sm:mt-4 sm:gap-6">
-            <Link href="https://twitter.com" className="py-1 hover:text-primary-300">
+          <div className="text-primary-400 mt-3 flex justify-center gap-4 text-sm sm:mt-4 sm:gap-6">
+            <Link
+              href="https://twitter.com"
+              className="hover:text-primary-300 py-1"
+            >
               Twitter
             </Link>
-            <Link href="https://github.com" className="py-1 hover:text-primary-300">
+            <Link
+              href="https://github.com"
+              className="hover:text-primary-300 py-1"
+            >
               GitHub
             </Link>
-            <Link href="https://discord.com" className="py-1 hover:text-primary-300">
+            <Link
+              href="https://discord.com"
+              className="hover:text-primary-300 py-1"
+            >
               Discord
             </Link>
           </div>

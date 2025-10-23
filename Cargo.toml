@@ -117,6 +117,7 @@ zk_poker_macros = { path = "zk_poker_macros" }
 
 # Backend dependencies
 tokio = { version = "1.40", features = ["full", "tracing"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = { version = "0.7", features = ["ws", "macros", "tokio"] }
 async-trait = "0.1"
 tower = { version = "0.5", features = ["timeout"] }

@@ -4,7 +4,7 @@ import { z } from 'zod';
  * Helpers
  */
 const HEX_STRING = /^(?:0x|\\x)?[0-9a-fA-F]+$/;
-const hexString = z.string().regex(HEX_STRING, 'expected hex-encoded string');
+export const hexString = z.string().regex(HEX_STRING, 'expected hex-encoded string');
 const byteVector = z
   .array(z.number().int().min(0).max(255))
   .optional()

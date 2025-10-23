@@ -17,6 +17,7 @@ use crate::ledger::snapshot::SnapshotSeq;
 use crate::ledger::types::{GameId, HandId};
 use crate::ledger::LobbyService;
 
+use super::demo::stream::{stream_demo_game, DemoStreamQuery};
 use super::demo::{parse_viewer_public_key, rehydrate_commence_outcome, seed_demo_hand};
 use super::dto::{
     DemoCreateRequest, DemoCreateResponse, DemoStartResponse, HandMessagesResponse,
@@ -81,6 +82,7 @@ where
                 "/game/demo/:game_id/hand/:hand_id",
                 post(start_demo_hand::<C>),
             )
+            .route("/game/demo/stream", get(stream_demo::<C>))
             .route(
                 "/game/:game_id/hand/:hand_id/snapshot",
                 get(get_hand_snapshot::<C>),
@@ -176,6 +178,30 @@ where
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
     Ok(Json(response))
+}
+
+async fn stream_demo<C>(
+    Extension(ctx): Extension<Arc<ServerContext<C>>>,
+    Query(query): Query<DemoStreamQuery>,
+) -> Result<
+    axum::response::Sse<
+        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
+    >,
+    ApiError,
+>
+where
+    C: CurveGroup
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + CurveAbsorb<C::BaseField>
+        + Send
+        + Sync
+        + 'static,
+    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
+    C::BaseField: PrimeField + Send + Sync,
+    C::Affine: Absorb,
+{
+    stream_demo_game(ctx, query).await
 }
 
 async fn create_demo_game<C>(

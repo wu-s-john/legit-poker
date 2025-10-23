@@ -255,7 +255,7 @@ const dealingSnapshotSchema = z.object({
   ),
   player_unblinding_combined: z.array(
     z.object({
-      key: canonicalKeySchema,
+      key: z.tuple([seatIdSchema, z.number().int().min(0).max(1)]),
       value: curvePointSchema,
     })
   ),

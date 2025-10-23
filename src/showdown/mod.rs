@@ -7,7 +7,8 @@ pub type Rank = u8; // 2..14 (A=14)
 pub type Index = u8; // 0..51 (zero-based)
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Suit {
     Clubs = 0,    // C
     Diamonds = 1, // D
@@ -31,7 +32,7 @@ impl Suit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Card {
     pub rank: Rank, // 2..14
     pub suit: Suit, // enum
