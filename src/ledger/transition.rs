@@ -1916,12 +1916,10 @@ mod tests {
 
                 match result {
                     AnyTableSnapshot::Preflop(next) => {
-                        assert_eq!(
-                            next.betting.state.street,
-                            EngineStreet::Preflop,
-                            "betting state advanced to preflop street"
+                        panic!(
+                            "blinding contributions should not advance to preflop: {:?}",
+                            next.sequence
                         );
-                        return;
                     }
                     AnyTableSnapshot::Dealing(next) => {
                         current_snapshot = AnyTableSnapshot::Dealing(next);
@@ -1931,7 +1929,32 @@ mod tests {
             }
         }
 
-        panic!("final share did not produce preflop snapshot");
+        let final_dealing = match current_snapshot {
+            AnyTableSnapshot::Dealing(dealing) => dealing,
+            other => panic!(
+                "expected dealing snapshot after blinding phase, got {:?}",
+                other
+            ),
+        };
+
+        for hole_index in 0..=1_u8 {
+            assert!(
+                final_dealing
+                    .dealing
+                    .player_ciphertexts
+                    .contains_key(&(seat, hole_index)),
+                "ciphertext missing for seat {} hole {}",
+                seat,
+                hole_index
+            );
+            assert!(
+                !final_dealing
+                    .dealing
+                    .player_unblinding_combined
+                    .contains_key(&(seat, hole_index)),
+                "unblinding combinations should be empty before unblinding phase"
+            );
+        }
     }
 
     #[test]
