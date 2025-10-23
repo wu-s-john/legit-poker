@@ -677,8 +677,10 @@ where
     let envelope = {
         let mut state = runtime.shuffling.lock();
         let ctx = make_metadata(runtime, actor, state.next_nonce);
+        let aggregated = state.aggregated_public_key.clone();
         let (_, any) = shuffler
             .player_blinding_and_sign(
+                &aggregated,
                 &ctx,
                 request.deal_index,
                 &request.player_public_key,

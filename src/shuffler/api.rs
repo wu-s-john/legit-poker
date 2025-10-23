@@ -36,7 +36,6 @@ where
 {
     pub secret_key: Arc<S::SecretKey>,
     pub public_key: C,
-    pub aggregated_public_key: C,
     pub signing_params: Arc<S::Parameters>,
 }
 
@@ -49,13 +48,11 @@ where
     pub(crate) fn new(
         secret_key: Arc<S::SecretKey>,
         public_key: C,
-        aggregated_public_key: C,
         signing_params: Arc<S::Parameters>,
     ) -> Self {
         Self {
             secret_key,
             public_key,
-            aggregated_public_key,
             signing_params,
         }
     }
@@ -69,6 +66,7 @@ where
 {
     fn shuffle<const N: usize, R: Rng>(
         &self,
+        aggregated_public_key: &C,
         input_deck: &Deck<C, N>,
         rng: &mut R,
     ) -> Result<(Deck<C, N>, ShuffleProof<C>)>
@@ -79,6 +77,7 @@ where
 
     fn provide_blinding_player_decryption_share<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         player_public_key: C,
         rng: &mut R,
     ) -> Result<PlayerTargetedBlindingContribution<C>>
@@ -107,6 +106,7 @@ where
 
     fn shuffle_and_sign<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         ctx: &MetadataEnvelope<C, ShufflerActor<C>>,
         deck_in: &Deck<C, DECK_SIZE>,
         turn_index: u16,
@@ -123,6 +123,7 @@ where
 
     fn player_blinding_and_sign<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         ctx: &MetadataEnvelope<C, ShufflerActor<C>>,
         deal_index: u8,
         player_public_key: &C,
@@ -162,6 +163,7 @@ where
 {
     fn shuffle<const N: usize, R: Rng>(
         &self,
+        aggregated_public_key: &C,
         input_deck: &Deck<C, N>,
         rng: &mut R,
     ) -> Result<(Deck<C, N>, ShuffleProof<C>)>
@@ -176,7 +178,7 @@ where
         let (output_deck, rerands) = shuffle_and_rerandomize_random(
             input_deck,
             &permutation,
-            self.aggregated_public_key,
+            aggregated_public_key.clone(),
             rng,
         );
         let input_vec = input_deck.to_vec();
@@ -193,6 +195,7 @@ where
 
     fn provide_blinding_player_decryption_share<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         player_public_key: C,
         rng: &mut R,
     ) -> Result<PlayerTargetedBlindingContribution<C>>
@@ -206,7 +209,7 @@ where
 
         let contribution = crate::shuffling::player_decryption::native::PlayerTargetedBlindingContribution::generate(
             delta_j,
-            self.aggregated_public_key,
+            aggregated_public_key.clone(),
             player_public_key,
             rng,
         );
@@ -251,6 +254,7 @@ where
 
     fn shuffle_and_sign<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         ctx: &MetadataEnvelope<C, ShufflerActor<C>>,
         deck_in: &Deck<C, DECK_SIZE>,
         turn_index: u16,
@@ -265,13 +269,15 @@ where
         C::BaseField: PrimeField,
         S::Signature: SignatureEncoder,
     {
-        let (deck_out, proof) = self.shuffle::<DECK_SIZE, _>(deck_in, rng)?;
+        let (deck_out, proof) =
+            self.shuffle::<DECK_SIZE, _>(aggregated_public_key, deck_in, rng)?;
         let message = GameShuffleMessage::new(deck_in.clone(), deck_out, proof, turn_index);
         self.sign_and_wrap(ctx, message, rng)
     }
 
     fn player_blinding_and_sign<R: Rng>(
         &self,
+        aggregated_public_key: &C,
         ctx: &MetadataEnvelope<C, ShufflerActor<C>>,
         deal_index: u8,
         player_public_key: &C,
@@ -287,8 +293,11 @@ where
         C: CurveAbsorb<C::BaseField>,
         S::Signature: SignatureEncoder,
     {
-        let contribution =
-            self.provide_blinding_player_decryption_share(player_public_key.clone(), rng)?;
+        let contribution = self.provide_blinding_player_decryption_share(
+            aggregated_public_key,
+            player_public_key.clone(),
+            rng,
+        )?;
         let message =
             GameBlindingDecryptionMessage::new(deal_index, contribution, player_public_key.clone());
         self.sign_and_wrap(ctx, message, rng)

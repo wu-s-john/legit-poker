@@ -90,7 +90,6 @@ mod tests {
                 ShufflerEngine::<GrumpkinProjective, ShufflerScheme<GrumpkinProjective>>::new(
                     Arc::new(sign_sk),
                     public_key,
-                    aggregated_public_key.clone(),
                     Arc::clone(&signing_params),
                 )
             })
@@ -104,7 +103,7 @@ mod tests {
 
         // Sequentially shuffle across all shufflers
         for s in &shufflers {
-            let (next_deck, _proof) = s.shuffle(&deck, &mut rng).expect("shuffle");
+            let (next_deck, _proof) = s.shuffle(&agg_pk, &deck, &mut rng).expect("shuffle");
             deck = next_deck;
         }
 
@@ -120,7 +119,7 @@ mod tests {
         let mut contributions = Vec::with_capacity(N_SHUFFLERS);
         for s in &shufflers {
             let c = s
-                .provide_blinding_player_decryption_share(player_pk, &mut rng)
+                .provide_blinding_player_decryption_share(&agg_pk, player_pk, &mut rng)
                 .expect("blinding share");
             contributions.push(c);
         }
@@ -188,7 +187,6 @@ mod tests {
                 ShufflerEngine::<GrumpkinProjective, ShufflerScheme<GrumpkinProjective>>::new(
                     Arc::new(sign_sk),
                     public_key,
-                    aggregated_public_key.clone(),
                     Arc::clone(&signing_params),
                 )
             })
@@ -263,6 +261,7 @@ mod tests {
                 initial_deck: deck.clone(),
                 latest_deck: deck,
                 acted: false,
+                aggregated_public_key: public_key.clone(),
                 rng: StdRng::seed_from_u64(0xABCDu64),
             },
             Weak::new(),
@@ -380,6 +379,7 @@ mod tests {
                 initial_deck: deck.clone(),
                 latest_deck: deck,
                 acted: false,
+                aggregated_public_key: public_key.clone(),
                 rng: StdRng::seed_from_u64(0xEEEEu64),
             },
             Weak::new(),

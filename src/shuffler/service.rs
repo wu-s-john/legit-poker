@@ -58,6 +58,7 @@ where
 {
     shuffler_id: ShufflerId,
     public_key: C,
+    aggregated_public_key: C,
     engine: Arc<ShufflerEngine<C, S>>,
     submit: mpsc::Sender<AnyMessageEnvelope<C>>,
     states: Arc<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
@@ -94,12 +95,12 @@ where
         let engine = Arc::new(ShufflerEngine::new(
             Arc::new(secret_key),
             public_key.clone(),
-            aggregated_public_key.clone(),
             Arc::new(params),
         ));
         Self {
             shuffler_id,
             public_key,
+            aggregated_public_key,
             engine,
             submit,
             states: Arc::new(DashMap::new()),
@@ -125,7 +126,7 @@ where
     where
         C: Clone,
     {
-        self.engine.aggregated_public_key.clone()
+        self.aggregated_public_key.clone()
     }
 
     pub fn cancel_all(&self) {
@@ -198,6 +199,7 @@ where
             initial_deck,
             latest_deck,
             acted: false,
+            aggregated_public_key: self.aggregated_public_key.clone(),
             rng: StdRng::from_seed(hand_seed),
         };
 
@@ -593,9 +595,10 @@ where
                 nonce: state.next_nonce,
                 public_key: public_key.clone(),
             };
+            let aggregated = state.aggregated_public_key.clone();
 
             let (typed, any) =
-                engine.shuffle_and_sign(&ctx, &deck_in, turn_index, &mut state.rng)?;
+                engine.shuffle_and_sign(&aggregated, &ctx, &deck_in, turn_index, &mut state.rng)?;
             let deck_out_state = typed.message.value.deck_out.clone();
             let nonce = state.next_nonce;
 

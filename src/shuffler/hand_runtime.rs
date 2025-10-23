@@ -23,6 +23,7 @@ pub struct ShufflingHandState<C: CurveGroup> {
     pub initial_deck: [ElGamalCiphertext<C>; DECK_SIZE],
     pub latest_deck: [ElGamalCiphertext<C>; DECK_SIZE],
     pub acted: bool,
+    pub aggregated_public_key: C,
     pub rng: StdRng,
 }
 
