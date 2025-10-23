@@ -406,9 +406,7 @@ where
             if let Some((_, subs)) = self.active_hands.remove(&key) {
                 info!(
                     target = LOG_TARGET,
-                    game_id,
-                    hand_id,
-                    "cancelling hand subscriptions"
+                    game_id, hand_id, "cancelling hand subscriptions"
                 );
                 for sub in subs {
                     sub.cancel();

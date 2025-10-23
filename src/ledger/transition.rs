@@ -15,8 +15,8 @@ use crate::ledger::messages::{
 use crate::ledger::snapshot::{
     build_default_card_plan, build_initial_betting_state, AnyPlayerActionMsg, AnyTableSnapshot,
     BettingSnapshot, CardDestination, CardPlan, DealingSnapshot, DealtCard, PhaseBetting,
-    PhaseShowdown, PhaseShuffling, PlayerRoster, RevealedHand, RevealsSnapshot, ShufflingStep,
-    SnapshotStatus, TableSnapshot,
+    PhaseDealing, PhaseShowdown, PhaseShuffling, PlayerRoster, RevealedHand, RevealsSnapshot,
+    ShufflingStep, SnapshotStatus, TableSnapshot,
 };
 use crate::ledger::store::snapshot::compute_dealing_hash;
 use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
@@ -601,53 +601,32 @@ where
 
         snapshot.advance_state_with_message(envelope, hasher);
 
-        let all_hole_cards_ready = snapshot
-            .stacks
-            .values()
-            .filter(|info| matches!(info.status, PlayerStatus::Active | PlayerStatus::AllIn))
-            .map(|info| info.seat)
-            .all(|seat| {
-                snapshot.dealing.player_ciphertexts.contains_key(&(seat, 0))
-                    && snapshot.dealing.player_ciphertexts.contains_key(&(seat, 1))
-            });
-
-        if all_hole_cards_ready {
-            let betting_state = build_initial_betting_state(
-                snapshot.cfg.as_ref(),
-                snapshot.stacks.as_ref(),
-                snapshot.players.as_ref(),
-            );
-            let betting = BettingSnapshot {
-                state: betting_state,
-                last_events: Vec::new(),
-            };
-
-            let reveals = RevealsSnapshot {
-                board: Vec::new(),
-                revealed_holes: BTreeMap::new(),
-            };
-
-            Ok(AnyTableSnapshot::Preflop(TableSnapshot {
-                game_id: snapshot.game_id,
-                hand_id: snapshot.hand_id,
-                sequence: snapshot.sequence,
-                cfg: snapshot.cfg,
-                shufflers: snapshot.shufflers,
-                players: snapshot.players,
-                seating: snapshot.seating,
-                stacks: snapshot.stacks,
-                previous_hash: snapshot.previous_hash,
-                state_hash: snapshot.state_hash,
-                status: SnapshotStatus::Success,
-                shuffling: snapshot.shuffling,
-                dealing: snapshot.dealing,
-                betting,
-                reveals,
-            }))
-        } else {
-            Ok(AnyTableSnapshot::Dealing(snapshot))
-        }
+        Ok(AnyTableSnapshot::Dealing(snapshot))
     }
+}
+
+fn all_hole_cards_fully_unblinded<C>(snapshot: &TableSnapshot<PhaseDealing, C>) -> bool
+where
+    C: CurveGroup,
+{
+    snapshot
+        .stacks
+        .values()
+        .filter(|info| matches!(info.status, PlayerStatus::Active | PlayerStatus::AllIn))
+        .map(|info| info.seat)
+        .all(|seat| {
+            let ciphertext_ready = snapshot.dealing.player_ciphertexts.contains_key(&(seat, 0))
+                && snapshot.dealing.player_ciphertexts.contains_key(&(seat, 1));
+            let unblinding_ready = snapshot
+                .dealing
+                .player_unblinding_combined
+                .contains_key(&(seat, 0))
+                && snapshot
+                    .dealing
+                    .player_unblinding_combined
+                    .contains_key(&(seat, 1));
+            ciphertext_ready && unblinding_ready
+        })
 }
 
 impl<C> TransitionHandler<C> for GamePartialUnblindingShareMessage<C>
@@ -741,6 +720,41 @@ where
         }
 
         snapshot.advance_state_with_message(envelope, hasher);
+
+        if all_hole_cards_fully_unblinded(&snapshot) {
+            let betting_state = build_initial_betting_state(
+                snapshot.cfg.as_ref(),
+                snapshot.stacks.as_ref(),
+                snapshot.players.as_ref(),
+            );
+            let betting = BettingSnapshot {
+                state: betting_state,
+                last_events: Vec::new(),
+            };
+
+            let reveals = RevealsSnapshot {
+                board: Vec::new(),
+                revealed_holes: BTreeMap::new(),
+            };
+
+            return Ok(AnyTableSnapshot::Preflop(TableSnapshot {
+                game_id: snapshot.game_id,
+                hand_id: snapshot.hand_id,
+                sequence: snapshot.sequence,
+                cfg: snapshot.cfg,
+                shufflers: snapshot.shufflers,
+                players: snapshot.players,
+                seating: snapshot.seating,
+                stacks: snapshot.stacks,
+                previous_hash: snapshot.previous_hash,
+                state_hash: snapshot.state_hash,
+                status: SnapshotStatus::Success,
+                shuffling: snapshot.shuffling,
+                dealing: snapshot.dealing,
+                betting,
+                reveals,
+            }));
+        }
 
         Ok(AnyTableSnapshot::Dealing(snapshot))
     }

@@ -278,7 +278,10 @@ async fn run_demo(config: Config) -> Result<()> {
     signal::ctrl_c()
         .await
         .context("failed while awaiting CTRL+C")?;
-    info!(target = LOG_TARGET, "received shutdown signal; shutting down coordinator");
+    info!(
+        target = LOG_TARGET,
+        "received shutdown signal; shutting down coordinator"
+    );
     coordinator
         .shutdown()
         .await
