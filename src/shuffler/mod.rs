@@ -1,1380 +1,45 @@
-use anyhow::{anyhow, Result};
-use ark_crypto_primitives::signature::{schnorr::Schnorr, SignatureScheme};
-use ark_crypto_primitives::sponge::Absorb;
-use ark_ec::{CurveConfig, CurveGroup};
-use ark_ff::{PrimeField, UniformRand, Zero};
-use ark_serialize::CanonicalSerialize;
-use ark_std::rand::Rng;
-use dashmap::DashMap;
-use parking_lot::Mutex;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use crate::task::spawn_named_task;
+use ark_crypto_primitives::signature::schnorr::{Schnorr, SecretKey as SchnorrSecretKey};
 use sha2::Sha256;
-use std::future::Future;
-use std::sync::{Arc, Weak};
-use tokio::sync::{broadcast, mpsc};
-use tokio::task::JoinHandle;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
 
+mod api;
 mod dealing;
+mod hand_runtime;
+mod service;
 
 pub use dealing::{
     BoardCardShufflerRequest, BoardCardSlot, DealShufflerRequest, DealingHandState,
     PlayerBlindingRequest, PlayerUnblindingRequest,
 };
+pub use hand_runtime::{HandRuntime, HandSubscription, ShufflingHandState};
+pub use service::{ShufflerRunConfig, ShufflerService};
 
-use crate::curve_absorb::CurveAbsorb;
-use crate::ledger::CanonicalKey;
-use crate::ledger::{
-    actor::{AnyActor, ShufflerActor},
-    messages::{
-        sign_enveloped_action, AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage,
-        FinalizedAnyMessageEnvelope, GameBlindingDecryptionMessage,
-        GamePartialUnblindingShareMessage, GameShuffleMessage, MetadataEnvelope, SignatureEncoder,
-    },
-    snapshot::{AnyTableSnapshot, Shared, TableAtShuffling},
-    types::{GameId, HandId, ShufflerId},
-};
-use crate::shuffling::data_structures::ShuffleProof;
-use crate::shuffling::{
-    bayer_groth::decomposition::random_permutation as bg_random_permutation,
-    shuffle_and_rerandomize_random, CommunityDecryptionShare, ElGamalCiphertext,
-    PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
-    DECK_SIZE,
-};
-use crate::signing::WithSignature;
+use crate::shuffling::ElGamalCiphertext;
+
+pub use api::{ShufflerApi, ShufflerEngine};
 
 pub type Deck<C, const N: usize> = [ElGamalCiphertext<C>; N];
 
 pub type ShufflerScheme<C> = Schnorr<C, Sha256>;
 
+impl<C> api::ShufflerSigningSecret<C> for SchnorrSecretKey<C>
+where
+    C: ark_ec::CurveGroup,
+{
+    fn as_scalar(&self) -> C::ScalarField {
+        self.0.clone()
+    }
+}
+
 const LOG_TARGET: &str = "legit_poker::game::shuffler";
 const DEAL_CHANNEL_CAPACITY: usize = 1024;
-
-fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-    S: Into<String>,
-{
-    let name_owned = name.into();
-    #[cfg(tokio_unstable)]
-    {
-        tokio::task::Builder::new().name(&name_owned).spawn(future)
-    }
-    #[cfg(not(tokio_unstable))]
-    {
-        use tracing::Instrument;
-        let span = tracing::info_span!("task", task_name = %name_owned);
-        tokio::spawn(future.instrument(span))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ShufflerKeypair<C: CurveGroup> {
-    pub index: usize,
-    pub secret_key: C::ScalarField,
-    pub public_key: C,
-    pub aggregated_public_key: C,
-}
-
-impl<C> ShufflerKeypair<C>
-where
-    C: CurveGroup,
-{
-    pub(crate) fn new(
-        index: usize,
-        secret_key: C::ScalarField,
-        public_key: C,
-        aggregated_public_key: C,
-    ) -> Self {
-        Self {
-            index,
-            secret_key,
-            public_key,
-            aggregated_public_key,
-        }
-    }
-}
-
-pub trait ShufflerApi<C: CurveGroup> {
-    /// Receives an encrypted deck and returns a shuffled, re-encrypted deck with proof
-    fn shuffle<const N: usize, R: Rng>(
-        &self,
-        input_deck: &Deck<C, N>,
-        rng: &mut R,
-    ) -> Result<(Deck<C, N>, ShuffleProof<C>)>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: PrimeField + UniformRand,
-        C::BaseField: PrimeField;
-
-    /// Provides a player-targeted blinding contribution + proof (for later combination)
-    fn provide_blinding_player_decryption_share<R: Rng>(
-        &self,
-        player_public_key: C,
-        rng: &mut R,
-    ) -> Result<PlayerTargetedBlindingContribution<C>>
-    where
-        C::BaseField: PrimeField,
-        C::ScalarField: PrimeField + Absorb,
-        C::Affine: Absorb,
-        C: CurveAbsorb<C::BaseField>;
-
-    /// Provides a PartialUnblinding share for a player’s ciphertext (n-of-n)
-    fn provide_unblinding_decryption_share(
-        &self,
-        player_ciphertext: &PlayerAccessibleCiphertext<C>,
-    ) -> Result<PartialUnblindingShare<C>>
-    where
-        C::ScalarField: PrimeField;
-
-    /// Provides a CommunityDecryptionShare + proof for a community card (n-of-n)
-    fn provide_community_decryption_share<R: Rng>(
-        &self,
-        ciphertext: &ElGamalCiphertext<C>,
-        rng: &mut R,
-    ) -> Result<CommunityDecryptionShare<C>>
-    where
-        C::BaseField: PrimeField,
-        C::ScalarField: PrimeField + Absorb,
-        C: CurveAbsorb<C::BaseField>;
-}
-
-impl<C> ShufflerApi<C> for ShufflerKeypair<C>
-where
-    C: CurveGroup,
-{
-    fn shuffle<const N: usize, R: Rng>(
-        &self,
-        input_deck: &Deck<C, N>,
-        rng: &mut R,
-    ) -> Result<(Deck<C, N>, ShuffleProof<C>)>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-    {
-        // Draw a random permutation using existing utility
-        let perm_vec = bg_random_permutation(N, rng);
-        let permutation: [usize; N] = core::array::from_fn(|i| perm_vec[i]);
-
-        // Shuffle and re-randomize with the aggregated public key
-        let (output_deck, rerands) = shuffle_and_rerandomize_random(
-            input_deck,
-            &permutation,
-            self.aggregated_public_key,
-            rng,
-        );
-        let input_vec = input_deck.to_vec();
-        let sorted_pairs = output_deck
-            .iter()
-            .cloned()
-            .map(|cipher| (cipher, C::BaseField::zero()))
-            .collect();
-        let rerand_vec = rerands.to_vec();
-        let proof = ShuffleProof::new(input_vec, sorted_pairs, rerand_vec)
-            .map_err(|err| anyhow!("failed to construct shuffle proof: {err}"))?;
-        Ok((output_deck, proof))
-    }
-
-    fn provide_blinding_player_decryption_share<R: Rng>(
-        &self,
-        player_public_key: C,
-        rng: &mut R,
-    ) -> Result<PlayerTargetedBlindingContribution<C>>
-    where
-        C::BaseField: PrimeField,
-        C::ScalarField: PrimeField + Absorb,
-        C::Affine: Absorb,
-        C: CurveAbsorb<C::BaseField>,
-    {
-        // Use the shuffler's long-term secret as the blinding share δ_j.
-        // This avoids introducing extra bounds (UniformRand) here and matches the requested trait signature.
-        let delta_j = self.secret_key;
-
-        let contribution = crate::shuffling::player_decryption::native::PlayerTargetedBlindingContribution::generate(
-            delta_j,
-            self.aggregated_public_key,
-            player_public_key,
-            rng,
-        );
-        Ok(contribution)
-    }
-
-    fn provide_unblinding_decryption_share(
-        &self,
-        player_ciphertext: &PlayerAccessibleCiphertext<C>,
-    ) -> Result<PartialUnblindingShare<C>>
-    where
-        C::ScalarField: PrimeField,
-    {
-        // μ_{u,j} = A_u^{x_j}
-        let member_key = CanonicalKey::new(self.public_key.clone());
-        let share = crate::shuffling::generate_committee_decryption_share(
-            player_ciphertext,
-            self.secret_key,
-            member_key,
-        );
-        Ok(share)
-    }
-
-    fn provide_community_decryption_share<R: Rng>(
-        &self,
-        ciphertext: &ElGamalCiphertext<C>,
-        rng: &mut R,
-    ) -> Result<CommunityDecryptionShare<C>>
-    where
-        C::BaseField: PrimeField,
-        C::ScalarField: PrimeField + Absorb,
-        C: CurveAbsorb<C::BaseField>,
-    {
-        let member_key = CanonicalKey::new(self.public_key.clone());
-        let share = crate::shuffling::CommunityDecryptionShare::generate(
-            ciphertext,
-            self.secret_key,
-            member_key,
-            rng,
-        );
-        Ok(share)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ShufflerRunConfig {
-    pub rng_seed: [u8; 32],
-    pub message_history_cap: usize,
-}
-
-impl ShufflerRunConfig {
-    pub fn new(rng_seed: [u8; 32]) -> Self {
-        Self {
-            rng_seed,
-            message_history_cap: 64,
-        }
-    }
-
-    pub fn with_message_history_cap(mut self, cap: usize) -> Self {
-        self.message_history_cap = cap;
-        self
-    }
-}
-
-#[derive(Debug)]
-pub struct ShufflingHandState<C: CurveGroup> {
-    pub expected_order: Vec<CanonicalKey<C>>,
-    pub buffered: Vec<EnvelopedMessage<C, GameShuffleMessage<C>>>,
-    pub next_nonce: u64,
-    pub turn_index: usize,
-    pub initial_deck: [ElGamalCiphertext<C>; DECK_SIZE],
-    pub latest_deck: [ElGamalCiphertext<C>; DECK_SIZE],
-    pub acted: bool,
-    pub rng: StdRng,
-}
-
-impl<C: CurveGroup> ShufflingHandState<C> {
-    fn is_complete(&self) -> bool {
-        self.buffered.len() >= self.expected_order.len()
-    }
-}
-#[derive(Debug, Default)]
-struct ShufflerTasks {
-    shuffle: Option<JoinHandle<()>>,
-    dealing_producer: Option<JoinHandle<()>>,
-    dealing_worker: Option<JoinHandle<()>>,
-}
-
-#[derive(Debug)]
-struct HandRuntime<C: CurveGroup> {
-    pub game_id: GameId,
-    pub hand_id: HandId,
-    pub shuffler_id: ShufflerId,
-    pub shuffler_index: usize,
-    pub shuffler_key: CanonicalKey<C>,
-    pub cancel: CancellationToken,
-    pub shuffling: Mutex<ShufflingHandState<C>>,
-    pub dealing: Mutex<DealingHandState<C>>,
-    tasks: Mutex<ShufflerTasks>,
-    registry: Weak<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
-}
-
-impl<C: CurveGroup> HandRuntime<C> {
-    fn new(
-        game_id: GameId,
-        hand_id: HandId,
-        shuffler_id: ShufflerId,
-        shuffler_index: usize,
-        shuffler_key: CanonicalKey<C>,
-        shuffling_state: ShufflingHandState<C>,
-        registry: Weak<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
-    ) -> Self {
-        let cancel = CancellationToken::new();
-        Self {
-            game_id,
-            hand_id,
-            shuffler_id,
-            shuffler_index,
-            shuffler_key,
-            cancel,
-            shuffling: Mutex::new(shuffling_state),
-            dealing: Mutex::new(DealingHandState::new()),
-            tasks: Mutex::new(ShufflerTasks::default()),
-            registry,
-        }
-    }
-
-    fn set_shuffle_handle(&self, handle: JoinHandle<()>) {
-        let mut tasks = self.tasks.lock();
-        if let Some(existing) = tasks.shuffle.replace(handle) {
-            existing.abort();
-        }
-    }
-
-    fn set_dealing_handles(&self, producer: JoinHandle<()>, worker: JoinHandle<()>) {
-        let mut tasks = self.tasks.lock();
-        if let Some(existing) = tasks.dealing_producer.replace(producer) {
-            existing.abort();
-        }
-        if let Some(existing) = tasks.dealing_worker.replace(worker) {
-            existing.abort();
-        }
-    }
-
-    fn cancel_all(&self) {
-        self.cancel.cancel();
-        let mut tasks = self.tasks.lock();
-        if let Some(handle) = tasks.shuffle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = tasks.dealing_producer.take() {
-            handle.abort();
-        }
-        if let Some(handle) = tasks.dealing_worker.take() {
-            handle.abort();
-        }
-    }
-
-    fn remove_from_registry(&self) {
-        if let Some(registry) = self.registry.upgrade() {
-            registry.remove(&(self.game_id, self.hand_id));
-        }
-    }
-}
-
-pub struct Shuffler<C, S>
-where
-    C: CurveGroup,
-    S: SignatureScheme,
-{
-    index: usize,
-    shuffler_id: ShufflerId,
-    public_key: C,
-    params: Arc<S::Parameters>,
-    secret_key: Arc<S::SecretKey>,
-    api: Arc<ShufflerKeypair<C>>,
-    submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-    states: Arc<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
-    rng: Mutex<StdRng>,
-    config: ShufflerRunConfig,
-    events_rx: Mutex<broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>>,
-    snapshots_rx: Mutex<broadcast::Receiver<Shared<AnyTableSnapshot<C>>>>,
-}
-
-impl<C, S> Shuffler<C, S>
-where
-    C: CurveGroup + CurveAbsorb<C::BaseField>,
-    C::BaseField: PrimeField,
-    C::Affine: Absorb,
-    C::ScalarField: PrimeField + Absorb,
-    S: SignatureScheme<PublicKey = C::Affine>,
-{
-    pub fn new(
-        index: usize,
-        shuffler_id: ShufflerId,
-        public_key: C,
-        aggregated_public_key: C,
-        shuffle_secret: C::ScalarField,
-        params: S::Parameters,
-        secret_key: S::SecretKey,
-        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-        config: ShufflerRunConfig,
-        events_rx: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
-        snapshots_rx: broadcast::Receiver<Shared<AnyTableSnapshot<C>>>,
-    ) -> Self {
-        let rng = StdRng::from_seed(config.rng_seed);
-        let api = Arc::new(ShufflerKeypair::new(
-            index,
-            shuffle_secret,
-            public_key.clone(),
-            aggregated_public_key.clone(),
-        ));
-        Self {
-            index,
-            shuffler_id,
-            public_key,
-            params: Arc::new(params),
-            secret_key: Arc::new(secret_key),
-            api,
-            submit,
-            states: Arc::new(DashMap::new()),
-            rng: Mutex::new(rng),
-            config,
-            events_rx: Mutex::new(events_rx),
-            snapshots_rx: Mutex::new(snapshots_rx),
-        }
-    }
-
-    pub fn shuffler_id(&self) -> ShufflerId {
-        self.shuffler_id
-    }
-
-    pub fn index(&self) -> usize {
-        self.index
-    }
-
-    pub fn public_key(&self) -> C
-    where
-        C: Clone,
-    {
-        self.public_key.clone()
-    }
-
-    pub fn aggregated_public_key(&self) -> C
-    where
-        C: Clone,
-    {
-        self.api.aggregated_public_key.clone()
-    }
-
-    pub fn cancel_all(&self) {
-        let mut keys = Vec::new();
-        for entry in self.states.iter() {
-            entry.value().cancel_all();
-            keys.push(*entry.key());
-        }
-        for key in keys {
-            self.states.remove(&key);
-        }
-    }
-
-    pub async fn subscribe_per_hand(
-        &self,
-        game_id: GameId,
-        hand_id: HandId,
-        turn_index: usize,
-        snapshot: &TableAtShuffling<C>,
-    ) -> Result<HandSubscription<C>>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync,
-        C::BaseField: PrimeField + Send + Sync,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
-        S::Parameters: Send + Sync + 'static,
-        S::SecretKey: Send + Sync + 'static,
-    {
-        let key = (game_id, hand_id);
-        if self.states.contains_key(&key) {
-            return Err(anyhow!(
-                "hand {} for game {} already registered on shuffler {}",
-                hand_id,
-                game_id,
-                self.shuffler_id
-            ));
-        }
-
-        let mut global_rng = self.rng.lock();
-        let mut hand_seed = [0u8; 32];
-        global_rng.fill_bytes(&mut hand_seed);
-        drop(global_rng);
-
-        let expected_order = snapshot.shuffling.expected_order.clone();
-        if expected_order.is_empty() {
-            return Err(anyhow!(
-                "hand {} for game {} has empty shuffler order",
-                hand_id,
-                game_id
-            ));
-        }
-        if turn_index >= expected_order.len() {
-            return Err(anyhow!(
-                "turn index {} out of range ({} shufflers) for hand {}",
-                turn_index,
-                expected_order.len(),
-                hand_id
-            ));
-        }
-
-        let initial_deck = snapshot.shuffling.initial_deck.clone();
-        let latest_deck = snapshot.shuffling.initial_deck.clone();
-        let next_nonce = u64::from(snapshot.sequence);
-
-        let state = ShufflingHandState {
-            expected_order,
-            buffered: Vec::new(),
-            next_nonce,
-            turn_index,
-            initial_deck,
-            latest_deck,
-            acted: false,
-            rng: StdRng::from_seed(hand_seed),
-        };
-
-        let registry = Arc::downgrade(&self.states);
-        let shuffler_key = CanonicalKey::new(self.public_key.clone());
-        let runtime = Arc::new(HandRuntime::new(
-            game_id,
-            hand_id,
-            self.shuffler_id,
-            self.index,
-            shuffler_key.clone(),
-            state,
-            registry.clone(),
-        ));
-
-        if self.states.insert(key, Arc::clone(&runtime)).is_some() {
-            return Err(anyhow!(
-                "hand {} for game {} already registered on shuffler {}",
-                hand_id,
-                game_id,
-                self.shuffler_id
-            ));
-        }
-
-        info!(
-            target = LOG_TARGET,
-            game_id,
-            hand_id,
-            shuffler_id = self.shuffler_id,
-            turn_index,
-            "registered hand subscription"
-        );
-
-        let api = Arc::clone(&self.api);
-        let params = Arc::clone(&self.params);
-        let secret = Arc::clone(&self.secret_key);
-        let submit = self.submit.clone();
-        let public_key = self.public_key.clone();
-        let actor = ShufflerActor {
-            shuffler_id: self.shuffler_id,
-            shuffler_key: shuffler_key.clone(),
-        };
-        let events_rx = {
-            let guard = self.events_rx.lock();
-            guard.resubscribe()
-        };
-        let snapshots_rx = {
-            let guard = self.snapshots_rx.lock();
-            guard.resubscribe()
-        };
-
-        let history_cap = self.config.message_history_cap;
-        let shuffle_handle = Self::spawn_shuffle_loop_per_hand(
-            self.index,
-            api.clone(),
-            params.clone(),
-            secret.clone(),
-            submit.clone(),
-            Arc::clone(&runtime),
-            events_rx,
-            history_cap,
-            public_key.clone(),
-            &actor,
-        );
-
-        runtime.set_shuffle_handle(shuffle_handle);
-
-        let (deal_tx, deal_rx) = broadcast::channel(DEAL_CHANNEL_CAPACITY);
-        let dealing_producer = spawn_dealing_request_producer::<C>(
-            Arc::clone(&runtime),
-            snapshots_rx,
-            deal_tx.clone(),
-        );
-        let dealing_worker = spawn_dealing_request_worker::<C, S>(
-            self.index,
-            Arc::clone(&runtime),
-            deal_rx,
-            submit.clone(),
-            Arc::clone(&api),
-            Arc::clone(&params),
-            Arc::clone(&secret),
-            public_key.clone(),
-            &actor,
-        );
-
-        runtime.set_dealing_handles(dealing_producer, dealing_worker);
-
-        Ok(HandSubscription::new(runtime))
-    }
-
-    pub async fn kick_start_hand(&self, game_id: GameId, hand_id: HandId) -> Result<()>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        let key = (game_id, hand_id);
-        let runtime_arc = {
-            let entry = self
-                .states
-                .get(&key)
-                .ok_or_else(|| anyhow!("hand {} for game {} not registered", hand_id, game_id))?;
-            let runtime = Arc::clone(entry.value());
-            drop(entry);
-            runtime
-        };
-
-        {
-            let state = runtime_arc.shuffling.lock();
-            if state.turn_index != 0 {
-                return Err(anyhow!(
-                    "shuffler {} cannot kick start hand {} turn index {}",
-                    self.shuffler_id,
-                    hand_id,
-                    state.turn_index
-                ));
-            }
-        }
-
-        let actor = ShufflerActor {
-            shuffler_id: self.shuffler_id,
-            shuffler_key: CanonicalKey::new(self.public_key),
-        };
-        Self::emit_shuffle(
-            &self.api,
-            &self.params,
-            &self.secret_key,
-            &self.submit,
-            &runtime_arc,
-            &self.public_key,
-            &actor,
-        )
-        .await
-    }
-
-    fn spawn_shuffle_loop_per_hand(
-        shuffler_index: usize,
-        api: Arc<ShufflerKeypair<C>>,
-        params: Arc<S::Parameters>,
-        secret: Arc<S::SecretKey>,
-        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-        runtime: Arc<HandRuntime<C>>,
-        shuffle_updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
-        history_cap: usize,
-        public_key: C,
-        actor: &ShufflerActor<C>,
-    ) -> JoinHandle<()>
-    where
-        C: Send + Sync + 'static,
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + 'static,
-        C::BaseField: PrimeField + Send + Sync + 'static,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
-        S::Parameters: Send + Sync + 'static,
-        S::SecretKey: Send + Sync + 'static,
-    {
-        let actor_clone = actor.clone();
-        let game_id = runtime.game_id;
-        let hand_id = runtime.hand_id;
-        let task_name = format!("shuffler-{shuffler_index}-game-{game_id}-hand-{hand_id}-shuffle");
-        spawn_named_task(task_name, async move {
-            if let Err(err) = Self::shuffle_loop_per_hand(
-                api,
-                params,
-                secret,
-                submit,
-                Arc::clone(&runtime),
-                shuffle_updates,
-                history_cap,
-                public_key,
-                &actor_clone,
-                shuffler_index,
-            )
-            .await
-            {
-                warn!(
-                    target = LOG_TARGET,
-                    game_id,
-                    hand_id,
-                    shuffler_index,
-                    error = %err,
-                    "shuffle loop exited with error"
-                );
-            } else {
-                debug!(
-                    target = LOG_TARGET,
-                    game_id, hand_id, shuffler_index, "shuffle loop finished"
-                );
-            }
-        })
-    }
-
-    async fn shuffle_loop_per_hand(
-        api: Arc<ShufflerKeypair<C>>,
-        params: Arc<S::Parameters>,
-        secret: Arc<S::SecretKey>,
-        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-        runtime: Arc<HandRuntime<C>>,
-        mut updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
-        history_cap: usize,
-        public_key: C,
-        actor: &ShufflerActor<C>,
-        shuffler_index: usize,
-    ) -> Result<()>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        loop {
-            tokio::select! {
-                _ = runtime.cancel.cancelled() => {
-                    debug!(
-                        target = LOG_TARGET,
-                        game_id = runtime.game_id,
-                        hand_id = runtime.hand_id,
-                        shuffler_index,
-                        "cancellation token triggered; stopping shuffle loop"
-                    );
-                    break;
-                }
-                msg = updates.recv() => {
-                    match msg {
-                        Ok(finalized) => {
-                            if finalized.envelope.game_id != runtime.game_id
-                                || finalized.envelope.hand_id != runtime.hand_id
-                            {
-                                continue;
-                            }
-
-                            if let Some(envelope) = Self::as_shuffle_envelope(&finalized) {
-                                let should_emit = Self::record_incoming(&runtime, &envelope, history_cap);
-                                if should_emit {
-                                    if let Err(err) = Self::emit_shuffle(
-                                        &api,
-                                        &params,
-                                        &secret,
-                                        &submit,
-                                        &runtime,
-                                        &public_key,
-                                        actor,
-                                    )
-                                    .await
-                                    {
-                                        error!(
-                                            target = LOG_TARGET,
-                                            game_id = runtime.game_id,
-                                            hand_id = runtime.hand_id,
-                                            shuffler_index,
-                                            error = %err,
-                                            "failed to emit shuffle message"
-                                        );
-                                        break;
-                                    }
-                                }
-
-                                let is_complete = {
-                                    let state = runtime.shuffling.lock();
-                                    state.is_complete()
-                                };
-                                if is_complete {
-                                    info!(
-                                        target = LOG_TARGET,
-                                        game_id = runtime.game_id,
-                                        hand_id = runtime.hand_id,
-                                        shuffler_index,
-                                        "shuffling complete; exiting shuffle loop"
-                                    );
-                                    break;
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!(
-                                target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
-                                shuffler_index,
-                                skipped,
-                                "lagged on realtime updates"
-                            );
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            debug!(
-                                target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
-                                shuffler_index,
-                                "realtime channel closed"
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn sign_blinding_envelope(
-        state: &mut ShufflingHandState<C>,
-        runtime: &HandRuntime<C>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-        message: GameBlindingDecryptionMessage<C>,
-    ) -> Result<AnyMessageEnvelope<C>>
-    where
-        S::Signature: SignatureEncoder,
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-    {
-        let meta = MetadataEnvelope {
-            hand_id: runtime.hand_id,
-            game_id: runtime.game_id,
-            actor: actor.clone(),
-            nonce: state.next_nonce,
-            public_key: public_key.clone(),
-        };
-
-        let signed = sign_enveloped_action::<S, C, GameBlindingDecryptionMessage<C>, _>(
-            meta,
-            message,
-            params,
-            secret,
-            &mut state.rng,
-        )?;
-
-        state.next_nonce = state.next_nonce.saturating_add(1);
-
-        Ok(Self::wrap_blinding_envelope(actor.shuffler_id, signed))
-    }
-
-    fn sign_partial_unblinding_envelope(
-        state: &mut ShufflingHandState<C>,
-        runtime: &HandRuntime<C>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-        message: GamePartialUnblindingShareMessage<C>,
-    ) -> Result<AnyMessageEnvelope<C>>
-    where
-        S::Signature: SignatureEncoder,
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-    {
-        let meta = MetadataEnvelope {
-            hand_id: runtime.hand_id,
-            game_id: runtime.game_id,
-            actor: actor.clone(),
-            nonce: state.next_nonce,
-            public_key: public_key.clone(),
-        };
-
-        let signed = sign_enveloped_action::<S, C, GamePartialUnblindingShareMessage<C>, _>(
-            meta,
-            message,
-            params,
-            secret,
-            &mut state.rng,
-        )?;
-
-        state.next_nonce = state.next_nonce.saturating_add(1);
-
-        Ok(Self::wrap_partial_unblinding_envelope(
-            actor.shuffler_id,
-            signed,
-        ))
-    }
-
-    fn record_incoming(
-        runtime: &HandRuntime<C>,
-        envelope: &EnvelopedMessage<C, GameShuffleMessage<C>>,
-        history_cap: usize,
-    ) -> bool {
-        let mut state = runtime.shuffling.lock();
-        if envelope.hand_id != runtime.hand_id || envelope.game_id != runtime.game_id {
-            return false;
-        }
-        if state.is_complete() {
-            return false;
-        }
-
-        let position = state.buffered.len();
-        if let Some(expected) = state.expected_order.get(position) {
-            if *expected != envelope.actor.shuffler_key {
-                warn!(
-                    target = LOG_TARGET,
-                    game_id = runtime.game_id,
-                    hand_id = runtime.hand_id,
-                    expected = ?expected,
-                    actual = ?envelope.actor.shuffler_key,
-                    "incoming shuffle actor mismatch"
-                );
-            }
-        }
-
-        state.latest_deck = envelope.message.value.deck_out.clone();
-        state.buffered.push(envelope.clone());
-        if state.buffered.len() > history_cap {
-            let drop_count = state.buffered.len() - history_cap;
-            state.buffered.drain(0..drop_count);
-        }
-        state.next_nonce = state.next_nonce.max(envelope.nonce.saturating_add(1));
-
-        !state.acted && state.buffered.len() == state.turn_index
-    }
-
-    fn as_shuffle_envelope(
-        finalized: &FinalizedAnyMessageEnvelope<C>,
-    ) -> Option<EnvelopedMessage<C, GameShuffleMessage<C>>> {
-        let actor = match &finalized.envelope.actor {
-            AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key,
-            } => ShufflerActor {
-                shuffler_id: *shuffler_id,
-                shuffler_key: shuffler_key.clone(),
-            },
-            _ => return None,
-        };
-
-        match &finalized.envelope.message.value {
-            AnyGameMessage::Shuffle(message) => Some(EnvelopedMessage {
-                hand_id: finalized.envelope.hand_id,
-                game_id: finalized.envelope.game_id,
-                actor,
-                nonce: finalized.envelope.nonce,
-                public_key: finalized.envelope.public_key.clone(),
-                message: WithSignature {
-                    value: message.clone(),
-                    signature: finalized.envelope.message.signature.clone(),
-                    transcript: finalized.envelope.message.transcript.clone(),
-                },
-            }),
-            _ => None,
-        }
-    }
-
-    async fn emit_shuffle(
-        api: &Arc<ShufflerKeypair<C>>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
-        runtime: &Arc<HandRuntime<C>>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-    ) -> Result<()>
-    where
-        C::Config: CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
-        C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        let (envelope_for_state, deck_out_state, nonce_for_update) = {
-            let mut state = runtime.shuffling.lock();
-            if state.is_complete() || state.acted {
-                return Ok(());
-            }
-
-            let position = state.buffered.len();
-            if let Some(expected) = state.expected_order.get(position) {
-                if *expected != actor.shuffler_key {
-                    warn!(
-                        target = LOG_TARGET,
-                        game_id = runtime.game_id,
-                        hand_id = runtime.hand_id,
-                        expected = ?expected,
-                        actual = ?actor.shuffler_key,
-                        "attempted to emit shuffle out of turn"
-                    );
-                    return Ok(());
-                }
-            }
-
-            let deck_in = state.latest_deck.clone();
-            let (deck_out, proof) = api.shuffle(&deck_in, &mut state.rng)?;
-            let turn_index = u16::try_from(state.turn_index)
-                .map_err(|_| anyhow!("turn index overflow for shuffle message"))?;
-            let message =
-                GameShuffleMessage::new(deck_in.clone(), deck_out.clone(), proof, turn_index);
-
-            let meta = MetadataEnvelope {
-                hand_id: runtime.hand_id,
-                game_id: runtime.game_id,
-                actor: actor.clone(),
-                nonce: state.next_nonce,
-                public_key: public_key.clone(),
-            };
-
-            let signed = sign_enveloped_action::<S, C, GameShuffleMessage<C>, _>(
-                meta,
-                message,
-                params,
-                secret,
-                &mut state.rng,
-            )?;
-
-            let deck_out_state = signed.message.value.deck_out.clone();
-            let nonce = state.next_nonce;
-
-            (signed, deck_out_state, nonce)
-        };
-
-        let any_envelope = Self::wrap_any_envelope(actor.shuffler_id, &envelope_for_state);
-        submit
-            .send(any_envelope)
-            .await
-            .map_err(|err| anyhow!(err.to_string()))?;
-
-        {
-            let mut state = runtime.shuffling.lock();
-            state.next_nonce = nonce_for_update.saturating_add(1);
-            state.latest_deck = deck_out_state;
-            // History is updated via record_incoming when the broadcasted envelope arrives.
-            state.acted = true;
-        }
-
-        info!(
-            target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            "emitted shuffle message"
-        );
-
-        Ok(())
-    }
-
-    fn wrap_any_envelope(
-        shuffler_id: ShufflerId,
-        envelope: &EnvelopedMessage<C, GameShuffleMessage<C>>,
-    ) -> AnyMessageEnvelope<C> {
-        let signed = envelope.message.clone();
-        AnyMessageEnvelope {
-            hand_id: envelope.hand_id,
-            game_id: envelope.game_id,
-            actor: AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key: CanonicalKey::new(envelope.public_key.clone()),
-            },
-            nonce: envelope.nonce,
-            public_key: envelope.public_key,
-            message: WithSignature {
-                value: AnyGameMessage::Shuffle(signed.value),
-                signature: signed.signature,
-                transcript: signed.transcript,
-            },
-        }
-    }
-
-    fn wrap_blinding_envelope(
-        shuffler_id: ShufflerId,
-        envelope: EnvelopedMessage<C, GameBlindingDecryptionMessage<C>>,
-    ) -> AnyMessageEnvelope<C> {
-        let WithSignature {
-            value,
-            signature,
-            transcript,
-        } = envelope.message;
-
-        AnyMessageEnvelope {
-            hand_id: envelope.hand_id,
-            game_id: envelope.game_id,
-            actor: AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key: CanonicalKey::new(envelope.public_key.clone()),
-            },
-            nonce: envelope.nonce,
-            public_key: envelope.public_key,
-            message: WithSignature {
-                value: AnyGameMessage::Blinding(value),
-                signature,
-                transcript,
-            },
-        }
-    }
-
-    fn wrap_partial_unblinding_envelope(
-        shuffler_id: ShufflerId,
-        envelope: EnvelopedMessage<C, GamePartialUnblindingShareMessage<C>>,
-    ) -> AnyMessageEnvelope<C> {
-        let WithSignature {
-            value,
-            signature,
-            transcript,
-        } = envelope.message;
-
-        AnyMessageEnvelope {
-            hand_id: envelope.hand_id,
-            game_id: envelope.game_id,
-            actor: AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key: CanonicalKey::new(envelope.public_key.clone()),
-            },
-            nonce: envelope.nonce,
-            public_key: envelope.public_key,
-            message: WithSignature {
-                value: AnyGameMessage::PartialUnblinding(value),
-                signature,
-                transcript,
-            },
-        }
-    }
-}
-
-fn spawn_dealing_request_worker<C, S>(
-    shuffler_index: usize,
-    runtime: Arc<HandRuntime<C>>,
-    updates: broadcast::Receiver<DealShufflerRequest<C>>,
-    submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-    api: Arc<ShufflerKeypair<C>>,
-    params: Arc<S::Parameters>,
-    secret: Arc<S::SecretKey>,
-    public_key: C,
-    actor: &ShufflerActor<C>,
-) -> JoinHandle<()>
-where
-    C: CurveGroup + Send + Sync + 'static,
-    C::Config: CurveConfig<ScalarField = C::ScalarField>,
-    C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + 'static + Absorb,
-    C::BaseField: PrimeField + Send + Sync + 'static,
-    C: CurveAbsorb<C::BaseField>,
-    C::Affine: Absorb,
-    S: SignatureScheme<PublicKey = C::Affine>,
-    S::Signature: SignatureEncoder + Send + Sync + 'static,
-    S::Parameters: Send + Sync + 'static,
-    S::SecretKey: Send + Sync + 'static,
-{
-    let actor_clone = actor.clone();
-    let game_id = runtime.game_id;
-    let hand_id = runtime.hand_id;
-    let task_name =
-        format!("dealing-worker-shuffler-{shuffler_index}-game-{game_id}-hand-{hand_id}");
-    spawn_named_task(task_name, async move {
-        let result = Shuffler::<C, S>::deal_loop(
-            runtime.clone(),
-            updates,
-            submit,
-            api,
-            params,
-            secret,
-            public_key,
-            &actor_clone,
-            shuffler_index,
-        )
-        .await;
-
-        if let Err(err) = result {
-            warn!(
-                target = LOG_TARGET,
-                game_id,
-                hand_id,
-                shuffler_index,
-                error = %err,
-                "dealing request worker exited with error"
-            );
-        } else {
-            debug!(
-                target = LOG_TARGET,
-                game_id, hand_id, shuffler_index, "dealing request worker finished"
-            );
-        }
-    })
-}
-
-fn spawn_dealing_request_producer<C>(
-    runtime: Arc<HandRuntime<C>>,
-    mut snapshots: broadcast::Receiver<Shared<AnyTableSnapshot<C>>>,
-    deal_tx: broadcast::Sender<DealShufflerRequest<C>>,
-) -> JoinHandle<()>
-where
-    C: CurveGroup + Send + Sync + 'static,
-    C::Config: CurveConfig<ScalarField = C::ScalarField>,
-    C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync + Absorb,
-    C::BaseField: PrimeField + Send + Sync,
-    C: CurveAbsorb<C::BaseField>,
-    C::Affine: Absorb,
-{
-    let game_id = runtime.game_id;
-    let hand_id = runtime.hand_id;
-    let shuffler_id = runtime.shuffler_id;
-    let shuffler_index = runtime.shuffler_index;
-    let task_name =
-        format!("dealing-producer-shuffler-{shuffler_id}-game-{game_id}-hand-{hand_id}");
-    spawn_named_task(task_name, async move {
-        loop {
-            tokio::select! {
-                _ = runtime.cancel.cancelled() => break,
-                msg = snapshots.recv() => {
-                    match msg {
-                        Ok(shared) => {
-                            match shared.as_ref() {
-                                AnyTableSnapshot::Dealing(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    let mut state = runtime.dealing.lock();
-                                    match state.process_snapshot_and_make_responses(
-                                        table,
-                                        shuffler_id,
-                                        &runtime.shuffler_key,
-                                    ) {
-                                        Ok(requests) => {
-                                            for request in requests {
-                                                if let Err(err) = deal_tx.send({
-                                                    debug!(
-                                                        target = LOG_TARGET,
-                                                        game_id,
-                                                        hand_id,
-                                                        shuffler_id,
-                                                        shuffler_index,
-                                                        request = ?request,
-                                                        "broadcasting dealing request"
-                                                    );
-                                                    request
-                                                }) {
-                                                    warn!(
-                                                        target = LOG_TARGET,
-                                                        game_id,
-                                                        hand_id,
-                                                        error = %err,
-                                                        "failed to broadcast dealing request"
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Err(err) => {
-                                            warn!(
-                                                target = LOG_TARGET,
-                                                game_id,
-                                                hand_id,
-                                                error = %err,
-                                                "failed to process dealing snapshot"
-                                            );
-                                        }
-                                    }
-                                }
-                                AnyTableSnapshot::Preflop(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    // Once the ledger enters betting, no further blinding or
-                                    // unblinding requests should be emitted for this hand.
-                                    debug!(
-                                        target = LOG_TARGET,
-                                        game_id,
-                                        hand_id,
-                                        shuffler_id,
-                                        shuffler_index,
-                                        "preflop snapshot observed; halting dealing request production"
-                                    );
-                                    runtime.dealing.lock().reset();
-                                }
-                                AnyTableSnapshot::Flop(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    runtime.dealing.lock().reset();
-                                }
-                                AnyTableSnapshot::Turn(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    runtime.dealing.lock().reset();
-                                }
-                                AnyTableSnapshot::River(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    runtime.dealing.lock().reset();
-                                }
-                                AnyTableSnapshot::Showdown(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    runtime.dealing.lock().reset();
-                                }
-                                AnyTableSnapshot::Complete(table) => {
-                                    if table.game_id != game_id
-                                        || table.hand_id != Some(hand_id)
-                                    {
-                                        continue;
-                                    }
-                                    runtime.dealing.lock().reset();
-                                }
-                                _ => {}
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!(
-                                target = LOG_TARGET,
-                                game_id,
-                                hand_id,
-                                skipped,
-                                "lagged on dealing snapshots"
-                            );
-                        }
-                        Err(broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-    })
-}
-
-pub struct HandSubscription<C>
-where
-    C: CurveGroup,
-{
-    runtime: Arc<HandRuntime<C>>,
-}
-
-impl<C> HandSubscription<C>
-where
-    C: CurveGroup,
-{
-    fn new(runtime: Arc<HandRuntime<C>>) -> Self {
-        Self { runtime }
-    }
-
-    pub fn cancel(&self) {
-        self.runtime.cancel_all();
-    }
-}
-
-impl<C> Drop for HandSubscription<C>
-where
-    C: CurveGroup,
-{
-    fn drop(&mut self) {
-        self.runtime.cancel_all();
-        self.runtime.remove_from_registry();
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::chaum_pedersen::ChaumPedersenProof;
+    use crate::ledger::actor::ShufflerActor;
+    use crate::ledger::messages::AnyGameMessage;
     use crate::ledger::snapshot::{CardDestination, DealtCard};
     use crate::ledger::test_support::{
         fixture_dealing_snapshot, fixture_preflop_snapshot, FixtureContext,
@@ -1384,13 +49,17 @@ mod tests {
     use crate::shuffling::{
         combine_blinding_contributions_for_player, decrypt_community_card,
         generate_random_ciphertexts, make_global_public_keys, recover_card_value,
-        PartialUnblindingShare, PlayerTargetedBlindingContribution,
+        PartialUnblindingShare, PlayerTargetedBlindingContribution, DECK_SIZE,
     };
-    use ark_ec::AffineRepr;
+    use ark_crypto_primitives::signature::SignatureScheme;
     use ark_ec::PrimeGroup;
     use ark_ff::Zero;
     use ark_grumpkin::Projective as GrumpkinProjective;
-    use ark_std::test_rng;
+    use ark_std::{test_rng, UniformRand};
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use std::sync::{Arc, Weak};
+    use tokio::sync::{broadcast, mpsc};
     use tokio::time::{timeout, Duration};
 
     const N_SHUFFLERS: usize = 3;
@@ -1410,12 +79,20 @@ mod tests {
             public_keys.push(public_key);
         }
         let aggregated_public_key = make_global_public_keys(public_keys.clone());
+        let signing_params = Arc::new(
+            ShufflerScheme::<GrumpkinProjective>::setup(&mut rng).expect("schnorr params"),
+        );
         let shufflers: Vec<_> = secrets
             .into_iter()
             .zip(public_keys.into_iter())
-            .enumerate()
-            .map(|(idx, (secret, public_key))| {
-                ShufflerKeypair::new(idx, secret, public_key, aggregated_public_key.clone())
+            .map(|(secret, public_key)| {
+                let sign_sk = SchnorrSecretKey::<GrumpkinProjective>(secret.clone());
+                ShufflerEngine::<GrumpkinProjective, ShufflerScheme<GrumpkinProjective>>::new(
+                    Arc::new(sign_sk),
+                    public_key,
+                    aggregated_public_key.clone(),
+                    Arc::clone(&signing_params),
+                )
             })
             .collect();
 
@@ -1500,12 +177,20 @@ mod tests {
             public_keys.push(public_key);
         }
         let aggregated_public_key = make_global_public_keys(public_keys.clone());
+        let signing_params = Arc::new(
+            ShufflerScheme::<GrumpkinProjective>::setup(&mut rng).expect("schnorr params"),
+        );
         let shufflers: Vec<_> = secrets
             .into_iter()
             .zip(public_keys.into_iter())
-            .enumerate()
-            .map(|(idx, (secret, public_key))| {
-                ShufflerKeypair::new(idx, secret, public_key, aggregated_public_key.clone())
+            .map(|(secret, public_key)| {
+                let sign_sk = SchnorrSecretKey::<GrumpkinProjective>(secret.clone());
+                ShufflerEngine::<GrumpkinProjective, ShufflerScheme<GrumpkinProjective>>::new(
+                    Arc::new(sign_sk),
+                    public_key,
+                    aggregated_public_key.clone(),
+                    Arc::clone(&signing_params),
+                )
             })
             .collect();
         let agg_pk = aggregated_public_key;
@@ -1539,23 +224,20 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0xDEADBEEFu64);
         let shuffle_secret = <Curve as PrimeGroup>::ScalarField::rand(&mut rng);
-        let shuffle_public = Curve::generator() * shuffle_secret;
+        let public_key = Curve::generator() * shuffle_secret;
 
         let schnorr_params = ShufflerScheme::<Curve>::setup(&mut rng).expect("schnorr params");
-        let (sign_pk, sign_sk) =
-            ShufflerScheme::<Curve>::keygen(&schnorr_params, &mut rng).expect("schnorr keygen");
+        let signing_secret = SchnorrSecretKey::<Curve>(shuffle_secret.clone());
 
         let (submit_tx, mut submit_rx) = mpsc::channel(8);
         let (events_tx, _) = broadcast::channel(8);
         let (snapshots_tx, _) = broadcast::channel(8);
-        let shuffler = Shuffler::<Curve, ShufflerScheme<Curve>>::new(
+        let shuffler = ShufflerService::<Curve, ShufflerScheme<Curve>>::new(
             0,
-            0,
-            sign_pk.into_group(),
-            shuffle_public,
-            shuffle_secret,
+            public_key.clone(),
+            public_key.clone(),
+            signing_secret,
             schnorr_params,
-            sign_sk,
             submit_tx,
             ShufflerRunConfig::new([1u8; 32]),
             events_tx.subscribe(),
@@ -1587,20 +269,17 @@ mod tests {
         ));
 
         let (deal_tx, deal_rx) = broadcast::channel(8);
-        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key().clone());
         let actor = ShufflerActor {
             shuffler_id: 0,
             shuffler_key,
         };
-        let deal_handle = spawn_dealing_request_worker::<Curve, ShufflerScheme<Curve>>(
+        let deal_handle = crate::shuffler::service::spawn_dealing_request_worker_for_tests(
             0,
             Arc::clone(&runtime),
             deal_rx,
-            shuffler.submit.clone(),
-            Arc::clone(&shuffler.api),
-            Arc::clone(&shuffler.params),
-            Arc::clone(&shuffler.secret_key),
-            shuffler.public_key.clone(),
+            crate::shuffler::service::submit_sender_for_tests(&shuffler),
+            crate::shuffler::service::engine_for_tests(&shuffler),
             &actor,
         );
 
@@ -1663,23 +342,20 @@ mod tests {
 
         let mut rng = StdRng::seed_from_u64(0xFACEu64);
         let shuffle_secret = <Curve as PrimeGroup>::ScalarField::rand(&mut rng);
-        let shuffle_public = Curve::generator() * shuffle_secret;
+        let public_key = Curve::generator() * shuffle_secret;
 
         let schnorr_params = ShufflerScheme::<Curve>::setup(&mut rng).expect("schnorr params");
-        let (sign_pk, sign_sk) =
-            ShufflerScheme::<Curve>::keygen(&schnorr_params, &mut rng).expect("schnorr keygen");
+        let signing_secret = SchnorrSecretKey::<Curve>(shuffle_secret.clone());
 
         let (submit_tx, mut submit_rx) = mpsc::channel(4);
         let (events_tx, _) = broadcast::channel(4);
         let (snapshots_tx, _) = broadcast::channel(4);
-        let shuffler = Shuffler::<Curve, ShufflerScheme<Curve>>::new(
+        let shuffler = ShufflerService::<Curve, ShufflerScheme<Curve>>::new(
             0,
-            0,
-            sign_pk.into_group(),
-            shuffle_public,
-            shuffle_secret,
+            public_key.clone(),
+            public_key.clone(),
+            signing_secret,
             schnorr_params,
-            sign_sk,
             submit_tx,
             ShufflerRunConfig::new([2u8; 32]),
             events_tx.subscribe(),
@@ -1710,20 +386,17 @@ mod tests {
         ));
 
         let (deal_tx, deal_rx) = broadcast::channel(4);
-        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key.clone());
+        let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key().clone());
         let actor = ShufflerActor {
             shuffler_id: 0,
             shuffler_key,
         };
-        let deal_handle = spawn_dealing_request_worker::<Curve, ShufflerScheme<Curve>>(
+        let deal_handle = crate::shuffler::service::spawn_dealing_request_worker_for_tests(
             0,
             Arc::clone(&runtime),
             deal_rx,
-            shuffler.submit.clone(),
-            Arc::clone(&shuffler.api),
-            Arc::clone(&shuffler.params),
-            Arc::clone(&shuffler.secret_key),
-            shuffler.public_key.clone(),
+            crate::shuffler::service::submit_sender_for_tests(&shuffler),
+            crate::shuffler::service::engine_for_tests(&shuffler),
             &actor,
         );
 

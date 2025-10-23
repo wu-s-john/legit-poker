@@ -11,10 +11,7 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::types::SeatId;
 use crate::ledger::actor::ShufflerActor;
 use crate::ledger::hash::default_poseidon_hasher;
-use crate::ledger::messages::{
-    AnyMessageEnvelope, GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage,
-    SignatureEncoder,
-};
+use crate::ledger::messages::{AnyMessageEnvelope, MetadataEnvelope, SignatureEncoder};
 use crate::ledger::snapshot::{
     CardDestination, CardPlan, DealingSnapshot, DealtCard, PlayerRoster, SeatingMap, Shared,
     ShufflerRoster, SnapshotSeq, TableAtDealing, TableAtPreflop,
@@ -26,7 +23,8 @@ use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, field::display, info, instrument, warn};
 
-use super::{HandRuntime, Shuffler, ShufflerApi, ShufflerKeypair};
+use super::api::ShufflerSigningSecret;
+use super::{HandRuntime, ShufflerApi};
 
 const LOG_TARGET: &str = "legit_poker::game::shuffler::deal";
 
@@ -504,339 +502,317 @@ fn board_slot_from_index(index: u8) -> Option<BoardCardSlot> {
     }
 }
 
-impl<C, S> Shuffler<C, S>
+pub async fn deal_loop<C, S, A>(
+    runtime: Arc<HandRuntime<C>>,
+    mut updates: broadcast::Receiver<DealShufflerRequest<C>>,
+    submit: mpsc::Sender<AnyMessageEnvelope<C>>,
+    shuffler: Arc<A>,
+    actor: &ShufflerActor<C>,
+    shuffler_index: usize,
+) -> Result<()>
 where
-    C: CurveGroup + crate::curve_absorb::CurveAbsorb<C::BaseField>,
-    C::BaseField: ark_ff::PrimeField,
+    C: CurveGroup + crate::curve_absorb::CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: ark_ff::PrimeField + Send + Sync,
     C::Affine: ark_crypto_primitives::sponge::Absorb,
-    C::ScalarField: ark_ff::PrimeField + ark_crypto_primitives::sponge::Absorb,
+    C::ScalarField: ark_ff::PrimeField
+        + ark_crypto_primitives::sponge::Absorb
+        + CanonicalSerialize
+        + UniformRand,
     S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
+    S::Signature: SignatureEncoder,
+    S::SecretKey: ShufflerSigningSecret<C>,
+    A: ShufflerApi<C, S> + Send + Sync,
 {
-    pub(super) async fn deal_loop(
-        runtime: Arc<HandRuntime<C>>,
-        mut updates: broadcast::Receiver<DealShufflerRequest<C>>,
-        submit: mpsc::Sender<AnyMessageEnvelope<C>>,
-        api: Arc<ShufflerKeypair<C>>,
-        params: Arc<S::Parameters>,
-        secret: Arc<S::SecretKey>,
-        public_key: C,
-        actor: &ShufflerActor<C>,
-        shuffler_index: usize,
-    ) -> Result<()>
-    where
-        C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
-        C::BaseField: ark_ff::PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        loop {
-            tokio::select! {
-                _ = runtime.cancel.cancelled() => {
-                    debug!(
-                        target = LOG_TARGET,
-                        game_id = runtime.game_id,
-                        hand_id = runtime.hand_id,
-                        shuffler_index,
-                        "deal loop cancellation triggered"
-                    );
-                    break;
-                }
-                update = updates.recv() => {
-                    match update {
-                        Ok(request) => {
-                            debug!(
-                                target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
-                                shuffler_index,
-                                request = ?request,
-                                "received dealing request"
-                            );
-                            if let Err(err) = Self::handle_request(
-                                &runtime,
-                                request,
-                                &submit,
-                                &api,
-                                &params,
-                                &secret,
-                                &public_key,
-                                actor,
-                            ).await {
+    loop {
+        tokio::select! {
+            _ = runtime.cancel.cancelled() => {
+                debug!(
+                    target = LOG_TARGET,
+                    game_id = runtime.game_id,
+                    hand_id = runtime.hand_id,
+                    shuffler_index,
+                    "deal loop cancellation triggered"
+                );
+                break;
+            }
+            update = updates.recv() => {
+                match update {
+                    Ok(request) => {
+                        debug!(
+                            target = LOG_TARGET,
+                            game_id = runtime.game_id,
+                            hand_id = runtime.hand_id,
+                            shuffler_index,
+                            request = ?request,
+                            "received dealing request"
+                        );
+                        match prepare_request_envelope(
+                            &runtime,
+                            request,
+                            &shuffler,
+                            actor,
+                        )
+                        .await
+                        {
+                            Ok(Some(envelope)) => {
+                                if let Err(err) = submit.send(envelope).await {
+                                    warn!(
+                                        target = LOG_TARGET,
+                                        game_id = runtime.game_id,
+                                        hand_id = runtime.hand_id,
+                                        shuffler_index,
+                                        error = %err,
+                                        "failed to submit dealing envelope"
+                                    );
+                                } else {
+                                    debug!(
+                                        target = LOG_TARGET,
+                                        game_id = runtime.game_id,
+                                        hand_id = runtime.hand_id,
+                                        shuffler_index,
+                                        "submitted dealing envelope"
+                                    );
+                                }
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
                                 warn!(
                                     target = LOG_TARGET,
                                     game_id = runtime.game_id,
                                     hand_id = runtime.hand_id,
                                     shuffler_index,
                                     error = %err,
-                                    "failed to process deal request"
+                                    "failed to prepare deal request"
                                 );
                             }
                         }
-                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                            warn!(
-                                target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
-                                shuffler_index,
-                                skipped,
-                                "lagged on deal requests"
-                            );
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            debug!(
-                                target = LOG_TARGET,
-                                game_id = runtime.game_id,
-                                hand_id = runtime.hand_id,
-                                shuffler_index,
-                                "deal request channel closed"
-                            );
-                            break;
-                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        warn!(
+                            target = LOG_TARGET,
+                            game_id = runtime.game_id,
+                            hand_id = runtime.hand_id,
+                            shuffler_index,
+                            skipped,
+                            "lagged on deal requests"
+                        );
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        debug!(
+                            target = LOG_TARGET,
+                            game_id = runtime.game_id,
+                            hand_id = runtime.hand_id,
+                            shuffler_index,
+                            "deal request channel closed"
+                        );
+                        break;
                     }
                 }
             }
         }
-
-        Ok(())
     }
 
-    pub(super) async fn handle_request(
-        runtime: &Arc<HandRuntime<C>>,
-        request: DealShufflerRequest<C>,
-        submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
-        api: &Arc<ShufflerKeypair<C>>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-    ) -> Result<()>
-    where
-        C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
-        C::BaseField: ark_ff::PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        match request {
-            DealShufflerRequest::PlayerBlinding(req) => {
-                Self::handle_player_blinding(
-                    runtime, req, submit, api, params, secret, public_key, actor,
-                )
-                .await
-            }
-            DealShufflerRequest::PlayerUnblinding(req) => {
-                Self::handle_player_unblinding(
-                    runtime, req, submit, api, params, secret, public_key, actor,
-                )
-                .await
-            }
-            DealShufflerRequest::Board(req) => {
-                Self::handle_board_request(
-                    runtime, req, submit, api, params, secret, public_key, actor,
-                )
-                .await
-            }
+    Ok(())
+}
+
+pub async fn prepare_request_envelope<C, Sig, Shuffler>(
+    runtime: &Arc<HandRuntime<C>>,
+    request: DealShufflerRequest<C>,
+    shuffler: &Arc<Shuffler>,
+    actor: &ShufflerActor<C>,
+) -> Result<Option<AnyMessageEnvelope<C>>>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
+    C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand + Absorb,
+    C::BaseField: ark_ff::PrimeField,
+    C::Affine: Absorb,
+    Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
+    Sig::Signature: SignatureEncoder,
+    Sig::SecretKey: ShufflerSigningSecret<C>,
+    Shuffler: ShufflerApi<C, Sig> + Send + Sync,
+{
+    match request {
+        DealShufflerRequest::PlayerBlinding(req) => {
+            prepare_player_blinding::<C, Sig, Shuffler>(runtime, req, shuffler, actor).await
+        }
+        DealShufflerRequest::PlayerUnblinding(req) => {
+            prepare_player_unblinding::<C, Sig, Shuffler>(runtime, req, shuffler, actor).await
+        }
+        DealShufflerRequest::Board(req) => {
+            prepare_board_request::<C, Sig>(runtime, req, actor).await
         }
     }
+}
 
-    async fn handle_player_blinding(
-        runtime: &Arc<HandRuntime<C>>,
-        request: PlayerBlindingRequest<C>,
-        submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
-        api: &Arc<ShufflerKeypair<C>>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-    ) -> Result<()>
-    where
-        C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
-        C::BaseField: ark_ff::PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
-            warn!(
-                target = LOG_TARGET,
-                expected_game = runtime.game_id,
-                expected_hand = runtime.hand_id,
-                request_game = request.game_id,
-                request_hand = request.hand_id,
-                "received player blinding request for mismatched hand"
-            );
-            return Ok(());
-        }
+pub async fn prepare_player_blinding<C, Sig, Shuffler>(
+    runtime: &Arc<HandRuntime<C>>,
+    request: PlayerBlindingRequest<C>,
+    shuffler: &Arc<Shuffler>,
+    actor: &ShufflerActor<C>,
+) -> Result<Option<AnyMessageEnvelope<C>>>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
+    C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand + Absorb,
+    C::BaseField: ark_ff::PrimeField,
+    C::Affine: Absorb,
+    Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
+    Sig::Signature: SignatureEncoder,
+    Sig::SecretKey: ShufflerSigningSecret<C>,
+    Shuffler: ShufflerApi<C, Sig> + Send + Sync,
+{
+    if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
+        warn!(
+            target = LOG_TARGET,
+            expected_game = runtime.game_id,
+            expected_hand = runtime.hand_id,
+            request_game = request.game_id,
+            request_hand = request.hand_id,
+            "received player blinding request for mismatched hand"
+        );
+        return Ok(None);
+    }
 
-        let envelope = {
-            let mut state = runtime.shuffling.lock();
-            let contribution = api
-                .provide_blinding_player_decryption_share(
-                    request.player_public_key.clone(),
-                    &mut state.rng,
-                )
-                .map_err(|err| anyhow!("failed to compute blinding contribution: {err}"))?;
-            let blinding_msg = GameBlindingDecryptionMessage::new(
+    let envelope = {
+        let mut state = runtime.shuffling.lock();
+        let ctx = make_metadata(runtime, actor, state.next_nonce);
+        let (_, any) = shuffler
+            .player_blinding_and_sign(
+                &ctx,
                 request.deal_index,
-                contribution,
-                request.player_public_key.clone(),
-            );
-            Self::sign_blinding_envelope(
-                &mut state,
-                runtime,
-                params,
-                secret,
-                public_key,
-                actor,
-                blinding_msg,
-            )?
-        };
+                &request.player_public_key,
+                &mut state.rng,
+            )
+            .map_err(|err| anyhow!("failed to compute blinding contribution: {err}"))?;
+        state.next_nonce = state.next_nonce.saturating_add(1);
+        any
+    };
 
-        info!(
+    info!(
+        target = LOG_TARGET,
+        game_id = runtime.game_id,
+        hand_id = runtime.hand_id,
+        shuffler_id = actor.shuffler_id,
+        deal_index = request.deal_index,
+        seat = request.seat,
+        hole_index = request.hole_index,
+        "prepared player blinding share"
+    );
+
+    Ok(Some(envelope))
+}
+
+pub async fn prepare_player_unblinding<C, Sig, Shuffler>(
+    runtime: &Arc<HandRuntime<C>>,
+    request: PlayerUnblindingRequest<C>,
+    shuffler: &Arc<Shuffler>,
+    actor: &ShufflerActor<C>,
+) -> Result<Option<AnyMessageEnvelope<C>>>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField>,
+    C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
+    C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand + Absorb,
+    C::BaseField: ark_ff::PrimeField,
+    C::Affine: Absorb,
+    Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
+    Sig::Signature: SignatureEncoder,
+    Sig::SecretKey: ShufflerSigningSecret<C>,
+    Shuffler: ShufflerApi<C, Sig> + Send + Sync,
+{
+    if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
+        warn!(
             target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            deal_index = request.deal_index,
-            seat = request.seat,
-            hole_index = request.hole_index,
-            "submitting player blinding share"
+            expected_game = runtime.game_id,
+            expected_hand = runtime.hand_id,
+            request_game = request.game_id,
+            request_hand = request.hand_id,
+            "received player unblinding request for mismatched hand"
         );
-
-        submit
-            .send(envelope)
-            .await
-            .map_err(|err| anyhow!(err.to_string()))?;
-
-        info!(
-            target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            deal_index = request.deal_index,
-            seat = request.seat,
-            hole_index = request.hole_index,
-            "processed player blinding request"
-        );
-
-        Ok(())
+        return Ok(None);
     }
 
-    async fn handle_player_unblinding(
-        runtime: &Arc<HandRuntime<C>>,
-        request: PlayerUnblindingRequest<C>,
-        submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
-        api: &Arc<ShufflerKeypair<C>>,
-        params: &Arc<S::Parameters>,
-        secret: &Arc<S::SecretKey>,
-        public_key: &C,
-        actor: &ShufflerActor<C>,
-    ) -> Result<()>
-    where
-        C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
-        C::BaseField: ark_ff::PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
-            warn!(
-                target = LOG_TARGET,
-                expected_game = runtime.game_id,
-                expected_hand = runtime.hand_id,
-                request_game = request.game_id,
-                request_hand = request.hand_id,
-                "received player unblinding request for mismatched hand"
-            );
-            return Ok(());
-        }
-
-        let envelope = {
-            let mut state = runtime.shuffling.lock();
-            let partial_share = api
-                .provide_unblinding_decryption_share(&request.ciphertext)
-                .map_err(|err| anyhow!("failed to compute partial unblinding share: {err}"))?;
-            let unblinding_msg = GamePartialUnblindingShareMessage::new(
+    let envelope = {
+        let mut state = runtime.shuffling.lock();
+        let ctx = make_metadata(runtime, actor, state.next_nonce);
+        let (_, any) = shuffler
+            .player_unblinding_and_sign(
+                &ctx,
                 request.deal_index,
-                partial_share,
-                request.player_public_key.clone(),
-            );
-            Self::sign_partial_unblinding_envelope(
-                &mut state,
-                runtime,
-                params,
-                secret,
-                public_key,
-                actor,
-                unblinding_msg,
-            )?
-        };
+                &request.player_public_key,
+                &request.ciphertext,
+                &mut state.rng,
+            )
+            .map_err(|err| anyhow!("failed to compute partial unblinding share: {err}"))?;
+        state.next_nonce = state.next_nonce.saturating_add(1);
+        any
+    };
 
-        info!(
+    info!(
+        target = LOG_TARGET,
+        game_id = runtime.game_id,
+        hand_id = runtime.hand_id,
+        shuffler_id = actor.shuffler_id,
+        deal_index = request.deal_index,
+        seat = request.seat,
+        hole_index = request.hole_index,
+        "prepared player unblinding share"
+    );
+
+    Ok(Some(envelope))
+}
+
+pub async fn prepare_board_request<C, Sig>(
+    runtime: &Arc<HandRuntime<C>>,
+    request: BoardCardShufflerRequest<C>,
+    actor: &ShufflerActor<C>,
+) -> Result<Option<AnyMessageEnvelope<C>>>
+where
+    C: CurveGroup,
+    C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
+    C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
+    C::BaseField: ark_ff::PrimeField,
+    Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
+    Sig::Signature: SignatureEncoder,
+{
+    if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
+        warn!(
             target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            deal_index = request.deal_index,
-            seat = request.seat,
-            hole_index = request.hole_index,
-            "submitting player unblinding share"
+            expected_game = runtime.game_id,
+            expected_hand = runtime.hand_id,
+            request_game = request.game_id,
+            request_hand = request.hand_id,
+            "received board deal request for mismatched hand"
         );
-
-        submit
-            .send(envelope)
-            .await
-            .map_err(|err| anyhow!(err.to_string()))?;
-
-        info!(
-            target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            deal_index = request.deal_index,
-            seat = request.seat,
-            hole_index = request.hole_index,
-            "processed player unblinding request"
-        );
-
-        Ok(())
+        return Ok(None);
     }
 
-    async fn handle_board_request(
-        runtime: &Arc<HandRuntime<C>>,
-        request: BoardCardShufflerRequest<C>,
-        _submit: &mpsc::Sender<AnyMessageEnvelope<C>>,
-        _api: &Arc<ShufflerKeypair<C>>,
-        _params: &Arc<S::Parameters>,
-        _secret: &Arc<S::SecretKey>,
-        _public_key: &C,
-        actor: &ShufflerActor<C>,
-    ) -> Result<()>
-    where
-        C::Config: ark_ec::CurveConfig<ScalarField = C::ScalarField>,
-        C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
-        C::BaseField: ark_ff::PrimeField,
-        S::Signature: SignatureEncoder,
-    {
-        if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
-            warn!(
-                target = LOG_TARGET,
-                expected_game = runtime.game_id,
-                expected_hand = runtime.hand_id,
-                request_game = request.game_id,
-                request_hand = request.hand_id,
-                "received board deal request for mismatched hand"
-            );
-            return Ok(());
-        }
+    // TODO: emit community decryption share once ledger message type is defined.
+    debug!(
+        target = LOG_TARGET,
+        game_id = runtime.game_id,
+        hand_id = runtime.hand_id,
+        shuffler_id = actor.shuffler_id,
+        deal_index = request.deal_index,
+        ?request.slot,
+        "board deal requests are not yet supported"
+    );
+    Ok(None)
+}
 
-        // TODO: emit community decryption share once ledger message type is defined.
-        debug!(
-            target = LOG_TARGET,
-            game_id = runtime.game_id,
-            hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
-            deal_index = request.deal_index,
-            ?request.slot,
-            "board deal requests are not yet supported"
-        );
-        Ok(())
+pub fn make_metadata<C>(
+    runtime: &HandRuntime<C>,
+    actor: &ShufflerActor<C>,
+    nonce: u64,
+) -> MetadataEnvelope<C, ShufflerActor<C>>
+where
+    C: CurveGroup,
+{
+    MetadataEnvelope {
+        hand_id: runtime.hand_id,
+        game_id: runtime.game_id,
+        actor: actor.clone(),
+        nonce,
+        public_key: runtime.shuffler_key.value().clone(),
     }
 }

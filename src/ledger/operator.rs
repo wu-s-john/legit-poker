@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 
 use ark_crypto_primitives::sponge::Absorb;
@@ -13,30 +12,12 @@ use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
 use super::worker::{LedgerWorker, WorkerError};
 use crate::curve_absorb::CurveAbsorb;
+use crate::task::spawn_named_task;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, info, instrument, Span};
 
 const LOG_TARGET: &str = "legit_poker::ledger::operator";
-
-fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-    S: Into<String>,
-{
-    let name_owned = name.into();
-    #[cfg(tokio_unstable)]
-    {
-        tokio::task::Builder::new().name(&name_owned).spawn(future)
-    }
-    #[cfg(not(tokio_unstable))]
-    {
-        use tracing::Instrument;
-        let span = tracing::info_span!("task", task_name = %name_owned);
-        tokio::spawn(future.instrument(span))
-    }
-}
 
 /// Facade that wires together verifier, queue, worker, event store, and state.
 pub struct LedgerOperator<C>

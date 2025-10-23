@@ -10,7 +10,7 @@ use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::ledger::actor::AnyActor;
 use crate::ledger::{GameActor, GameId, HandId, PlayerActor, ShufflerActor};
-use crate::player::signing::append_player_bet_action;
+use crate::player::append_player_bet_action;
 use crate::shuffling::data_structures::{
     append_ciphertext, append_curve_point, append_shuffle_proof, ElGamalCiphertext, ShuffleProof,
     DECK_SIZE,
@@ -418,6 +418,33 @@ where
     }
 }
 
+impl<C> From<GameShuffleMessage<C>> for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn from(message: GameShuffleMessage<C>) -> Self {
+        AnyGameMessage::Shuffle(message)
+    }
+}
+
+impl<C> From<GameBlindingDecryptionMessage<C>> for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn from(message: GameBlindingDecryptionMessage<C>) -> Self {
+        AnyGameMessage::Blinding(message)
+    }
+}
+
+impl<C> From<GamePartialUnblindingShareMessage<C>> for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn from(message: GamePartialUnblindingShareMessage<C>) -> Self {
+        AnyGameMessage::PartialUnblinding(message)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize, M: Serialize, M::Actor: Serialize",
@@ -591,7 +618,7 @@ impl<C: CurveGroup> GameMessage<C> for GameShowdownMessage<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::player::signing::PlayerActionBet;
+    use crate::player::PlayerActionBet;
     use crate::signing::{Signable, WithSignature};
     use crate::test_utils::serde::assert_round_trip_json;
     use anyhow::Result;
