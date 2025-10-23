@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 use tracing_subscriber::{fmt::time::Uptime, EnvFilter};
 use url::Url;
 
+use zk_poker::db::connect_to_postgres_db;
 use zk_poker::engine::nl::types::{Chips, HandConfig, SeatId, TableStakes};
 use zk_poker::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
@@ -153,7 +154,7 @@ async fn run_demo(config: Config) -> Result<()> {
         database_url = %config.database_url,
         "connecting to Postgres"
     );
-    let conn = sea_orm::Database::connect(&config.database_url)
+    let conn = connect_to_postgres_db(&config.database_url)
         .await
         .context("failed to connect to database")?;
 

@@ -299,6 +299,7 @@ pub enum WorkerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{connect_to_postgres_db, postgres_test_url};
     use crate::ledger::actor::AnyActor;
     use crate::ledger::types::HandId;
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
@@ -306,10 +307,9 @@ mod tests {
     use ark_bn254::{Fq, Fr, G1Projective as Curve};
     use ark_ff::Zero;
     use sea_orm::{
-        ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DatabaseTransaction,
-        DbBackend, Statement, Value,
+        ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, Value,
     };
-    use std::{env, sync::Arc, time::Duration as StdDuration};
+    use std::sync::Arc;
     use tokio::sync::{broadcast, mpsc};
     use tokio::time::{sleep, timeout, Duration};
     use tracing::{info, Level};
@@ -459,17 +459,8 @@ mod tests {
     }
 
     async fn setup_event_store() -> Option<Arc<SeaOrmEventStore<Curve>>> {
-        let url = env::var("TEST_DATABASE_URL")
-            .or_else(|_| env::var("DATABASE_URL"))
-            .unwrap_or_else(|_| "postgresql://postgres:postgres@127.0.0.1:54322/postgres".into());
-
-        let mut opt = ConnectOptions::new(url);
-        opt.max_connections(5)
-            .min_connections(1)
-            .connect_timeout(StdDuration::from_secs(5))
-            .sqlx_logging(true);
-
-        let conn = match Database::connect(opt).await {
+        let url = postgres_test_url();
+        let conn = match connect_to_postgres_db(&url).await {
             Ok(conn) => conn,
             Err(err) => {
                 eprintln!("skipping worker test: failed to connect to postgres ({err})");

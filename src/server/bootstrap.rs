@@ -11,6 +11,7 @@ use tracing::info;
 use url::Url;
 
 use crate::curve_absorb::CurveAbsorb;
+use crate::db::connect_to_postgres_db;
 use crate::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
@@ -45,7 +46,7 @@ where
     C::BaseField: PrimeField + Send + Sync,
     C::Affine: Absorb,
 {
-    let db = connect_database(&config.database_url).await?;
+    let db = connect_to_postgres_db(&config.database_url).await?;
     let event_store: Arc<dyn EventStore<C>> = Arc::new(SeaOrmEventStore::<C>::new(db.clone()));
     let snapshot_store: Arc<dyn SnapshotStore<C>> =
         Arc::new(SeaOrmSnapshotStore::<C>::new(db.clone()));
@@ -97,18 +98,6 @@ where
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server exited with error")
-}
-
-async fn connect_database(database_url: &str) -> Result<sea_orm::DatabaseConnection> {
-    use sea_orm::{ConnectOptions, Database};
-
-    let mut opts = ConnectOptions::new(database_url.to_owned());
-    opts.max_connections(5)
-        .min_connections(1)
-        .sqlx_logging(true);
-    Database::connect(opts)
-        .await
-        .with_context(|| format!("failed to connect to database at {}", database_url))
 }
 
 async fn shutdown_signal() {

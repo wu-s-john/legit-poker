@@ -9,6 +9,7 @@ use super::types::{
 use super::GameSetupError;
 use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::{game_players, games, hand_player, hands};
+use crate::db::{connect_to_postgres_db, postgres_test_url};
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
@@ -30,13 +31,12 @@ use ark_serialize::CanonicalSerialize;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use async_trait::async_trait;
 use sea_orm::{
-    ColumnTrait, ConnectOptions, ConnectionTrait, Database, DatabaseConnection,
-    DatabaseTransaction, DbBackend, EntityTrait, PaginatorTrait, QueryFilter, Statement,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, EntityTrait,
+    PaginatorTrait, QueryFilter, Statement,
 };
-use std::env;
+use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::{convert::TryFrom, time::Duration as StdDuration};
 use tokio::sync::{broadcast, mpsc};
 
 #[tokio::test]
@@ -626,17 +626,8 @@ fn serialize_point(point: &TestCurve) -> Vec<u8> {
 static NEXT_KEY_SEED: AtomicU64 = AtomicU64::new(0);
 
 async fn setup_lobby() -> Result<Option<(SeaOrmLobby, DatabaseConnection)>> {
-    let url = env::var("TEST_DATABASE_URL")
-        .or_else(|_| env::var("DATABASE_URL"))
-        .unwrap_or_else(|_| "postgresql://postgres:postgres@127.0.0.1:54322/postgres".into());
-
-    let mut opt = ConnectOptions::new(url);
-    opt.max_connections(5)
-        .min_connections(1)
-        .connect_timeout(StdDuration::from_secs(5))
-        .sqlx_logging(true);
-
-    let conn = match Database::connect(opt).await {
+    let url = postgres_test_url();
+    let conn = match connect_to_postgres_db(&url).await {
         Ok(conn) => conn,
         Err(err) => {
             eprintln!("skipping lobby test: failed to connect to postgres ({err})");

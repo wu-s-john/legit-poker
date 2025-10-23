@@ -145,6 +145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::{connect_to_postgres_db, postgres_test_url};
     use crate::engine::nl::actions::PlayerBetAction;
     use crate::ledger::actor::AnyActor;
     use crate::ledger::messages::{AnyGameMessage, GamePlayerMessage, PreflopStreet};
@@ -153,10 +154,8 @@ mod tests {
     use crate::signing::WithSignature;
     use ark_bn254::G1Projective as Curve;
     use ark_ff::Zero;
-    use sea_orm::{ConnectOptions, ConnectionTrait, Database, DbBackend, Statement};
-    use std::env;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use std::sync::Arc;
-    use std::time::Duration as StdDuration;
     use tokio::sync::{broadcast, mpsc};
 
     fn sample_verified_envelope(nonce: u64) -> AnyMessageEnvelope<Curve> {
@@ -179,17 +178,8 @@ mod tests {
     }
 
     async fn setup_event_store() -> Option<Arc<SeaOrmEventStore<Curve>>> {
-        let url = env::var("TEST_DATABASE_URL")
-            .or_else(|_| env::var("DATABASE_URL"))
-            .unwrap_or_else(|_| "postgresql://postgres:postgres@127.0.0.1:54322/postgres".into());
-
-        let mut opt = ConnectOptions::new(url);
-        opt.max_connections(5)
-            .min_connections(1)
-            .connect_timeout(StdDuration::from_secs(5))
-            .sqlx_logging(true);
-
-        let conn = match Database::connect(opt).await {
+        let url = postgres_test_url();
+        let conn = match connect_to_postgres_db(&url).await {
             Ok(conn) => conn,
             Err(err) => {
                 eprintln!("operator test: failed to connect to postgres ({err})");
