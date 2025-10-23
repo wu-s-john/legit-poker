@@ -1,6 +1,5 @@
 #![cfg(test)]
 
-use super::sea_orm::SeaOrmLobby;
 use super::types::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord,
     PlayerSeatSnapshot, RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord,
@@ -21,6 +20,7 @@ use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::verifier::LedgerVerifier;
 use crate::ledger::worker::LedgerWorker;
 use crate::ledger::LedgerOperator;
+use crate::ledger::{LobbyService, LobbyServiceFactory};
 use anyhow::Result;
 use ark_bn254::{Fr as TestScalar, G1Projective as TestCurve};
 use ark_crypto_primitives::sponge::Absorb;
@@ -38,6 +38,8 @@ use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+
+type TestLobby = dyn LobbyService<TestCurve>;
 
 #[tokio::test]
 async fn host_game_creates_new_game_and_host() -> Result<()> {
@@ -676,7 +678,7 @@ fn serialize_point(point: &TestCurve) -> Vec<u8> {
 
 static NEXT_KEY_SEED: AtomicU64 = AtomicU64::new(0);
 
-async fn setup_lobby() -> Result<Option<(SeaOrmLobby, DatabaseConnection)>> {
+async fn setup_lobby() -> Result<Option<(Arc<TestLobby>, DatabaseConnection)>> {
     let url = postgres_test_url();
     let conn = match connect_to_postgres_db(&url).await {
         Ok(conn) => conn,
@@ -706,11 +708,13 @@ async fn setup_lobby() -> Result<Option<(SeaOrmLobby, DatabaseConnection)>> {
         eprintln!("skipping lobby test: failed to reset database ({err})");
         return Ok(None);
     };
-    Ok(Some((SeaOrmLobby::new(conn.clone()), conn)))
+    let lobby: Arc<TestLobby> =
+        Arc::new(LobbyServiceFactory::<TestCurve>::from_sea_orm(conn.clone()));
+    Ok(Some((lobby, conn)))
 }
 
 async fn create_game(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     keys: &TestKeys,
 ) -> Result<(GameMetadata, GameLobbyConfig)> {
     let stakes = TableStakes {
@@ -740,7 +744,7 @@ async fn create_game(
 }
 
 async fn join_host(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     metadata: &GameMetadata,
 ) -> Result<PlayerRecord<Saved<PlayerId>>> {
     let host_registration = PlayerRecord {
@@ -778,38 +782,37 @@ async fn reset_database(conn: &DatabaseConnection) -> Result<()> {
 }
 
 async fn host_game_curve(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     host: PlayerRecord<MaybeSaved<PlayerId>>,
     cfg: GameLobbyConfig,
 ) -> Result<GameMetadata, GameSetupError> {
-    <SeaOrmLobby as super::LedgerLobby<TestCurve>>::host_game(lobby, host, cfg).await
+    lobby.host_game(host, cfg).await
 }
 
 async fn join_game_curve(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     game: &super::types::GameRecord<Saved<GameId>>,
     player: PlayerRecord<MaybeSaved<PlayerId>>,
     seat: Option<SeatId>,
 ) -> Result<super::types::JoinGameOutput, GameSetupError> {
-    <SeaOrmLobby as super::LedgerLobby<TestCurve>>::join_game(lobby, game, player, seat).await
+    lobby.join_game(game, player, seat).await
 }
 
 async fn register_shuffler_curve(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     game: &super::types::GameRecord<Saved<GameId>>,
     shuffler: ShufflerRecord<MaybeSaved<ShufflerId>>,
     cfg: ShufflerRegistrationConfig,
 ) -> Result<RegisterShufflerOutput, GameSetupError> {
-    <SeaOrmLobby as super::LedgerLobby<TestCurve>>::register_shuffler(lobby, game, shuffler, cfg)
-        .await
+    lobby.register_shuffler(game, shuffler, cfg).await
 }
 
 async fn commence_game_curve(
-    lobby: &SeaOrmLobby,
+    lobby: &Arc<TestLobby>,
     operator: &LedgerOperator<TestCurve>,
     params: CommenceGameParams<TestCurve>,
 ) -> Result<CommenceGameOutcome<TestCurve>, GameSetupError> {
-    <SeaOrmLobby as super::LedgerLobby<TestCurve>>::commence_game(lobby, operator, params).await
+    lobby.commence_game(operator, params).await
 }
 
 #[derive(Default)]

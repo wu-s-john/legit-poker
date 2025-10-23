@@ -283,8 +283,6 @@ mod tests {
     use crate::engine::nl::actions::PlayerBetAction;
     use crate::engine::nl::types::{HandConfig, TableStakes};
     use crate::ledger::actor::AnyActor;
-    use crate::ledger::lobby::sea_orm::SeaOrmLobby;
-    use crate::ledger::lobby::service::LedgerLobby;
     use crate::ledger::lobby::types::{
         CommenceGameParams, GameLobbyConfig, PlayerRecord, PlayerSeatSnapshot, ShufflerAssignment,
         ShufflerRecord, ShufflerRegistrationConfig,
@@ -300,7 +298,7 @@ mod tests {
     use crate::ledger::types::EventPhase;
     use crate::ledger::typestate::MaybeSaved;
     use crate::ledger::verifier::LedgerVerifier;
-    use crate::ledger::{GameId, HandId};
+    use crate::ledger::{GameId, HandId, LobbyService, LobbyServiceFactory};
     use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
     use crate::signing::WithSignature;
     use ark_bn254::{Fr as TestScalar, G1Projective as Curve};
@@ -420,7 +418,8 @@ mod tests {
             return None;
         }
 
-        let lobby = SeaOrmLobby::new(conn.clone());
+        let lobby: Arc<dyn LobbyService<Curve>> =
+            Arc::new(LobbyServiceFactory::<Curve>::from_sea_orm(conn.clone()));
         let state = Arc::new(LedgerState::<Curve>::new());
         let verifier = Arc::new(LedgerVerifier::new(state.clone()));
         let event_store = Arc::new(SeaOrmEventStore::new(conn.clone()));
@@ -460,27 +459,27 @@ mod tests {
             seat_preference: Some(0),
             state: MaybeSaved { id: None },
         };
-        let metadata =
-            <SeaOrmLobby as LedgerLobby<Curve>>::host_game(&lobby, host, lobby_cfg.clone())
-                .await
-                .expect("host_game should succeed in prepare_environment");
+        let metadata = lobby
+            .host_game(host, lobby_cfg.clone())
+            .await
+            .expect("host_game should succeed in prepare_environment");
 
-        let host_registered = <SeaOrmLobby as LedgerLobby<Curve>>::join_game(
-            &lobby,
-            &metadata.record,
-            PlayerRecord {
-                display_name: metadata.host.display_name.clone(),
-                public_key: metadata.host.public_key.clone(),
-                seat_preference: Some(0),
-                state: MaybeSaved {
-                    id: Some(metadata.host.state.id),
+        let host_registered = lobby
+            .join_game(
+                &metadata.record,
+                PlayerRecord {
+                    display_name: metadata.host.display_name.clone(),
+                    public_key: metadata.host.public_key.clone(),
+                    seat_preference: Some(0),
+                    state: MaybeSaved {
+                        id: Some(metadata.host.state.id),
+                    },
                 },
-            },
-            Some(0),
-        )
-        .await
-        .expect("join_game (host) should succeed in prepare_environment")
-        .player;
+                Some(0),
+            )
+            .await
+            .expect("join_game (host) should succeed in prepare_environment")
+            .player;
 
         let guest_keys = TestKeys::new();
         let guest = PlayerRecord {
@@ -490,15 +489,11 @@ mod tests {
             state: MaybeSaved { id: None },
         };
 
-        let guest_saved = <SeaOrmLobby as LedgerLobby<Curve>>::join_game(
-            &lobby,
-            &metadata.record,
-            guest,
-            Some(1),
-        )
-        .await
-        .expect("join_game (guest) should succeed in prepare_environment")
-        .player;
+        let guest_saved = lobby
+            .join_game(&metadata.record, guest, Some(1))
+            .await
+            .expect("join_game (guest) should succeed in prepare_environment")
+            .player;
 
         let third_keys = TestKeys::new();
         let third_player = PlayerRecord {
@@ -508,29 +503,25 @@ mod tests {
             state: MaybeSaved { id: None },
         };
 
-        let third_saved = <SeaOrmLobby as LedgerLobby<Curve>>::join_game(
-            &lobby,
-            &metadata.record,
-            third_player,
-            Some(2),
-        )
-        .await
-        .expect("join_game (third) should succeed in prepare_environment")
-        .player;
+        let third_saved = lobby
+            .join_game(&metadata.record, third_player, Some(2))
+            .await
+            .expect("join_game (third) should succeed in prepare_environment")
+            .player;
 
         let shuffler = ShufflerRecord {
             display_name: "Primary Shuffler".into(),
             public_key: host_keys.shuffler.bytes.clone(),
             state: MaybeSaved { id: None },
         };
-        let shuffler_output = <SeaOrmLobby as LedgerLobby<Curve>>::register_shuffler(
-            &lobby,
-            &metadata.record,
-            shuffler,
-            ShufflerRegistrationConfig { sequence: Some(0) },
-        )
-        .await
-        .expect("register_shuffler should succeed in prepare_environment");
+        let shuffler_output = lobby
+            .register_shuffler(
+                &metadata.record,
+                shuffler,
+                ShufflerRegistrationConfig { sequence: Some(0) },
+            )
+            .await
+            .expect("register_shuffler should succeed in prepare_environment");
 
         let params = CommenceGameParams {
             game: metadata.record.clone(),
@@ -573,7 +564,8 @@ mod tests {
             min_players: lobby_cfg.min_players_to_start,
         };
 
-        let hand = <SeaOrmLobby as LedgerLobby<Curve>>::commence_game(&lobby, &operator, params)
+        let hand = lobby
+            .commence_game(&operator, params)
             .await
             .expect("commence_game should succeed in prepare_environment")
             .hand

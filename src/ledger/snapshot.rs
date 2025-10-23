@@ -610,8 +610,7 @@ mod tests {
             card_plan: BTreeMap::new(),
         };
 
-        let json = serde_json::to_string(&snapshot).expect("dealing snapshot should serialize");
-        println!("serialized dealing snapshot: {json}");
+        let _ = serde_json::to_string(&snapshot).expect("dealing snapshot should serialize");
     }
 }
 
