@@ -12,10 +12,10 @@ use serde::Deserialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::game::coordinator::GameCoordinator;
-use crate::ledger::lobby::LedgerLobby;
 use crate::ledger::query::{HandMessagesQuery, LatestSnapshotQuery, SequenceBounds};
 use crate::ledger::snapshot::SnapshotSeq;
 use crate::ledger::types::{GameId, HandId};
+use crate::ledger::LobbyService;
 
 use super::demo::{parse_viewer_public_key, rehydrate_commence_outcome, seed_demo_hand};
 use super::dto::{
@@ -39,7 +39,7 @@ where
     C::Affine: Absorb,
 {
     pub coordinator: Arc<GameCoordinator<C>>,
-    pub lobby: Arc<dyn LedgerLobby<C> + Send + Sync>,
+    pub lobby: Arc<dyn LobbyService<C>>,
 }
 
 pub struct LegitPokerServer<C>
@@ -72,10 +72,7 @@ where
     C::BaseField: PrimeField + Send + Sync,
     C::Affine: Absorb,
 {
-    pub fn new(
-        coordinator: Arc<GameCoordinator<C>>,
-        lobby: Arc<dyn LedgerLobby<C> + Send + Sync>,
-    ) -> Self {
+    pub fn new(coordinator: Arc<GameCoordinator<C>>, lobby: Arc<dyn LobbyService<C>>) -> Self {
         let context = Arc::new(ServerContext { coordinator, lobby });
 
         let router = Router::new()

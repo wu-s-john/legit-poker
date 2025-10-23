@@ -21,7 +21,6 @@ use crate::ledger::lobby::types::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, HandRecord, PlayerRecord,
     PlayerSeatSnapshot, ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig,
 };
-use crate::ledger::lobby::LedgerLobby;
 use crate::ledger::serialization::{
     canonical_deserialize_hex, deserialize_curve_bytes, deserialize_curve_hex,
     serialize_curve_bytes,
@@ -33,6 +32,7 @@ use crate::ledger::snapshot::{
 };
 use crate::ledger::types::{GameId, HandId, StateHash};
 use crate::ledger::typestate::{MaybeSaved, Saved};
+use crate::ledger::LobbyService;
 use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
 use crate::shuffling::draw_shuffler_public_key;
 
@@ -69,7 +69,7 @@ where
 }
 
 pub async fn seed_demo_hand<C>(
-    lobby: Arc<dyn LedgerLobby<C> + Send + Sync>,
+    lobby: Arc<dyn LobbyService<C>>,
     coordinator: &GameCoordinator<C>,
     viewer_public_key: C,
 ) -> Result<SeedDemoResult<C>>
@@ -150,7 +150,7 @@ where
 }
 
 async fn seat_players<C>(
-    lobby: &Arc<dyn LedgerLobby<C> + Send + Sync>,
+    lobby: &Arc<dyn LobbyService<C>>,
     metadata: &crate::ledger::lobby::types::GameMetadata,
     lobby_config: &GameLobbyConfig,
     viewer_bytes: Vec<u8>,
@@ -215,7 +215,7 @@ where
 }
 
 async fn register_shufflers<C>(
-    lobby: &Arc<dyn LedgerLobby<C> + Send + Sync>,
+    lobby: &Arc<dyn LobbyService<C>>,
     metadata: &crate::ledger::lobby::types::GameMetadata,
     descriptors: &[ShufflerDescriptor<C>],
 ) -> Result<Vec<ShufflerAssignment<C>>>

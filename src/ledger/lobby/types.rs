@@ -175,7 +175,7 @@ impl<C> ShufflerAssignment<C> {
 
 pub type DeckCommitmentBytes = Vec<u8>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GameLobbyConfig {
     pub stakes: TableStakes,
     pub max_players: i16,

@@ -740,7 +740,7 @@ fn cast_sequence(sequence: SnapshotSeq) -> anyhow::Result<i32> {
     i32::try_from(sequence).map_err(|_| anyhow!("snapshot sequence {} exceeds i32::MAX", sequence))
 }
 
-pub(super) async fn persist_prepared_snapshot(
+pub async fn persist_prepared_snapshot(
     txn: &DatabaseTransaction,
     prepared: &PreparedSnapshot,
 ) -> anyhow::Result<()> {
