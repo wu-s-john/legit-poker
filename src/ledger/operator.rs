@@ -12,7 +12,7 @@ use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
 use super::worker::{LedgerWorker, WorkerError};
 use crate::curve_absorb::CurveAbsorb;
-use crate::task::spawn_named_task;
+use crate::tokio_tools::spawn_named_task;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{error, info, instrument, Span};

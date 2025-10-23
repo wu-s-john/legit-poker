@@ -34,7 +34,7 @@ use crate::{
     },
     shuffler::{HandSubscription, ShufflerRunConfig, ShufflerScheme, ShufflerService},
     shuffling::make_global_public_keys,
-    task::spawn_named_task,
+    tokio_tools::spawn_named_task,
 };
 
 #[derive(Clone)]
