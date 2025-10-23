@@ -1179,11 +1179,11 @@ where
     }
 }
 
-pub async fn rehydrate_snapshot_by_hash<C>(
+pub async fn rehydrate_snapshot<C>(
     conn: &DatabaseConnection,
     game_id: GameId,
     hand_id: HandId,
-    state_hash: StateHash,
+    state_hash: Option<StateHash>,
 ) -> Result<AnyTableSnapshot<C>>
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
@@ -1191,13 +1191,27 @@ where
     C::BaseField: PrimeField + CanonicalSerialize + CanonicalDeserialize,
     C::Affine: Absorb,
 {
-    let snapshot_model = table_snapshots::Entity::find()
-        .filter(table_snapshots::Column::GameId.eq(game_id))
-        .filter(table_snapshots::Column::HandId.eq(hand_id))
-        .filter(table_snapshots::Column::SnapshotHash.eq(state_hash.into_bytes().to_vec()))
-        .one(conn)
-        .await?
-        .with_context(|| format!("snapshot {:?} not found", state_hash))?;
+    let snapshot_model = match state_hash {
+        Some(state_hash) => table_snapshots::Entity::find()
+            .filter(table_snapshots::Column::GameId.eq(game_id))
+            .filter(table_snapshots::Column::HandId.eq(hand_id))
+            .filter(table_snapshots::Column::SnapshotHash.eq(state_hash.into_bytes().to_vec()))
+            .one(conn)
+            .await?
+            .with_context(|| format!("snapshot {:?} not found", state_hash))?,
+        None => table_snapshots::Entity::find()
+            .filter(table_snapshots::Column::GameId.eq(game_id))
+            .filter(table_snapshots::Column::HandId.eq(hand_id))
+            .order_by_desc(table_snapshots::Column::Sequence)
+            .one(conn)
+            .await?
+            .with_context(|| {
+                format!(
+                    "no snapshots found for game {} hand {}",
+                    game_id, hand_id
+                )
+            })?,
+    };
 
     let snapshot_sequence = u32::try_from(snapshot_model.sequence).map_err(|_| {
         anyhow!(

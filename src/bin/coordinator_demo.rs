@@ -80,13 +80,12 @@ struct Config {
 struct PlayerSpec {
     name: String,
     seat: SeatId,
-    public_key: Vec<u8>,
+    public_key: Curve,
 }
 
 struct ShufflerMaterial {
     secret: Scalar,
     public_key: Curve,
-    public_key_bytes: Vec<u8>,
 }
 
 #[tokio::main]
@@ -170,9 +169,11 @@ async fn run_demo(config: Config) -> Result<()> {
     let lobby_config = build_lobby_config();
 
     info!(target = LOG_TARGET, "hosting game via lobby API");
+    let host_public_key_bytes = serialize_point(&player_specs[0].public_key)
+        .context("failed to serialize host public key")?;
     let host_registration = PlayerRecord {
         display_name: player_specs[0].name.clone(),
-        public_key: player_specs[0].public_key.clone(),
+        public_key: host_public_key_bytes,
         seat_preference: Some(player_specs[0].seat),
         state: MaybeSaved { id: None },
     };
@@ -224,14 +225,18 @@ async fn run_demo(config: Config) -> Result<()> {
         .iter()
         .zip(shuffler_materials.iter())
         .map(|(registration, material)| {
-            ShufflerAssignment::new(
-                registration.shuffler.clone(),
-                registration.assigned_sequence,
-                material.public_key_bytes.clone(),
-                aggregated_public_key_bytes.clone(),
-            )
+            serialize_point(&material.public_key)
+                .context("failed to serialize shuffler public key")
+                .map(|public_key_bytes| {
+                    ShufflerAssignment::new(
+                        registration.shuffler.clone(),
+                        registration.assigned_sequence,
+                        public_key_bytes,
+                        aggregated_public_key_bytes.clone(),
+                    )
+                })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
 
     let params = CommenceGameParams {
         game: metadata.record.clone(),
@@ -323,9 +328,11 @@ async fn seat_players(
     );
 
     for spec in specs.iter().skip(1) {
+        let public_key_bytes =
+            serialize_point(&spec.public_key).context("failed to serialize player public key")?;
         let record = PlayerRecord {
             display_name: spec.name.clone(),
-            public_key: spec.public_key.clone(),
+            public_key: public_key_bytes.clone(),
             seat_preference: Some(spec.seat),
             state: MaybeSaved { id: None },
         };
@@ -358,9 +365,11 @@ async fn register_shufflers(
 ) -> Result<Vec<RegisterShufflerOutput>> {
     let mut outputs = Vec::with_capacity(materials.len());
     for (index, material) in materials.iter().enumerate() {
+        let public_key_bytes = serialize_point(&material.public_key)
+            .context("failed to serialize shuffler public key")?;
         let record = ShufflerRecord {
             display_name: format!("demo-shuffler-{}", index + 1),
-            public_key: material.public_key_bytes.clone(),
+            public_key: public_key_bytes.clone(),
             state: MaybeSaved { id: None },
         };
 
@@ -535,12 +544,10 @@ fn build_players(rng: &mut StdRng) -> Result<Vec<PlayerSpec>> {
     let mut players = Vec::with_capacity(PLAYER_COUNT);
     for seat in 0..PLAYER_COUNT {
         let (_, public_key) = draw_shuffler_public_key::<Curve, _>(rng);
-        let public_key_bytes =
-            serialize_point(&public_key).context("failed to serialize player public key")?;
         players.push(PlayerSpec {
             name: format!("demo-player-{}", seat + 1),
             seat: seat as SeatId,
-            public_key: public_key_bytes,
+            public_key,
         });
     }
     Ok(players)
@@ -586,12 +593,9 @@ fn build_shuffler_materials(secrets: &[Scalar]) -> Result<Vec<ShufflerMaterial>>
         .iter()
         .map(|secret| {
             let public_key = Curve::generator() * secret;
-            let public_key_bytes =
-                serialize_point(&public_key).context("failed to serialize shuffler public key")?;
             Ok(ShufflerMaterial {
                 secret: *secret,
                 public_key,
-                public_key_bytes,
             })
         })
         .collect()

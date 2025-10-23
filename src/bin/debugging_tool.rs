@@ -1,6 +1,5 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::Arc;
@@ -14,7 +13,7 @@ use zk_poker::debugging_tools::fetch_hand_archive;
 use zk_poker::ledger::actor::AnyActor;
 use zk_poker::ledger::messages::{AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
 use zk_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
-use zk_poker::ledger::snapshot::{rehydrate_snapshot_by_hash, SnapshotSeq, SnapshotStatus};
+use zk_poker::ledger::snapshot::{rehydrate_snapshot, SnapshotSeq, SnapshotStatus};
 use zk_poker::ledger::store::SeaOrmEventStore;
 use zk_poker::ledger::types::{EventPhase, StateHash};
 use zk_poker::ledger::{GameId, HandId, SignatureBytes};
@@ -62,7 +61,7 @@ struct LatestArgs {
     #[arg(long)]
     hand: HandId,
 
-    /// Optional state hash (0x-prefixed hex). If omitted, uses the tip hash.
+    /// Optional state hash (0x-prefixed hex). If omitted, fetches the latest snapshot.
     #[arg(long)]
     state_hash: Option<StateHash>,
 
@@ -128,15 +127,8 @@ async fn run_archive(args: ArchiveArgs, pretty: bool) -> Result<()> {
 async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
     let conn = db::connect().await?;
 
-    let state_hash = match args.state_hash {
-        Some(hash) => hash,
-        None => fetch_tip_hash(&conn, args.hand)
-            .await?
-            .context("hand has no current_state_hash")?,
-    };
-
     let snapshot =
-        rehydrate_snapshot_by_hash::<Curve>(&conn, args.game, args.hand, state_hash).await?;
+        rehydrate_snapshot::<Curve>(&conn, args.game, args.hand, args.state_hash).await?;
 
     let messages = if args.include_messages {
         let store = SeaOrmEventStore::<Curve>::new(conn.clone());
@@ -157,21 +149,6 @@ async fn run_latest(args: LatestArgs, pretty: bool) -> Result<()> {
     };
 
     write_json(&payload, pretty)
-}
-
-async fn fetch_tip_hash(conn: &DatabaseConnection, hand_id: HandId) -> Result<Option<StateHash>> {
-    use sea_orm::EntityTrait;
-    use zk_poker::db::entity::hands;
-
-    let row = hands::Entity::find_by_id(hand_id).one(conn).await?;
-    if let Some(model) = row {
-        match model.current_state_hash {
-            Some(bytes) => Ok(Some(StateHash::from_bytes(bytes)?)),
-            None => Ok(None),
-        }
-    } else {
-        anyhow::bail!("hand {hand_id} not found");
-    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

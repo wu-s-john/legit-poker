@@ -122,27 +122,31 @@ impl HandRecord<NotSaved> {
 }
 
 #[derive(Clone, Debug)]
-pub struct PlayerSeatSnapshot<C> {
+pub struct PlayerSeatSnapshot<C>
+where
+    C: CurveGroup,
+{
     pub player: PlayerRecord<Saved<PlayerId>>,
     pub seat_id: SeatId,
     pub starting_stack: Chips,
-    pub public_key: Vec<u8>,
-    pub _marker: PhantomData<C>,
+    pub public_key: C,
 }
 
-impl<C> PlayerSeatSnapshot<C> {
+impl<C> PlayerSeatSnapshot<C>
+where
+    C: CurveGroup,
+{
     pub fn new(
         player: PlayerRecord<Saved<PlayerId>>,
         seat_id: SeatId,
         starting_stack: Chips,
-        public_key: Vec<u8>,
+        public_key: C,
     ) -> Self {
         Self {
             player,
             seat_id,
             starting_stack,
             public_key,
-            _marker: PhantomData,
         }
     }
 }
@@ -213,7 +217,10 @@ pub struct RegisterShufflerOutput {
 }
 
 #[derive(Clone)]
-pub struct CommenceGameParams<C> {
+pub struct CommenceGameParams<C>
+where
+    C: CurveGroup,
+{
     pub game: GameRecord<Saved<GameId>>,
     pub hand_no: i64,
     pub hand_config: HandConfig,
