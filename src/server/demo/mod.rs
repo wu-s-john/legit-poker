@@ -1,3 +1,7 @@
+pub mod stream_event;
+
+pub use stream_event::DemoStreamEvent;
+
 use std::sync::Arc;
 use std::time::Duration;
 
