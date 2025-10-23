@@ -1269,46 +1269,17 @@ where
                                     {
                                         continue;
                                     }
-                                    let mut state = runtime.dealing.lock();
-                                    match state.process_snapshot_and_make_responses(
-                                        table,
+                                    // Once the ledger enters betting, no further blinding or
+                                    // unblinding requests should be emitted for this hand.
+                                    debug!(
+                                        target = LOG_TARGET,
+                                        game_id,
+                                        hand_id,
                                         shuffler_id,
-                                        &runtime.shuffler_key,
-                                    ) {
-                                        Ok(requests) => {
-                                            for request in requests {
-                                                if let Err(err) = deal_tx.send({
-                                                    debug!(
-                                                        target = LOG_TARGET,
-                                                        game_id,
-                                                        hand_id,
-                                                        shuffler_id,
-                                                        shuffler_index,
-                                                        request = ?request,
-                                                        "broadcasting dealing request"
-                                                    );
-                                                    request
-                                                }) {
-                                                    warn!(
-                                                        target = LOG_TARGET,
-                                                        game_id,
-                                                        hand_id,
-                                                        error = %err,
-                                                        "failed to broadcast dealing request"
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Err(err) => {
-                                            warn!(
-                                                target = LOG_TARGET,
-                                                game_id,
-                                                hand_id,
-                                                error = %err,
-                                                "failed to process preflop snapshot"
-                                            );
-                                        }
-                                    }
+                                        shuffler_index,
+                                        "preflop snapshot observed; halting dealing request production"
+                                    );
+                                    runtime.dealing.lock().reset();
                                 }
                                 AnyTableSnapshot::Flop(table) => {
                                     if table.game_id != game_id

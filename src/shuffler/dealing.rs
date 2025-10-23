@@ -1,26 +1,30 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
-use ark_ff::UniformRand;
+use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::CanonicalSerialize;
 
+use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::types::SeatId;
 use crate::ledger::actor::ShufflerActor;
+use crate::ledger::hash::default_poseidon_hasher;
 use crate::ledger::messages::{
     AnyMessageEnvelope, GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage,
     SignatureEncoder,
 };
 use crate::ledger::snapshot::{
     CardDestination, CardPlan, DealingSnapshot, DealtCard, PlayerRoster, SeatingMap, Shared,
-    ShufflerRoster, TableAtDealing, TableAtPreflop,
+    ShufflerRoster, SnapshotSeq, TableAtDealing, TableAtPreflop,
 };
+use crate::ledger::store::snapshot::compute_dealing_hash;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::CanonicalKey;
 use crate::shuffling::player_decryption::PlayerAccessibleCiphertext;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{debug, field::display, info, instrument, warn};
 
 use super::{HandRuntime, Shuffler, ShufflerApi, ShufflerKeypair};
 
@@ -29,6 +33,7 @@ const LOG_TARGET: &str = "legit_poker::game::shuffler::deal";
 pub trait DealingTableView<C: CurveGroup> {
     fn game_id(&self) -> GameId;
     fn hand_id(&self) -> Option<HandId>;
+    fn sequence(&self) -> SnapshotSeq;
     fn shufflers(&self) -> &Shared<ShufflerRoster<C>>;
     fn dealing(&self) -> &DealingSnapshot<C>;
     fn players(&self) -> &Shared<PlayerRoster<C>>;
@@ -42,6 +47,10 @@ impl<C: CurveGroup> DealingTableView<C> for TableAtDealing<C> {
 
     fn hand_id(&self) -> Option<HandId> {
         self.hand_id
+    }
+
+    fn sequence(&self) -> SnapshotSeq {
+        self.sequence
     }
 
     fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
@@ -68,6 +77,10 @@ impl<C: CurveGroup> DealingTableView<C> for TableAtPreflop<C> {
 
     fn hand_id(&self) -> Option<HandId> {
         self.hand_id
+    }
+
+    fn sequence(&self) -> SnapshotSeq {
+        self.sequence
     }
 
     fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
@@ -167,6 +180,16 @@ impl<C: CurveGroup> DealingHandState<C> {
         self.board_sent.clear();
     }
 
+    #[instrument(
+        skip(self, table, self_member_key),
+        fields(
+            game_id = table.game_id(),
+            hand_id = ?table.hand_id(),
+            shuffler_id = self_shuffler_id,
+            sequence = table.sequence(),
+            dealing_hash = tracing::field::Empty
+        )
+    )]
     pub fn process_snapshot_and_make_responses<T>(
         &mut self,
         table: &T,
@@ -175,6 +198,10 @@ impl<C: CurveGroup> DealingHandState<C> {
     ) -> Result<Vec<DealShufflerRequest<C>>>
     where
         T: DealingTableView<C>,
+        C: CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+        C::BaseField: PrimeField + CanonicalSerialize,
+        C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
+        C::Affine: Absorb,
     {
         if self.card_plan.is_none() {
             self.card_plan = Some(table.dealing().card_plan.clone());
@@ -190,35 +217,89 @@ impl<C: CurveGroup> DealingHandState<C> {
             .as_ref()
             .ok_or_else(|| anyhow!("card plan unavailable for dealing snapshot"))?;
 
+        let hand_id_opt = table.hand_id();
+        let sequence = table.sequence();
+        let dealing_snapshot = table.dealing();
+        let hasher = default_poseidon_hasher::<C::BaseField>();
+        let dealing_hash_hex = compute_dealing_hash(dealing_snapshot, hasher.as_ref())
+            .map(|hash| format!("0x{}", hex::encode(hash.as_bytes())))
+            .unwrap_or_else(|err| {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = table.game_id(),
+                    hand_id = ?hand_id_opt,
+                    shuffler_id = self_shuffler_id,
+                    sequence,
+                    error = %err,
+                    "failed to compute dealing hash"
+                );
+                "hash-error".to_string()
+            });
+
+        tracing::Span::current().record("dealing_hash", &display(&dealing_hash_hex));
+
+        let mut hole_card_sources: BTreeMap<(SeatId, u8), u8> = BTreeMap::new();
+        for (&card_ref, destination) in dealing_snapshot.card_plan.iter() {
+            if let CardDestination::Hole { seat, hole_index } = destination {
+                hole_card_sources.insert((*seat, *hole_index), card_ref);
+            }
+        }
+
+        let ready_positions: Vec<(SeatId, u8, Option<u8>)> = dealing_snapshot
+            .player_ciphertexts
+            .iter()
+            .map(|(&(seat, hole_index), _)| {
+                let source_index = hole_card_sources
+                    .get(&(seat, hole_index))
+                    .and_then(|card_ref| dealing_snapshot.assignments.get(card_ref))
+                    .and_then(|dealt| dealt.source_index);
+                (seat, hole_index, source_index)
+            })
+            .collect();
+
+        debug!(
+            target = LOG_TARGET,
+            game_id = table.game_id(),
+            hand_id = ?hand_id_opt,
+            shuffler_id = self_shuffler_id,
+            sequence,
+            dealing_hash = dealing_hash_hex.as_str(),
+            ciphertext_count = ready_positions.len(),
+            ready_cipher_positions = ?ready_positions,
+            "evaluated dealing snapshot"
+        );
+
+        let hand_id =
+            hand_id_opt.expect("hand id for dealing snapshot when processing dealing state");
+
         let mut requests = Vec::new();
 
         for (&deal_index, destination) in card_plan.iter() {
             match destination {
                 CardDestination::Hole { seat, hole_index } => {
                     let player_public_key = player_public_key_for_seat(table, *seat)?;
-                    let already_blinded = table.dealing().player_blinding_contribs.contains_key(&(
-                        self_member_key.clone(),
-                        *seat,
-                        *hole_index,
-                    ));
+                    let already_blinded = dealing_snapshot
+                        .player_blinding_contribs
+                        .contains_key(&(self_member_key.clone(), *seat, *hole_index));
                     if already_blinded {
                         self.blinding_sent.insert(deal_index);
                     } else if self.blinding_sent.insert(deal_index) {
                         let expected_contribs = self.shuffler_keys.len();
-                        let contribution_count = table
-                            .dealing()
+                        let contribution_count = dealing_snapshot
                             .player_blinding_contribs
                             .keys()
                             .filter(|(_, s, h)| *s == *seat && *h == *hole_index)
                             .count();
-                        let ciphertext_ready = table
-                            .dealing()
+                        let ciphertext_ready = dealing_snapshot
                             .player_ciphertexts
                             .contains_key(&(*seat, *hole_index));
                         debug!(
                             target = LOG_TARGET,
                             game_id = table.game_id(),
-                            ?self_shuffler_id,
+                            hand_id = hand_id,
+                            shuffler_id = self_shuffler_id,
+                            sequence,
+                            dealing_hash = dealing_hash_hex.as_str(),
                             seat = *seat,
                             hole_index = *hole_index,
                             contribution_count,
@@ -228,7 +309,7 @@ impl<C: CurveGroup> DealingHandState<C> {
                         );
                         requests.push(DealShufflerRequest::PlayerBlinding(PlayerBlindingRequest {
                             game_id: table.game_id(),
-                            hand_id: table.hand_id().expect("hand id for dealing snapshot"),
+                            hand_id,
                             deal_index,
                             seat: *seat,
                             hole_index: *hole_index,
@@ -236,8 +317,7 @@ impl<C: CurveGroup> DealingHandState<C> {
                         }));
                     }
 
-                    let already_unblinded = table
-                        .dealing()
+                    let already_unblinded = dealing_snapshot
                         .player_unblinding_shares
                         .get(&(*seat, *hole_index))
                         .map_or(false, |shares| shares.contains_key(self_member_key));
@@ -247,22 +327,23 @@ impl<C: CurveGroup> DealingHandState<C> {
 
                     if !already_unblinded && !self.unblinding_sent.contains(&deal_index) {
                         let expected_contribs = self.shuffler_keys.len();
-                        let ciphertext_ready = table
-                            .dealing()
+                        let ciphertext_ready = dealing_snapshot
                             .player_ciphertexts
                             .contains_key(&(*seat, *hole_index));
                         debug!(
                             target = LOG_TARGET,
                             game_id = table.game_id(),
-                            ?self_shuffler_id,
+                            hand_id = hand_id,
+                            shuffler_id = self_shuffler_id,
+                            sequence,
+                            dealing_hash = dealing_hash_hex.as_str(),
                             seat = *seat,
                             hole_index = *hole_index,
                             expected_contribs,
                             ciphertext_ready,
                             "evaluating player unblinding readiness"
                         );
-                        if let Some(ciphertext) = table
-                            .dealing()
+                        if let Some(ciphertext) = dealing_snapshot
                             .player_ciphertexts
                             .get(&(*seat, *hole_index))
                             .cloned()
@@ -270,7 +351,7 @@ impl<C: CurveGroup> DealingHandState<C> {
                             requests.push(DealShufflerRequest::PlayerUnblinding(
                                 PlayerUnblindingRequest {
                                     game_id: table.game_id(),
-                                    hand_id: table.hand_id().expect("hand id for dealing snapshot"),
+                                    hand_id,
                                     deal_index,
                                     seat: *seat,
                                     hole_index: *hole_index,
@@ -282,7 +363,10 @@ impl<C: CurveGroup> DealingHandState<C> {
                             debug!(
                                 target = LOG_TARGET,
                                 game_id = table.game_id(),
-                                ?self_shuffler_id,
+                                hand_id = hand_id,
+                                shuffler_id = self_shuffler_id,
+                                sequence,
+                                dealing_hash = dealing_hash_hex.as_str(),
                                 seat = *seat,
                                 hole_index = *hole_index,
                                 expected_contribs,
@@ -292,7 +376,10 @@ impl<C: CurveGroup> DealingHandState<C> {
                             debug!(
                                 target = LOG_TARGET,
                                 game_id = table.game_id(),
-                                ?self_shuffler_id,
+                                hand_id = hand_id,
+                                shuffler_id = self_shuffler_id,
+                                sequence,
+                                dealing_hash = dealing_hash_hex.as_str(),
                                 seat = *seat,
                                 hole_index = *hole_index,
                                 expected_contribs,
@@ -305,15 +392,15 @@ impl<C: CurveGroup> DealingHandState<C> {
                     if self.board_sent.contains(&deal_index) {
                         continue;
                     }
-                    if !self.should_emit_board(*board_index, card_plan, table.dealing()) {
+                    if !self.should_emit_board(*board_index, card_plan, dealing_snapshot) {
                         continue;
                     }
-                    if let Some(dealt) = table.dealing().assignments.get(&deal_index) {
+                    if let Some(dealt) = dealing_snapshot.assignments.get(&deal_index) {
                         let slot = board_slot_from_index(*board_index)
                             .ok_or_else(|| anyhow!("invalid board index {board_index}"))?;
                         requests.push(DealShufflerRequest::Board(BoardCardShufflerRequest {
                             game_id: table.game_id(),
-                            hand_id: table.hand_id().expect("hand id for dealing snapshot"),
+                            hand_id,
                             deal_index,
                             slot,
                             ciphertext: dealt.clone(),

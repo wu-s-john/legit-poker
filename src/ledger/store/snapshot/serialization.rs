@@ -349,10 +349,10 @@ where
     ))
 }
 
-fn build_dealing_phase<C>(
+pub fn compute_dealing_hash<C>(
     dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
     hasher: &dyn LedgerHasher,
-) -> anyhow::Result<(PreparedPhase, StateHash)>
+) -> anyhow::Result<StateHash>
 where
     C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
     C::BaseField: PrimeField + CanonicalSerialize,
@@ -360,11 +360,24 @@ where
     C::Affine: Absorb,
 {
     let mut builder = TranscriptBuilder::new("ledger/phase/dealing");
+    append_dealing_phase(&mut builder, dealing)?;
+    Ok(hasher.hash(&builder.finish()))
+}
 
+fn append_dealing_phase<C>(
+    builder: &mut TranscriptBuilder,
+    dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
+) -> anyhow::Result<()>
+where
+    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField + CanonicalSerialize,
+    C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
+    C::Affine: Absorb,
+{
     builder.append_u64(dealing.assignments.len() as u64);
     for (&card_index, dealt) in dealing.assignments.iter() {
         builder.append_u8(card_index);
-        append_ciphertext(&mut builder, &dealt.cipher);
+        append_ciphertext(builder, &dealt.cipher);
         match dealt.source_index {
             Some(idx) => {
                 builder.append_u8(1);
@@ -378,15 +391,15 @@ where
     for (&(seat, hole_index), ciphertext) in dealing.player_ciphertexts.iter() {
         builder.append_u8(seat);
         builder.append_u8(hole_index);
-        ciphertext.write_transcript(&mut builder);
+        ciphertext.write_transcript(builder);
     }
 
     builder.append_u64(dealing.player_blinding_contribs.len() as u64);
     for ((shuffler_key, seat, hole_index), contrib) in dealing.player_blinding_contribs.iter() {
-        shuffler_key.write_transcript(&mut builder);
+        shuffler_key.write_transcript(builder);
         builder.append_u8(*seat);
         builder.append_u8(*hole_index);
-        contrib.write_transcript(&mut builder);
+        contrib.write_transcript(builder);
     }
 
     builder.append_u64(dealing.player_unblinding_shares.len() as u64);
@@ -395,8 +408,8 @@ where
         builder.append_u8(hole_index);
         builder.append_u64(shares.len() as u64);
         for (member_key, share) in shares {
-            member_key.write_transcript(&mut builder);
-            share.write_transcript(&mut builder);
+            member_key.write_transcript(builder);
+            share.write_transcript(builder);
         }
     }
 
@@ -404,16 +417,16 @@ where
     for (&(seat, hole_index), combined) in dealing.player_unblinding_combined.iter() {
         builder.append_u8(seat);
         builder.append_u8(hole_index);
-        append_curve_point(&mut builder, combined);
+        append_curve_point(builder, combined);
     }
 
     builder.append_u64(dealing.community_decryption_shares.len() as u64);
     for ((shuffler_key, card_index), share) in dealing.community_decryption_shares.iter() {
-        shuffler_key.write_transcript(&mut builder);
+        shuffler_key.write_transcript(builder);
         builder.append_u8(*card_index);
-        append_curve_point(&mut builder, &share.share);
-        share.proof.write_transcript(&mut builder);
-        share.member_key.write_transcript(&mut builder);
+        append_curve_point(builder, &share.share);
+        share.proof.write_transcript(builder);
+        share.member_key.write_transcript(builder);
     }
 
     builder.append_u64(dealing.community_cards.len() as u64);
@@ -440,6 +453,21 @@ where
         }
     }
 
+    Ok(())
+}
+
+fn build_dealing_phase<C>(
+    dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
+    hasher: &dyn LedgerHasher,
+) -> anyhow::Result<(PreparedPhase, StateHash)>
+where
+    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField + CanonicalSerialize,
+    C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
+    C::Affine: Absorb,
+{
+    let mut builder = TranscriptBuilder::new("ledger/phase/dealing");
+    append_dealing_phase(&mut builder, dealing)?;
     let payload = builder.finish();
     let hash = hasher.hash(&payload);
     let payload_json =

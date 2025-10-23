@@ -6,7 +6,7 @@ use ark_serialize::CanonicalSerialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL, Transition};
-use crate::engine::nl::types::{PlayerStatus, Street as EngineStreet};
+use crate::engine::nl::types::{PlayerStatus, SeatId, Street as EngineStreet};
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::messages::{
     EnvelopedMessage, GameBlindingDecryptionMessage, GameMessage,
@@ -18,6 +18,7 @@ use crate::ledger::snapshot::{
     PhaseShowdown, PhaseShuffling, PlayerRoster, RevealedHand, RevealsSnapshot, ShufflingStep,
     SnapshotStatus, TableSnapshot,
 };
+use crate::ledger::store::snapshot::compute_dealing_hash;
 use crate::ledger::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::poseidon_config;
 use crate::showdown::{choose_best5_from7, idx_of};
@@ -25,7 +26,13 @@ use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use crate::shuffling::player_decryption::combine_unblinding_shares;
 use crate::signing::Signable;
 use std::collections::BTreeMap;
-use tracing::{info, warn};
+use tracing::{
+    error,
+    field::{debug, display},
+    info, instrument, warn,
+};
+
+const LOG_TARGET: &str = "legit_poker::ledger::transition";
 
 pub trait TransitionHandler<C>: GameMessage<C> + Signable
 where
@@ -280,6 +287,16 @@ where
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
 {
+    #[instrument(
+        skip(snapshot, envelope, hasher),
+        fields(
+            game_id = tracing::field::Empty,
+            hand_id = tracing::field::Empty,
+            sequence = tracing::field::Empty,
+            shuffler_id = tracing::field::Empty,
+            dealing_hash = tracing::field::Empty
+        )
+    )]
     fn apply_transition<H>(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
@@ -289,35 +306,92 @@ where
         H: LedgerHasher,
     {
         let shuffler_id = envelope.actor.shuffler_id;
+        let span = tracing::Span::current();
+        span.record("game_id", &display(snapshot.game_id));
+        span.record("hand_id", &debug(snapshot.hand_id));
+        span.record("sequence", &display(snapshot.sequence));
+        span.record("shuffler_id", &display(shuffler_id));
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos;
 
-        let shuffler = snapshot
-            .shuffler_identity_by_id(shuffler_id)
-            .context("unknown shuffler for blinding message")?;
+        let shuffler = match snapshot.shuffler_identity_by_id(shuffler_id) {
+            Some(identity) => identity,
+            None => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    card_pos,
+                    "received blinding share from unknown shuffler"
+                );
+                return Err(anyhow!("unknown shuffler for blinding message"));
+            }
+        };
         let shuffler_key = shuffler.shuffler_key.clone();
 
-        let destination = snapshot
-            .dealing
-            .card_plan
-            .get(&card_ref)
-            .context("card reference not found in dealing plan")?;
+        let destination = match snapshot.dealing.card_plan.get(&card_ref) {
+            Some(dest) => dest,
+            None => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    card_pos,
+                    "blinding contribution referenced unknown dealing card"
+                );
+                return Err(anyhow!("card reference not found in dealing plan"));
+            }
+        };
 
         let (seat, hole_index) = match destination {
             CardDestination::Hole { seat, hole_index } => (*seat, *hole_index),
-            other => bail!("blinding contribution targets non-hole card: {other:?}"),
+            other => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    card_pos,
+                    ?other,
+                    "blinding contribution targeted non-hole destination"
+                );
+                bail!("blinding contribution targets non-hole card: {other:?}");
+            }
         };
 
-        let player_key = snapshot
-            .seating
-            .get(&seat)
-            .and_then(|key| key.clone())
-            .context("seat has no player assigned")?;
+        let player_key = match snapshot.seating.get(&seat).and_then(|key| key.clone()) {
+            Some(key) => key,
+            None => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    seat,
+                    hole_index,
+                    "blinding contribution received for empty seat"
+                );
+                return Err(anyhow!("seat has no player assigned"));
+            }
+        };
 
-        let player_identity = snapshot
-            .players
-            .get(&player_key)
-            .context("player identity not found")?;
+        let player_identity = match snapshot.players.get(&player_key) {
+            Some(identity) => identity,
+            None => {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    seat,
+                    hole_index,
+                    "blinding contribution referenced missing player identity"
+                );
+                return Err(anyhow!("player identity not found"));
+            }
+        };
 
         let target_player_public_key = envelope.message.value.target_player_public_key.clone();
 
@@ -344,17 +418,35 @@ where
 
         let aggregated_key = shuffler.aggregated_public_key.clone();
 
-        ensure!(
-            envelope
-                .message
-                .value
-                .share
-                .verify(aggregated_key.clone(), target_player_public_key.clone()),
-            "invalid blinding contribution proof"
-        );
+        if !envelope
+            .message
+            .value
+            .share
+            .verify(aggregated_key.clone(), target_player_public_key.clone())
+        {
+            warn!(
+                target = LOG_TARGET,
+                game_id = snapshot.game_id,
+                hand_id = snapshot.hand_id,
+                shuffler_id,
+                seat,
+                hole_index,
+                "invalid blinding contribution proof"
+            );
+            bail!("invalid blinding contribution proof");
+        }
 
         let key = (shuffler_key.clone(), seat, hole_index);
         if snapshot.dealing.player_blinding_contribs.contains_key(&key) {
+            warn!(
+                target = LOG_TARGET,
+                game_id = snapshot.game_id,
+                hand_id = snapshot.hand_id,
+                shuffler_id,
+                seat,
+                hole_index,
+                "duplicate blinding contribution detected"
+            );
             bail!("duplicate blinding contribution for shuffler {shuffler_id} seat {seat} hole {hole_index}");
         }
 
@@ -371,10 +463,29 @@ where
             .map(|(_, v)| v.clone())
             .collect();
         let contribution_count = ready_contribs.len();
+        let dealing_hash_hex = compute_dealing_hash(&snapshot.dealing, hasher)
+            .map(|hash| format!("0x{}", hex::encode(hash.as_bytes())))
+            .unwrap_or_else(|err| {
+                warn!(
+                    target = LOG_TARGET,
+                    game_id = snapshot.game_id,
+                    hand_id = snapshot.hand_id,
+                    shuffler_id,
+                    seat,
+                    hole_index,
+                    sequence = snapshot.sequence,
+                    error = %err,
+                    "failed to compute dealing hash after blinding contribution"
+                );
+                "hash-error".to_string()
+            });
+        span.record("dealing_hash", &display(dealing_hash_hex.as_str()));
         info!(
-            target = "legit_poker::ledger::transition",
+            target = LOG_TARGET,
             game_id = snapshot.game_id,
             hand_id = snapshot.hand_id,
+            sequence = snapshot.sequence,
+            dealing_hash = dealing_hash_hex.as_str(),
             seat,
             hole_index,
             shuffler_id,
@@ -384,12 +495,21 @@ where
         );
 
         if ready_contribs.len() == snapshot.shufflers.len() {
-            let deck_cipher = snapshot
-                .shuffling
-                .final_deck
-                .get(card_pos as usize)
-                .context("deck position out of range")?
-                .clone();
+            let deck_cipher = match snapshot.shuffling.final_deck.get(card_pos as usize) {
+                Some(cipher) => cipher.clone(),
+                None => {
+                    warn!(
+                        target = LOG_TARGET,
+                        game_id = snapshot.game_id,
+                        hand_id = snapshot.hand_id,
+                        seat,
+                        hole_index,
+                        card_pos,
+                        "deck position out of range when assembling ciphertext"
+                    );
+                    return Err(anyhow!("deck position out of range"));
+                }
+            };
 
             let combined =
                 crate::shuffling::player_decryption::combine_blinding_contributions_for_player(
@@ -398,19 +518,84 @@ where
                     aggregated_key,
                     target_player_public_key,
                 )
-                .map_err(|err| anyhow!(err))?;
+                .map_err(|err| {
+                    error!(
+                        target = LOG_TARGET,
+                        game_id = snapshot.game_id,
+                        hand_id = snapshot.hand_id,
+                        seat,
+                        hole_index,
+                        card_pos,
+                        error = %err,
+                        "failed to combine player blinding contributions"
+                    );
+                    anyhow!(err)
+                })?;
 
             snapshot
                 .dealing
                 .player_ciphertexts
                 .insert((seat, hole_index), combined);
-
             snapshot.dealing.assignments.insert(
                 card_ref,
                 DealtCard {
                     cipher: deck_cipher,
                     source_index: Some(card_pos),
                 },
+            );
+
+            let updated_dealing_hash_hex = compute_dealing_hash(&snapshot.dealing, hasher)
+                .map(|hash| format!("0x{}", hex::encode(hash.as_bytes())))
+                .unwrap_or_else(|err| {
+                    warn!(
+                            target = LOG_TARGET,
+                            game_id = snapshot.game_id,
+                            hand_id = snapshot.hand_id,
+                            seat,
+                            hole_index,
+                            card_pos,
+                            sequence = snapshot.sequence,
+                            error = %err,
+                        "failed to compute dealing hash after assembling ciphertext"
+                    );
+                    "hash-error".to_string()
+                });
+            span.record("dealing_hash", &display(updated_dealing_hash_hex.as_str()));
+
+            let mut hole_card_sources: BTreeMap<(SeatId, u8), u8> = BTreeMap::new();
+            for (&ref_card, destination) in snapshot.dealing.card_plan.iter() {
+                if let CardDestination::Hole {
+                    seat: dest_seat,
+                    hole_index: dest_hole,
+                } = destination
+                {
+                    hole_card_sources.insert((*dest_seat, *dest_hole), ref_card);
+                }
+            }
+            let ready_cipher_positions: Vec<(SeatId, u8, Option<u8>)> = snapshot
+                .dealing
+                .player_ciphertexts
+                .iter()
+                .map(|(&(ready_seat, ready_hole), _)| {
+                    let source_index = hole_card_sources
+                        .get(&(ready_seat, ready_hole))
+                        .and_then(|ref_card| snapshot.dealing.assignments.get(ref_card))
+                        .and_then(|dealt| dealt.source_index);
+                    (ready_seat, ready_hole, source_index)
+                })
+                .collect();
+
+            info!(
+                target = LOG_TARGET,
+                game_id = snapshot.game_id,
+                hand_id = snapshot.hand_id,
+                sequence = snapshot.sequence,
+                dealing_hash = updated_dealing_hash_hex.as_str(),
+                seat,
+                hole_index,
+                card_pos,
+                ready_cipher_positions = ?ready_cipher_positions,
+                "assembled player ciphertext"
             );
         }
 

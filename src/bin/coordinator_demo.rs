@@ -37,7 +37,7 @@ const LOG_TARGET: &str = "bin::coordinator_demo";
 const DEFAULT_SUPABASE_URL: &str = "http://127.0.0.1:54321";
 const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@127.0.0.1:54322/postgres";
 const PLAYER_COUNT: usize = 4;
-const SHUFFLER_COUNT: usize = 7;
+const SHUFFLER_COUNT: usize = 3;
 const SUBMIT_CHANNEL_CAPACITY: usize = 128;
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -271,7 +271,14 @@ async fn run_demo(config: Config) -> Result<()> {
 
     monitor_shuffle_progress(state_handle, hand_id, expected_order).await?;
 
-    info!(target = LOG_TARGET, "shutting down coordinator");
+    info!(
+        target = LOG_TARGET,
+        "hand entered dealing; waiting for CTRL+C to shut down coordinator"
+    );
+    signal::ctrl_c()
+        .await
+        .context("failed while awaiting CTRL+C")?;
+    info!(target = LOG_TARGET, "received shutdown signal; shutting down coordinator");
     coordinator
         .shutdown()
         .await

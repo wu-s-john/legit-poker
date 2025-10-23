@@ -394,10 +394,22 @@ where
     }
 
     pub async fn shutdown(mut self) -> Result<()> {
+        info!(
+            target = LOG_TARGET,
+            active_shuffles = self.active_hands.len(),
+            "initiating coordinator shutdown"
+        );
         self.realtime_stop.cancel();
         let keys: Vec<_> = self.active_hands.iter().map(|entry| *entry.key()).collect();
         for key in keys {
+            let (game_id, hand_id) = key;
             if let Some((_, subs)) = self.active_hands.remove(&key) {
+                info!(
+                    target = LOG_TARGET,
+                    game_id,
+                    hand_id,
+                    "cancelling hand subscriptions"
+                );
                 for sub in subs {
                     sub.cancel();
                 }
@@ -405,18 +417,30 @@ where
         }
 
         for shuffler in self.shufflers.values() {
+            info!(
+                target = LOG_TARGET,
+                shuffler_id = shuffler.shuffler_id(),
+                "cancelling shuffler tasks"
+            );
             shuffler.cancel_all();
         }
         if let Some(handle) = self.realtime_handle.take() {
+            info!(target = LOG_TARGET, "waiting for realtime task to finish");
             match handle.await {
-                Ok(result) => result?,
+                Ok(result) => {
+                    result?;
+                    info!(target = LOG_TARGET, "realtime task joined successfully");
+                }
                 Err(err) => return Err(anyhow!("failed to join realtime task: {err}")),
             }
         }
 
         if let Some(handle) = self.worker_handle.take() {
+            info!(target = LOG_TARGET, "waiting for ledger worker to finish");
             match handle.await {
-                Ok(Ok(())) => {}
+                Ok(Ok(())) => {
+                    info!(target = LOG_TARGET, "ledger worker joined successfully");
+                }
                 Ok(Err(err)) => {
                     return Err(anyhow!("ledger worker exited with error: {err}"));
                 }
@@ -424,6 +448,7 @@ where
             }
         }
 
+        info!(target = LOG_TARGET, "coordinator shutdown complete");
         Ok(())
     }
 }
