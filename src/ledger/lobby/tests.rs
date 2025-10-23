@@ -191,12 +191,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
                 config.buy_in,
                 keys.host.point.clone(),
             ),
-            PlayerSeatSnapshot::new(
-                joiner.clone(),
-                1,
-                config.buy_in,
-                keys.player.point.clone(),
-            ),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 2,
@@ -317,12 +312,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
                 config.buy_in,
                 keys.host.point.clone(),
             ),
-            PlayerSeatSnapshot::new(
-                joiner.clone(),
-                1,
-                config.buy_in,
-                keys.player.point.clone(),
-            ),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 1,
@@ -401,12 +391,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
                 config.buy_in,
                 keys.host.point.clone(),
             ),
-            PlayerSeatSnapshot::new(
-                joiner.clone(),
-                1,
-                config.buy_in,
-                keys.player.point.clone(),
-            ),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
         ],
         shufflers: vec![ShufflerAssignment::new(
             shuffler,
@@ -594,12 +579,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
                 config.buy_in,
                 keys.host.point.clone(),
             ),
-            PlayerSeatSnapshot::new(
-                joiner.clone(),
-                1,
-                config.buy_in,
-                keys.player.point.clone(),
-            ),
+            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
             PlayerSeatSnapshot::new(
                 third_player.clone(),
                 1,
@@ -855,6 +835,7 @@ async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<Test
     let (tx, rx) = mpsc::channel(32);
     let (events_tx, _) = broadcast::channel(16);
     let (snapshots_tx, _) = broadcast::channel(16);
+    let (staging_tx, _) = broadcast::channel(16);
     let operator = LedgerOperator::new(
         verifier,
         tx,
@@ -862,6 +843,7 @@ async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<Test
         Arc::clone(&state),
         events_tx.clone(),
         snapshots_tx.clone(),
+        staging_tx.clone(),
     );
     let worker = LedgerWorker::new(
         rx,
@@ -870,6 +852,7 @@ async fn setup_operator(conn: &DatabaseConnection) -> Option<LedgerOperator<Test
         Arc::clone(&state),
         events_tx,
         snapshots_tx,
+        staging_tx,
     );
     if let Err(err) = operator.start(worker).await {
         eprintln!("skipping lobby test: failed to start operator ({err})");

@@ -19,6 +19,15 @@ use tracing::{error, info, instrument, warn};
 
 const LOG_TARGET: &str = "legit_poker::ledger::worker";
 
+#[derive(Clone)]
+pub struct StagingLedgerUpdate<C>
+where
+    C: CurveGroup,
+{
+    pub event: FinalizedAnyMessageEnvelope<C>,
+    pub snapshot: Shared<AnyTableSnapshot<C>>,
+}
+
 pub struct LedgerWorker<C>
 where
     C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
@@ -32,6 +41,7 @@ where
     state: Arc<LedgerState<C>>,
     events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
     snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
+    stage_tx: broadcast::Sender<StagingLedgerUpdate<C>>,
     _marker: std::marker::PhantomData<C>,
 }
 
@@ -49,6 +59,7 @@ where
         state: Arc<LedgerState<C>>,
         events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
         snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
+        stage_tx: broadcast::Sender<StagingLedgerUpdate<C>>,
     ) -> Self {
         Self {
             receiver,
@@ -57,6 +68,7 @@ where
             state,
             events_tx,
             snapshots_tx,
+            stage_tx,
             _marker: std::marker::PhantomData,
         }
     }
@@ -157,6 +169,20 @@ where
             }
         };
 
+        let staged_snapshot: Shared<AnyTableSnapshot<C>> = Arc::new(snapshot.clone());
+        if let Err(err) = self.stage_tx.send(StagingLedgerUpdate {
+            event: finalized_event.clone(),
+            snapshot: Arc::clone(&staged_snapshot),
+        }) {
+            warn!(
+                target = LOG_TARGET,
+                error = %err,
+                hand_id,
+                nonce,
+                "failed to broadcast staging ledger update"
+            );
+        }
+
         let prepared = match prepare_snapshot(&snapshot, hasher.as_ref()) {
             Ok(prepared) => prepared,
             Err(err) => {
@@ -247,8 +273,7 @@ where
             );
         }
 
-        let shared_snapshot: Shared<AnyTableSnapshot<C>> = Arc::new(snapshot.clone());
-        if let Err(err) = self.snapshots_tx.send(shared_snapshot) {
+        if let Err(err) = self.snapshots_tx.send(Arc::clone(&staged_snapshot)) {
             warn!(
                 target: LOG_TARGET,
                 error = %err,
@@ -656,6 +681,7 @@ mod tests {
         let state = Arc::new(LedgerState::<Curve>::new());
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
@@ -663,6 +689,7 @@ mod tests {
             state.clone(),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
         assert!(state.hands().is_empty());
         let _ = worker;
@@ -682,6 +709,7 @@ mod tests {
         let state = Arc::new(LedgerState::<Curve>::new());
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
@@ -689,6 +717,7 @@ mod tests {
             state.clone(),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -719,6 +748,7 @@ mod tests {
         let state = Arc::new(LedgerState::<Curve>::new());
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
@@ -726,6 +756,7 @@ mod tests {
             state.clone(),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
 
         let event = prepare_shuffle_event(&state, hand_id, 0);
@@ -755,6 +786,7 @@ mod tests {
 
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let worker = LedgerWorker::new(
             rx,
             store.clone(),
@@ -762,6 +794,7 @@ mod tests {
             state.clone(),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
         let runner = tokio::spawn(async move { worker.run().await.unwrap() });
 

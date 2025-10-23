@@ -427,6 +427,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
@@ -434,6 +435,7 @@ mod tests {
             Arc::clone(&state),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
 
         let host_keys = TestKeys::new();

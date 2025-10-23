@@ -48,4 +48,4 @@ pub use types::{
 };
 pub use typestate::{DbRowStatus, MaybeSaved, NotSaved, Saved};
 pub use verifier::{LedgerVerifier, Verifier, VerifyError};
-pub use worker::{LedgerWorker, WorkerError};
+pub use worker::{LedgerWorker, StagingLedgerUpdate, WorkerError};

@@ -34,6 +34,7 @@ use crate::ledger::{
     },
     snapshot::{AnyTableSnapshot, Shared, TableAtShuffling},
     types::{GameId, HandId, ShufflerId},
+    worker::StagingLedgerUpdate,
 };
 use crate::shuffling::data_structures::ShuffleProof;
 use crate::shuffling::{
@@ -376,7 +377,7 @@ where
     states: Arc<DashMap<(GameId, HandId), Arc<HandRuntime<C>>>>,
     rng: Mutex<StdRng>,
     config: ShufflerRunConfig,
-    events_rx: Mutex<broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>>,
+    staged_updates_tx: Mutex<broadcast::Receiver<StagingLedgerUpdate<C>>>,
     snapshots_rx: Mutex<broadcast::Receiver<Shared<AnyTableSnapshot<C>>>>,
 }
 
@@ -398,7 +399,7 @@ where
         secret_key: S::SecretKey,
         submit: mpsc::Sender<AnyMessageEnvelope<C>>,
         config: ShufflerRunConfig,
-        events_rx: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
+        staged_updates_tx: broadcast::Receiver<StagingLedgerUpdate<C>>,
         snapshots_rx: broadcast::Receiver<Shared<AnyTableSnapshot<C>>>,
     ) -> Self {
         let rng = StdRng::from_seed(config.rng_seed);
@@ -419,7 +420,7 @@ where
             states: Arc::new(DashMap::new()),
             rng: Mutex::new(rng),
             config,
-            events_rx: Mutex::new(events_rx),
+            staged_updates_tx: Mutex::new(staged_updates_tx),
             snapshots_rx: Mutex::new(snapshots_rx),
         }
     }
@@ -558,8 +559,8 @@ where
             shuffler_id: self.shuffler_id,
             shuffler_key: shuffler_key.clone(),
         };
-        let events_rx = {
-            let guard = self.events_rx.lock();
+        let staged_updates_rx = {
+            let guard = self.staged_updates_tx.lock();
             guard.resubscribe()
         };
         let snapshots_rx = {
@@ -575,7 +576,7 @@ where
             secret.clone(),
             submit.clone(),
             Arc::clone(&runtime),
-            events_rx,
+            staged_updates_rx,
             history_cap,
             public_key.clone(),
             &actor,
@@ -659,7 +660,7 @@ where
         secret: Arc<S::SecretKey>,
         submit: mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: Arc<HandRuntime<C>>,
-        shuffle_updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
+        shuffle_updates: broadcast::Receiver<StagingLedgerUpdate<C>>,
         history_cap: usize,
         public_key: C,
         actor: &ShufflerActor<C>,
@@ -715,7 +716,7 @@ where
         secret: Arc<S::SecretKey>,
         submit: mpsc::Sender<AnyMessageEnvelope<C>>,
         runtime: Arc<HandRuntime<C>>,
-        mut updates: broadcast::Receiver<FinalizedAnyMessageEnvelope<C>>,
+        mut updates: broadcast::Receiver<StagingLedgerUpdate<C>>,
         history_cap: usize,
         public_key: C,
         actor: &ShufflerActor<C>,
@@ -741,7 +742,9 @@ where
                 }
                 msg = updates.recv() => {
                     match msg {
-                        Ok(finalized) => {
+                        Ok(update) => {
+                            let StagingLedgerUpdate { event: finalized, snapshot: _snapshot } = update;
+
                             if finalized.envelope.game_id != runtime.game_id
                                 || finalized.envelope.hand_id != runtime.hand_id
                             {

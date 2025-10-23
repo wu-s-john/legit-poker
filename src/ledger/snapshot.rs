@@ -1205,12 +1205,7 @@ where
             .order_by_desc(table_snapshots::Column::Sequence)
             .one(conn)
             .await?
-            .with_context(|| {
-                format!(
-                    "no snapshots found for game {} hand {}",
-                    game_id, hand_id
-                )
-            })?,
+            .with_context(|| format!("no snapshots found for game {} hand {}", game_id, hand_id))?,
     };
 
     let snapshot_sequence = u32::try_from(snapshot_model.sequence).map_err(|_| {

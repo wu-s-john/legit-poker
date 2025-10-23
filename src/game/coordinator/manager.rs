@@ -30,7 +30,7 @@ use crate::{
         store::{EventStore, SnapshotStore},
         types::{GameId, HandId, ShufflerId},
         verifier::Verifier,
-        worker::{LedgerWorker, WorkerError},
+        worker::{LedgerWorker, StagingLedgerUpdate, WorkerError},
         CommenceGameOutcome, LedgerOperator, LedgerState,
     },
     shuffler::{HandSubscription, Shuffler, ShufflerRunConfig, ShufflerScheme},
@@ -156,6 +156,7 @@ where
     updates_tx: broadcast::Sender<EnvelopedMessage<C, GameShuffleMessage<C>>>,
     _event_broadcast: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
     _snapshot_broadcast: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
+    _staging_broadcast: broadcast::Sender<StagingLedgerUpdate<C>>,
     realtime_stop: CancellationToken,
     realtime_handle: Option<JoinHandle<anyhow::Result<()>>>,
     worker_handle: Option<JoinHandle<Result<(), WorkerError>>>,
@@ -192,6 +193,7 @@ where
             mpsc::channel(config.submit_channel_capacity);
         let (events_tx, _) = broadcast::channel(1024);
         let (snapshots_tx, _) = broadcast::channel(1024);
+        let (staging_tx, _) = broadcast::channel(1024);
         let operator = Arc::new(LedgerOperator::new(
             Arc::clone(&config.verifier),
             submit_tx.clone(),
@@ -199,6 +201,7 @@ where
             Arc::clone(&config.state),
             events_tx.clone(),
             snapshots_tx.clone(),
+            staging_tx.clone(),
         ));
 
         let realtime_stop = CancellationToken::new();
@@ -226,8 +229,8 @@ where
             rng.fill_bytes(&mut seed);
             let run_cfg = ShufflerRunConfig::new(seed);
             let signing_secret = SchnorrSecretKey::<C>(shuffler.secret.clone());
-            let events_rx = operator.event_updates();
             let snapshots_rx = operator.snapshot_updates();
+            let staged_updates_rx = operator.staging_updates();
             let instance = Arc::new(Shuffler::<C, ShufflerScheme<C>>::new(
                 index,
                 shuffler.id,
@@ -238,7 +241,7 @@ where
                 signing_secret,
                 submit_tx.clone(),
                 run_cfg,
-                events_rx,
+                staged_updates_rx,
                 snapshots_rx,
             ));
             shufflers.insert(shuffler.id, instance);
@@ -254,6 +257,7 @@ where
             Arc::clone(&config.state),
             events_tx.clone(),
             snapshots_tx.clone(),
+            staging_tx.clone(),
         );
         let worker_handle = Some(operator.start(worker).await?);
 
@@ -265,6 +269,7 @@ where
             updates_tx,
             _event_broadcast: events_tx,
             _snapshot_broadcast: snapshots_tx,
+            _staging_broadcast: staging_tx,
             realtime_stop,
             realtime_handle,
             worker_handle,

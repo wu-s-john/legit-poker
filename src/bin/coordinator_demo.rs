@@ -21,7 +21,8 @@ use zk_poker::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
 use zk_poker::ledger::lobby::types::{
-    CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot, RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig
+    CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot,
+    RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig,
 };
 use zk_poker::ledger::snapshot::AnyTableSnapshot;
 use zk_poker::ledger::state::LedgerState;
@@ -179,8 +180,8 @@ async fn run_demo(config: Config) -> Result<()> {
     };
     let metadata = lobby
         .host_game(host_registration, lobby_config.clone())
-    .await
-    .context("failed to host game")?;
+        .await
+        .context("failed to host game")?;
 
     info!(
         target = LOG_TARGET,
@@ -311,8 +312,8 @@ async fn seat_players(
     };
     let host_join = lobby
         .join_game(&metadata.record, host, Some(specs[0].seat))
-    .await
-    .context("failed to seat host player")?;
+        .await
+        .context("failed to seat host player")?;
 
     snapshots.push(PlayerSeatSnapshot::new(
         host_join.player.clone(),
@@ -338,8 +339,8 @@ async fn seat_players(
         };
         let join = lobby
             .join_game(&metadata.record, record, Some(spec.seat))
-        .await
-        .with_context(|| format!("failed to seat {}", spec.name))?;
+            .await
+            .with_context(|| format!("failed to seat {}", spec.name))?;
 
         snapshots.push(PlayerSeatSnapshot::new(
             join.player.clone(),
@@ -381,8 +382,8 @@ async fn register_shufflers(
                     sequence: Some(index as u16),
                 },
             )
-        .await
-        .with_context(|| format!("failed to register shuffler {}", index + 1))?;
+            .await
+            .with_context(|| format!("failed to register shuffler {}", index + 1))?;
 
         info!(
             target = LOG_TARGET,

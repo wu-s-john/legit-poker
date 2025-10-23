@@ -11,6 +11,7 @@ use super::state::LedgerState;
 use super::store::EventStore;
 use super::types::HandId;
 use super::verifier::{Verifier, VerifyError};
+use super::worker::StagingLedgerUpdate;
 use super::worker::{LedgerWorker, WorkerError};
 use crate::curve_absorb::CurveAbsorb;
 use tokio::sync::{broadcast, mpsc};
@@ -52,6 +53,7 @@ where
     state: Arc<LedgerState<C>>,
     events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
     snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
+    staging_tx: broadcast::Sender<StagingLedgerUpdate<C>>,
 }
 
 impl<C> LedgerOperator<C>
@@ -68,6 +70,7 @@ where
         state: Arc<LedgerState<C>>,
         events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
         snapshots_tx: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
+        staging_tx: broadcast::Sender<StagingLedgerUpdate<C>>,
     ) -> Self {
         Self {
             verifier,
@@ -76,6 +79,7 @@ where
             state,
             events_tx,
             snapshots_tx,
+            staging_tx,
         }
     }
 
@@ -133,12 +137,20 @@ where
         self.snapshots_tx.subscribe()
     }
 
+    pub fn staging_updates(&self) -> broadcast::Receiver<StagingLedgerUpdate<C>> {
+        self.staging_tx.subscribe()
+    }
+
     pub fn event_sender(&self) -> broadcast::Sender<FinalizedAnyMessageEnvelope<C>> {
         self.events_tx.clone()
     }
 
     pub fn snapshot_sender(&self) -> broadcast::Sender<Shared<AnyTableSnapshot<C>>> {
         self.snapshots_tx.clone()
+    }
+
+    pub fn staging_sender(&self) -> broadcast::Sender<StagingLedgerUpdate<C>> {
+        self.staging_tx.clone()
     }
 }
 
@@ -230,6 +242,7 @@ mod tests {
         });
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
@@ -237,6 +250,7 @@ mod tests {
             Arc::clone(&state),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
         assert!(state.hands().is_empty());
         let _ = operator;
@@ -258,6 +272,7 @@ mod tests {
         });
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
@@ -265,6 +280,7 @@ mod tests {
             Arc::clone(&state),
             events_tx.clone(),
             snapshots_tx.clone(),
+            staging_tx.clone(),
         );
         let worker = LedgerWorker::new(
             rx,
@@ -273,6 +289,7 @@ mod tests {
             Arc::clone(&state),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
         let handle = operator.start(worker).await.unwrap();
         handle.abort();
@@ -292,6 +309,7 @@ mod tests {
         });
         let (events_tx, _) = broadcast::channel(16);
         let (snapshots_tx, _) = broadcast::channel(16);
+        let (staging_tx, _) = broadcast::channel(16);
         let operator = LedgerOperator::new(
             verifier,
             tx,
@@ -299,6 +317,7 @@ mod tests {
             Arc::clone(&state),
             events_tx,
             snapshots_tx,
+            staging_tx,
         );
         let envelope = sample_verified_envelope(10);
         operator.submit(0, envelope).await.unwrap();

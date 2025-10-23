@@ -227,8 +227,7 @@ where
     C::BaseField: PrimeField + CanonicalSerialize + Send + Sync,
     C::Affine: Absorb,
 {
-    let mut assignments: Vec<ShufflerAssignment<C>> =
-        Vec::with_capacity(descriptors.len());
+    let mut assignments: Vec<ShufflerAssignment<C>> = Vec::with_capacity(descriptors.len());
 
     for descriptor in descriptors {
         let public_key_bytes = serialize_curve_bytes(descriptor.public_key.value())
