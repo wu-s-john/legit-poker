@@ -21,17 +21,15 @@ use zk_poker::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
 use zk_poker::ledger::lobby::types::{
-    CommenceGameParams, GameLobbyConfig, PlayerRecord, PlayerSeatSnapshot, RegisterShufflerOutput,
-    ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig,
+    CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot, RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig
 };
-use zk_poker::ledger::lobby::SeaOrmLobby;
 use zk_poker::ledger::snapshot::AnyTableSnapshot;
 use zk_poker::ledger::state::LedgerState;
 use zk_poker::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
 use zk_poker::ledger::typestate::MaybeSaved;
 use zk_poker::ledger::verifier::{LedgerVerifier, Verifier};
 use zk_poker::ledger::HandId;
-use zk_poker::ledger::LedgerLobby;
+use zk_poker::ledger::{LobbyService, LobbyServiceFactory};
 use zk_poker::shuffling::{draw_shuffler_public_key, make_global_public_keys};
 
 const LOG_TARGET: &str = "bin::coordinator_demo";
@@ -158,7 +156,8 @@ async fn run_demo(config: Config) -> Result<()> {
         .await
         .context("failed to connect to database")?;
 
-    let lobby = SeaOrmLobby::new(conn.clone());
+    let lobby: Arc<dyn LobbyService<Curve>> =
+        Arc::new(LobbyServiceFactory::<Curve>::from_sea_orm(conn.clone()));
     let event_store: Arc<dyn EventStore<Curve>> =
         Arc::new(SeaOrmEventStore::<Curve>::new(conn.clone()));
     let snapshot_store: Arc<dyn SnapshotStore<Curve>> =
@@ -177,11 +176,8 @@ async fn run_demo(config: Config) -> Result<()> {
         seat_preference: Some(player_specs[0].seat),
         state: MaybeSaved { id: None },
     };
-    let metadata = <SeaOrmLobby as LedgerLobby<Curve>>::host_game(
-        &lobby,
-        host_registration,
-        lobby_config.clone(),
-    )
+    let metadata = lobby
+        .host_game(host_registration, lobby_config.clone())
     .await
     .context("failed to host game")?;
 
@@ -249,10 +245,10 @@ async fn run_demo(config: Config) -> Result<()> {
     };
 
     info!(target = LOG_TARGET, "commencing hand");
-    let outcome =
-        <SeaOrmLobby as LedgerLobby<Curve>>::commence_game(&lobby, operator.as_ref(), params)
-            .await
-            .context("failed to commence game")?;
+    let outcome = lobby
+        .commence_game(operator.as_ref(), params)
+        .await
+        .context("failed to commence game")?;
 
     let hand_id = outcome.hand.state.id;
     let game_id = outcome.hand.game_id;
@@ -292,8 +288,8 @@ async fn run_demo(config: Config) -> Result<()> {
 }
 
 async fn seat_players(
-    lobby: &SeaOrmLobby,
-    metadata: &zk_poker::ledger::lobby::types::GameMetadata,
+    lobby: &Arc<dyn LobbyService<Curve>>,
+    metadata: &GameMetadata,
     specs: &[PlayerSpec],
     starting_stack: Chips,
 ) -> Result<Vec<PlayerSeatSnapshot<Curve>>> {
@@ -308,12 +304,8 @@ async fn seat_players(
             id: Some(metadata.host.state.id),
         },
     };
-    let host_join = <SeaOrmLobby as LedgerLobby<Curve>>::join_game(
-        lobby,
-        &metadata.record,
-        host,
-        Some(specs[0].seat),
-    )
+    let host_join = lobby
+        .join_game(&metadata.record, host, Some(specs[0].seat))
     .await
     .context("failed to seat host player")?;
 
@@ -337,12 +329,8 @@ async fn seat_players(
             seat_preference: Some(spec.seat),
             state: MaybeSaved { id: None },
         };
-        let join = <SeaOrmLobby as LedgerLobby<Curve>>::join_game(
-            lobby,
-            &metadata.record,
-            record,
-            Some(spec.seat),
-        )
+        let join = lobby
+            .join_game(&metadata.record, record, Some(spec.seat))
         .await
         .with_context(|| format!("failed to seat {}", spec.name))?;
 
@@ -364,8 +352,8 @@ async fn seat_players(
 }
 
 async fn register_shufflers(
-    lobby: &SeaOrmLobby,
-    metadata: &zk_poker::ledger::lobby::types::GameMetadata,
+    lobby: &Arc<dyn LobbyService<Curve>>,
+    metadata: &GameMetadata,
     materials: &[ShufflerMaterial],
 ) -> Result<Vec<RegisterShufflerOutput>> {
     let mut outputs = Vec::with_capacity(materials.len());
@@ -376,14 +364,14 @@ async fn register_shufflers(
             state: MaybeSaved { id: None },
         };
 
-        let output = <SeaOrmLobby as LedgerLobby<Curve>>::register_shuffler(
-            lobby,
-            &metadata.record,
-            record,
-            ShufflerRegistrationConfig {
-                sequence: Some(index as u16),
-            },
-        )
+        let output = lobby
+            .register_shuffler(
+                &metadata.record,
+                record,
+                ShufflerRegistrationConfig {
+                    sequence: Some(index as u16),
+                },
+            )
         .await
         .with_context(|| format!("failed to register shuffler {}", index + 1))?;
 

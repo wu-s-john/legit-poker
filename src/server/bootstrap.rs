@@ -15,10 +15,10 @@ use crate::db::connect_to_postgres_db;
 use crate::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
-use crate::ledger::lobby::{LedgerLobby, SeaOrmLobby};
 use crate::ledger::state::LedgerState;
 use crate::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
 use crate::ledger::verifier::{LedgerVerifier, Verifier};
+use crate::ledger::{LobbyService, LobbyServiceFactory};
 
 use super::routes::LegitPokerServer;
 
@@ -76,10 +76,10 @@ where
         .context("failed to spawn game coordinator")?;
     let coordinator = Arc::new(coordinator);
 
-    let lobby: Arc<SeaOrmLobby> = Arc::new(SeaOrmLobby::new(db.clone()));
-    let lobby_trait: Arc<dyn LedgerLobby<C> + Send + Sync> = lobby;
+    let lobby: Arc<dyn LobbyService<C>> =
+        Arc::new(LobbyServiceFactory::<C>::from_sea_orm(db.clone()));
 
-    let server = LegitPokerServer::new(Arc::clone(&coordinator), Arc::clone(&lobby_trait));
+    let server = LegitPokerServer::new(Arc::clone(&coordinator), Arc::clone(&lobby));
     let router = server.into_router();
     let make_service = router.into_make_service();
 

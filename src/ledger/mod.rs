@@ -20,9 +20,15 @@ pub mod test_support;
 
 pub use actor::{AnyActor, GameActor, PlayerActor, ShufflerActor};
 pub use identity::CanonicalKey;
+pub use lobby::storage::{
+    InMemoryLobbyStorage, LobbyStorage, LobbyStorageTxn, NewGame, NewGamePlayer, NewGameShuffler,
+    NewHand, NewHandPlayer, NewHandShuffler, NewPlayer, NewShuffler, SeaOrmLobbyStorage,
+    StoredPlayer, StoredShuffler,
+};
 pub use lobby::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, GameSetupError,
-    JoinGameOutput, LedgerLobby, RegisterShufflerOutput, SeaOrmLobby, ShufflerRegistrationConfig,
+    JoinGameOutput, LobbyService, LobbyServiceFactory, RegisterShufflerOutput,
+    ShufflerRegistrationConfig,
 };
 pub use messages::{
     AnyGameMessage, EnvelopedMessage, FlopStreet, GameBlindingDecryptionMessage,

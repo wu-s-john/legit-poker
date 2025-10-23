@@ -14,9 +14,9 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
 
-use self::serialization::{persist_prepared_snapshot, prepare_snapshot_data, SNAPSHOT_LOG_TARGET};
+use self::serialization::{prepare_snapshot_data, SNAPSHOT_LOG_TARGET};
 
-pub use self::serialization::{compute_dealing_hash, PreparedSnapshot};
+pub use self::serialization::{compute_dealing_hash, persist_prepared_snapshot, PreparedSnapshot};
 
 pub type SharedSnapshotStore<C> = Arc<dyn SnapshotStore<C>>;
 
