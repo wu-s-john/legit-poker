@@ -13,6 +13,15 @@ import {
   isShuffleMessage,
 } from "./schemas";
 
+// Re-export type guards for convenience
+export {
+  isBlindingMessage,
+  isPartialUnblindingMessage,
+  isPlayerActor,
+  isShufflerActor,
+  isShuffleMessage,
+};
+
 /**
  * Format actor name for display
  */
