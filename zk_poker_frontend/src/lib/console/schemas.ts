@@ -140,7 +140,7 @@ export const AnyMessageEnvelopeSchema = z.object({
   game_id: z.number(),
   message: z.object({
     value: AnyGameMessageSchema,
-    signature: z.array(z.number()), // Vec<u8> serializes as array of numbers
+    signature: z.string().regex(/^0x[0-9a-fA-F]+$/, "Signature must be a hex string with 0x prefix"),
   }),
   actor: AnyActorSchema,
   nonce: z.number(),
