@@ -4,7 +4,7 @@
 
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useHandMessages } from "~/lib/api";
+import { useHandSnapshot } from "~/lib/api";
 import { TopNavigation } from "~/components/console/TopNavigation";
 import { LogsTableContainer } from "~/components/console/LogsTableContainer";
 
@@ -22,7 +22,7 @@ export default function HandConsoleLogsPage({ params }: PageProps) {
   // For now, using a placeholder
   const viewerPublicKey = "placeholder_viewer_key";
 
-  const { data, isLoading, error } = useQuery(useHandMessages(gameId, handId));
+  const { data, isLoading, error } = useQuery(useHandSnapshot(gameId, handId));
 
   if (isLoading) {
     return (
@@ -116,6 +116,7 @@ export default function HandConsoleLogsPage({ params }: PageProps) {
         <LogsTableContainer
           messages={data.messages}
           viewerPublicKey={viewerPublicKey}
+          playerMapping={data.playerMapping}
           itemsPerPage={50}
         />
       </main>

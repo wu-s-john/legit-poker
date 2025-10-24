@@ -11,12 +11,14 @@ import { Pagination } from "./Pagination";
 interface LogsTableContainerProps {
   messages: FinalizedAnyMessageEnvelope[];
   viewerPublicKey: string;
+  playerMapping: Map<string, { seat: number; player_key: string }>;
   itemsPerPage?: number;
 }
 
 export function LogsTableContainer({
   messages,
   viewerPublicKey,
+  playerMapping,
   itemsPerPage = 50,
 }: LogsTableContainerProps) {
   const [currentPage, setCurrentPage] = useState(1);
@@ -92,6 +94,7 @@ export function LogsTableContainer({
               message={message}
               sequenceNumber={message.snapshot_sequence_id}
               viewerPublicKey={viewerPublicKey}
+              playerMapping={playerMapping}
             />
           ))
         )}

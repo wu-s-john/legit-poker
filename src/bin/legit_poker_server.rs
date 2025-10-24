@@ -10,7 +10,7 @@ use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
 
-use zk_poker::game::coordinator::{load_shuffler_secrets_from_env, ShufflerSecretConfig};
+use zk_poker::game::coordinator::{load_shuffler_secrets_from_env, ShufflerSecret};
 use zk_poker::server::{run_server as run_http_server, ServerConfig};
 
 use serde_json::Value as JsonValue;
@@ -138,7 +138,7 @@ fn derive_realtime_url(rest_base: &str) -> Result<Url> {
 fn load_or_sample_shufflers(
     source: &str,
     rng: &mut StdRng,
-) -> Result<Vec<ShufflerSecretConfig<Curve>>> {
+) -> Result<Vec<ShufflerSecret<Curve>>> {
     if let Ok(raw) = env::var(source) {
         parse_shuffler_env(source, &raw)
     } else if let Ok(json_like) = serde_json::from_str::<JsonValue>(source) {
@@ -152,51 +152,51 @@ fn load_or_sample_shufflers(
     }
 }
 
-fn parse_shuffler_env(var: &str, raw: &str) -> Result<Vec<ShufflerSecretConfig<Curve>>> {
+fn parse_shuffler_env(var: &str, raw: &str) -> Result<Vec<ShufflerSecret<Curve>>> {
     // reuse helper for the canonical env format
     env::set_var(var, raw);
     load_shuffler_secrets_from_env(var).context("failed to parse shuffler secrets")
 }
 
-fn parse_shuffler_json_value(value: serde_json::Value) -> Result<Vec<ShufflerSecretConfig<Curve>>> {
+fn parse_shuffler_json_value(value: serde_json::Value) -> Result<Vec<ShufflerSecret<Curve>>> {
     let array = value.as_array().cloned().ok_or_else(|| {
         anyhow!(
             "expected JSON array for shuffler secrets but found {:?}",
             value
         )
     })?;
-    let mut configs = Vec::with_capacity(array.len());
-    for entry in array {
-        let id = entry
-            .get("id")
-            .and_then(|v| v.as_i64())
-            .ok_or_else(|| anyhow!("shuffler entry missing numeric id"))?;
-        let secret_hex = entry
-            .get("secret")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("shuffler entry missing secret string"))?;
-        let secret = parse_scalar(secret_hex)?;
-        configs.push(ShufflerSecretConfig { id, secret });
-    }
-    if configs.is_empty() {
+
+    let secrets: Result<Vec<_>> = array
+        .into_iter()
+        .map(|entry| {
+            let secret_hex = entry
+                .get("secret")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("shuffler entry missing secret string"))?;
+            let secret_scalar = parse_scalar(secret_hex)?;
+            Ok(ShufflerSecret {
+                secret: secret_scalar,
+            })
+        })
+        .collect();
+
+    let secrets = secrets?;
+    if secrets.is_empty() {
         return Err(anyhow!(
             "parsed shuffler configuration is empty; require {} entries",
             REQUIRED_SHUFFLER_COUNT
         ));
     }
-    Ok(configs)
+    Ok(secrets)
 }
 
-fn sample_shufflers(rng: &mut StdRng) -> Result<Vec<ShufflerSecretConfig<Curve>>> {
-    let mut configs = Vec::with_capacity(REQUIRED_SHUFFLER_COUNT);
-    for idx in 0..REQUIRED_SHUFFLER_COUNT {
-        let secret = Scalar::rand(rng);
-        configs.push(ShufflerSecretConfig {
-            id: (idx + 1) as i64,
-            secret,
-        });
-    }
-    Ok(configs)
+fn sample_shufflers(rng: &mut StdRng) -> Result<Vec<ShufflerSecret<Curve>>> {
+    (0..REQUIRED_SHUFFLER_COUNT)
+        .map(|_| {
+            let secret = Scalar::rand(rng);
+            Ok(ShufflerSecret { secret })
+        })
+        .collect()
 }
 
 fn parse_scalar(input: &str) -> Result<Scalar> {

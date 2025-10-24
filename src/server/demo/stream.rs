@@ -27,7 +27,7 @@ use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::LobbyService;
 use crate::server::demo::{
     build_hand_config, build_lobby_config, generate_npc_specs, register_shufflers, DemoStreamEvent,
-    NPC_COUNT, RNG_SEED, VIEWER_NAME,
+    NPC_COUNT, VIEWER_NAME,
 };
 use crate::server::error::ApiError;
 use crate::server::routes::ServerContext;
@@ -271,7 +271,7 @@ where
     Ok(Sse::new(sse_stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_secs(15))
-            .text(":\n"),
+            .text(":"),
     ))
 }
 
@@ -300,7 +300,7 @@ where
     C::BaseField: PrimeField + CanonicalSerialize + Send + Sync,
     C::Affine: Absorb + CanonicalSerialize,
 {
-    let mut rng = StdRng::seed_from_u64(RNG_SEED);
+    let mut rng = StdRng::from_entropy();
     let lobby_config = build_lobby_config();
 
     let host_registration = PlayerRecord {

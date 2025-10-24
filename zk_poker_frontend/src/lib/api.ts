@@ -1,6 +1,8 @@
 import type { LobbyTable, Tournament, RoomSnapshot, TableStakes } from '~/types/poker';
-import type { HandMessagesResponse } from './console/schemas';
+import type { HandMessagesResponse, FinalizedAnyMessageEnvelope } from './console/schemas';
 import { parseHandMessagesResponse } from './console/schemas';
+import type { AnyTableSnapshot } from './tableSnapshotSchema';
+import { anyTableSnapshotSchema } from './tableSnapshotSchema';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? 'http://localhost:4000';
 
@@ -117,16 +119,43 @@ export const useRoomTranscript = (id: string, fromSeq: number) => ({
   enabled: !!id && fromSeq >= 0,
 });
 
+// Console logs types
+export interface HandSnapshotWithMessages {
+  snapshot: AnyTableSnapshot;
+  messages: FinalizedAnyMessageEnvelope[];
+  playerMapping: Map<string, { seat: number; player_key: string }>;
+}
+
 // Console logs endpoints
 export const console = {
-  getHandMessages: async (gameId: string, handId: string): Promise<HandMessagesResponse> => {
-    const data = await fetchApi<unknown>(`/games/${gameId}/hands/${handId}/messages`);
-    return parseHandMessagesResponse(data);
+  getHandSnapshot: async (gameId: string, handId: string): Promise<HandSnapshotWithMessages> => {
+    const data = await fetchApi<unknown>(`/games/${gameId}/hands/${handId}/snapshot?include_messages=true`);
+
+    // Parse the response
+    const parsed = anyTableSnapshotSchema.parse((data as any).snapshot);
+    const messages = ((data as any).messages ?? []) as FinalizedAnyMessageEnvelope[];
+
+    // Extract player mapping from snapshot
+    const playerMapping = new Map<string, { seat: number; player_key: string }>();
+    if (parsed.players) {
+      Object.values(parsed.players).forEach((player) => {
+        playerMapping.set(player.player_key, {
+          seat: player.seat,
+          player_key: player.player_key,
+        });
+      });
+    }
+
+    return {
+      snapshot: parsed,
+      messages,
+      playerMapping,
+    };
   },
 };
 
-export const useHandMessages = (gameId: string, handId: string) => ({
-  queryKey: ['console', 'game', gameId, 'hand', handId, 'messages'],
-  queryFn: () => console.getHandMessages(gameId, handId),
+export const useHandSnapshot = (gameId: string, handId: string) => ({
+  queryKey: ['console', 'game', gameId, 'hand', handId, 'snapshot'],
+  queryFn: () => console.getHandSnapshot(gameId, handId),
   enabled: !!gameId && !!handId,
 });
