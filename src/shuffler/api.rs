@@ -11,7 +11,7 @@ use crate::ledger::actor::ShufflerActor;
 use crate::ledger::messages::{
     sign_enveloped_action, AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage,
     GameBlindingDecryptionMessage, GameMessage, GamePartialUnblindingShareMessage,
-    GameShuffleMessage, MetadataEnvelope, SignatureEncoder,
+    GameShuffleMessage, MetadataEnvelope,
 };
 use crate::shuffling::data_structures::ShuffleProof;
 use crate::shuffling::{
@@ -20,7 +20,7 @@ use crate::shuffling::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
     DECK_SIZE,
 };
-use crate::signing::{Signable, WithSignature};
+use crate::signing::{Signable, SignatureBytes, WithSignature};
 
 use super::Deck;
 
@@ -119,7 +119,7 @@ where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: PrimeField + UniformRand,
         C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder;
+        S::Signature: SignatureBytes;
 
     fn player_blinding_and_sign<R: Rng>(
         &self,
@@ -137,7 +137,7 @@ where
         C::ScalarField: PrimeField + Absorb,
         C::Affine: Absorb,
         C: CurveAbsorb<C::BaseField>,
-        S::Signature: SignatureEncoder;
+        S::Signature: SignatureBytes;
 
     fn player_unblinding_and_sign<R: Rng>(
         &self,
@@ -152,7 +152,7 @@ where
     )>
     where
         C::ScalarField: PrimeField,
-        S::Signature: SignatureEncoder;
+        S::Signature: SignatureBytes;
 }
 
 impl<C, S> ShufflerApi<C, S> for ShufflerEngine<C, S>
@@ -267,7 +267,7 @@ where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: PrimeField + UniformRand,
         C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
     {
         let (deck_out, proof) =
             self.shuffle::<DECK_SIZE, _>(aggregated_public_key, deck_in, rng)?;
@@ -291,7 +291,7 @@ where
         C::ScalarField: PrimeField + Absorb,
         C::Affine: Absorb,
         C: CurveAbsorb<C::BaseField>,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
     {
         let contribution = self.provide_blinding_player_decryption_share(
             aggregated_public_key,
@@ -316,7 +316,7 @@ where
     )>
     where
         C::ScalarField: PrimeField,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
     {
         let share = self.provide_unblinding_decryption_share(player_ciphertext)?;
         let message =
@@ -344,7 +344,7 @@ where
     where
         M: GameMessage<C, Actor = ShufflerActor<C>> + Signable + Clone,
         R: Rng,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
         AnyGameMessage<C>: From<M>,
     {
         let meta = MetadataEnvelope {

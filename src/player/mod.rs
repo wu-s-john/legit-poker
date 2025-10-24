@@ -12,7 +12,7 @@ use sha2::Digest;
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::types::SeatId;
 use crate::showdown::{choose_best5_from7, pack_score_field, Card, HandCategory, Index};
-use crate::signing::{Signable, TranscriptBuilder, WithSignature};
+use crate::signing::{Signable, SignatureBytes, TranscriptBuilder, WithSignature};
 use crate::PlayerAccessibleCiphertext;
 
 use rand::SeedableRng;
@@ -92,7 +92,9 @@ pub trait PlayerApi {
     fn place_bet(
         &self,
         action: PlayerBetAction,
-    ) -> Result<WithSignature<<Self::SigScheme as SignatureScheme>::Signature, PlayerActionBet>>;
+    ) -> Result<WithSignature<<Self::SigScheme as SignatureScheme>::Signature, PlayerActionBet>>
+    where
+        <Self::SigScheme as SignatureScheme>::Signature: SignatureBytes;
 
     /// Compute the player's showdown result deterministically from their two
     /// hole cards and the five-card public board.
@@ -179,6 +181,7 @@ where
 impl<S, G> PlayerSigner<S, G>
 where
     S: SignatureScheme,
+    S::Signature: SignatureBytes,
     G: CurveGroup,
 {
     /// Sign a betting action and return a signed envelope.
@@ -211,6 +214,8 @@ where
         &self,
         action: PlayerBetAction,
     ) -> Result<WithSignature<<Self::SigScheme as SignatureScheme>::Signature, PlayerActionBet>>
+    where
+        <Self::SigScheme as SignatureScheme>::Signature: SignatureBytes,
     {
         // Sign using our concrete scheme S.
         let payload = PlayerActionBet {

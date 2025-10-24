@@ -19,7 +19,7 @@ use crate::shuffling::data_structures::{
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
-use crate::signing::{Signable, TranscriptBuilder, WithSignature};
+use crate::signing::{Signable, SignatureBytes as SignatureBytesT, TranscriptBuilder, WithSignature};
 use rand::Rng;
 
 use super::snapshot::phases::{
@@ -538,26 +538,6 @@ where
     }
 }
 
-pub trait SignatureEncoder {
-    fn to_bytes(&self) -> Result<Vec<u8>>;
-}
-
-impl<C> SignatureEncoder for SchnorrSignature<C>
-where
-    C: CurveGroup,
-    C::ScalarField: CanonicalSerialize,
-{
-    fn to_bytes(&self) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        self.prover_response
-            .serialize_compressed(&mut bytes)
-            .map_err(|err| anyhow::anyhow!("signature serialization error: {err}"))?;
-        self.verifier_challenge
-            .serialize_compressed(&mut bytes)
-            .map_err(|err| anyhow::anyhow!("signature serialization error: {err}"))?;
-        Ok(bytes)
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct MetadataEnvelope<C, A>
@@ -581,7 +561,7 @@ pub fn sign_enveloped_action<S, C, M, R>(
 ) -> Result<EnvelopedMessage<C, M>>
 where
     S: SignatureScheme,
-    S::Signature: SignatureEncoder,
+    S::Signature: SignatureBytesT,
     C: CurveGroup,
     M: GameMessage<C> + Signable,
     R: Rng,
@@ -592,7 +572,7 @@ where
         signature,
         transcript,
     } = signed;
-    let signature = signature.to_bytes()?;
+    let signature_bytes = SignatureBytesT::to_bytes(&signature);
 
     Ok(EnvelopedMessage {
         hand_id: meta.hand_id,
@@ -602,7 +582,7 @@ where
         public_key: meta.public_key,
         message: WithSignature {
             value,
-            signature,
+            signature: signature_bytes,
             transcript,
         },
     })
