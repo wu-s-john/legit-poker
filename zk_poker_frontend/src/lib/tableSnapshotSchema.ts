@@ -232,38 +232,36 @@ const dealingSnapshotSchema = z.object({
     })
   ),
   player_ciphertexts: z.array(
-    z.object({
-      k1: seatIdSchema,
-      k2: z.number().int().min(0).max(1),
-      value: playerAccessibleCiphertextSchema,
+    playerAccessibleCiphertextSchema.extend({
+      seat: seatIdSchema,
+      hole_index: z.number().int().min(0).max(1),
     })
   ),
   player_blinding_contribs: z.array(
-    z.object({
-      k1: canonicalKeySchema,
-      k2: seatIdSchema,
-      k3: z.number().int().min(0).max(1),
-      value: playerTargetedBlindingContributionSchema,
+    playerTargetedBlindingContributionSchema.extend({
+      player_key: canonicalKeySchema,
+      seat: seatIdSchema,
+      hole_index: z.number().int().min(0).max(1),
     })
   ),
   player_unblinding_shares: z.array(
     z.object({
-      k1: seatIdSchema,
-      k2: z.number().int().min(0).max(1),
-      value: z.record(partialUnblindingShareSchema),
+      seat: seatIdSchema,
+      hole_index: z.number().int().min(0).max(1),
+      shares: z.record(z.string(), partialUnblindingShareSchema),
     })
   ),
   player_unblinding_combined: z.array(
     z.object({
-      key: z.tuple([seatIdSchema, z.number().int().min(0).max(1)]),
+      seat: seatIdSchema,
+      hole_index: z.number().int().min(0).max(1),
       value: curvePointSchema,
     })
   ),
   community_decryption_shares: z.array(
-    z.object({
-      k1: canonicalKeySchema,
-      k2: z.number().int().min(0).max(4),
-      value: communityDecryptionShareSchema,
+    communityDecryptionShareSchema.extend({
+      shuffler_key: canonicalKeySchema,
+      board_index: z.number().int().min(0).max(4),
     })
   ),
   community_cards: z.array(
@@ -296,7 +294,12 @@ const revealedHandSchema = z.object({
 
 const revealsSnapshotSchema = z.object({
   board: z.array(cardIndexSchema),
-  revealed_holes: z.record(revealedHandSchema),
+  revealed_holes: z.array(
+    z.object({
+      key: seatIdSchema,
+      value: revealedHandSchema,
+    })
+  ),
 });
 
 export const baseTableSnapshotSchema = z.object({
@@ -306,8 +309,18 @@ export const baseTableSnapshotSchema = z.object({
   cfg: handConfigSchema,
   shufflers: z.record(z.string(), shufflerIdentitySchema),
   players: z.record(z.string(), playerIdentitySchema),
-  seating: z.record(z.string(), canonicalKeySchema.nullable()),
-  stacks: z.record(z.string(), playerStackInfoSchema),
+  seating: z.array(
+    z.object({
+      key: seatIdSchema,
+      value: canonicalKeySchema.nullable(),
+    })
+  ),
+  stacks: z.array(
+    z.object({
+      key: seatIdSchema,
+      value: playerStackInfoSchema,
+    })
+  ),
   previous_hash: stateHashSchema.nullable(),
   state_hash: stateHashSchema,
   status: snapshotStatusSchema,
@@ -340,38 +353,38 @@ export const tableSnapshotShowdownSchema = tableSnapshotBettingSchema;
 export const tableSnapshotCompleteSchema = tableSnapshotBettingSchema;
 
 const tableAtShufflingSchema = tableSnapshotShufflingSchema.extend({
-  kind: z.literal('shuffling'),
+  type: z.literal('shuffling'),
 });
 
 const tableAtDealingSchema = tableSnapshotDealingSchema.extend({
-  kind: z.literal('dealing'),
+  type: z.literal('dealing'),
 });
 
 const tableAtPreflopSchema = tableSnapshotBettingSchema.extend({
-  kind: z.literal('preflop'),
+  type: z.literal('preflop'),
 });
 
 const tableAtFlopSchema = tableSnapshotBettingSchema.extend({
-  kind: z.literal('flop'),
+  type: z.literal('flop'),
 });
 
 const tableAtTurnSchema = tableSnapshotBettingSchema.extend({
-  kind: z.literal('turn'),
+  type: z.literal('turn'),
 });
 
 const tableAtRiverSchema = tableSnapshotBettingSchema.extend({
-  kind: z.literal('river'),
+  type: z.literal('river'),
 });
 
 const tableAtShowdownSchema = tableSnapshotShowdownSchema.extend({
-  kind: z.literal('showdown'),
+  type: z.literal('showdown'),
 });
 
 const tableAtCompleteSchema = tableSnapshotCompleteSchema.extend({
-  kind: z.literal('complete'),
+  type: z.literal('complete'),
 });
 
-export const anyTableSnapshotSchema = z.discriminatedUnion('kind', [
+export const anyTableSnapshotSchema = z.discriminatedUnion('type', [
   tableAtShufflingSchema,
   tableAtDealingSchema,
   tableAtPreflopSchema,
@@ -382,67 +395,14 @@ export const anyTableSnapshotSchema = z.discriminatedUnion('kind', [
   tableAtCompleteSchema,
 ]);
 
-type AnyTableSnapshot = z.infer<typeof anyTableSnapshotSchema>;
-
-const rawTableAtShufflingSchema = tableSnapshotShufflingSchema.omit({ kind: true });
-const rawTableAtDealingSchema = tableSnapshotDealingSchema.omit({ kind: true });
-const rawTablePostDealSchema = tableSnapshotBettingSchema.omit({ kind: true });
-
-export const rawAnyTableSnapshotSchema = z.union([
-  z.object({ shuffling: rawTableAtShufflingSchema }),
-  z.object({ dealing: rawTableAtDealingSchema }),
-  z.object({ preflop: rawTablePostDealSchema }),
-  z.object({ flop: rawTablePostDealSchema }),
-  z.object({ turn: rawTablePostDealSchema }),
-  z.object({ river: rawTablePostDealSchema }),
-  z.object({ showdown: rawTablePostDealSchema }),
-  z.object({ complete: rawTablePostDealSchema }),
-]);
-
-export type RawAnyTableSnapshot = z.infer<typeof rawAnyTableSnapshotSchema>;
+export type AnyTableSnapshot = z.infer<typeof anyTableSnapshotSchema>;
 
 export const latestSnapshotResponseSchema = z.object({
   snapshot: anyTableSnapshotSchema,
 });
 
-const rawLatestSnapshotResponseSchema = z.object({
-  snapshot: rawAnyTableSnapshotSchema,
-});
-
 export type LatestSnapshotResponse = z.infer<typeof latestSnapshotResponseSchema>;
-export type RawLatestSnapshotResponse = z.infer<typeof rawLatestSnapshotResponseSchema>;
-
-export function normalizeAnyTableSnapshot(raw: RawAnyTableSnapshot): AnyTableSnapshot {
-  if ('shuffling' in raw) {
-    return { kind: 'shuffling', ...raw.shuffling };
-  }
-  if ('dealing' in raw) {
-    return { kind: 'dealing', ...raw.dealing };
-  }
-  if ('preflop' in raw) {
-    return { kind: 'preflop', ...raw.preflop };
-  }
-  if ('flop' in raw) {
-    return { kind: 'flop', ...raw.flop };
-  }
-  if ('turn' in raw) {
-    return { kind: 'turn', ...raw.turn };
-  }
-  if ('river' in raw) {
-    return { kind: 'river', ...raw.river };
-  }
-  if ('showdown' in raw) {
-    return { kind: 'showdown', ...raw.showdown };
-  }
-  if ('complete' in raw) {
-    return { kind: 'complete', ...raw.complete };
-  }
-  // runtime safeguard – should be unreachable if schema validated
-  throw new Error('unrecognized snapshot variant');
-}
 
 export function parseLatestSnapshotResponse(input: unknown): LatestSnapshotResponse {
-  const raw = rawLatestSnapshotResponseSchema.parse(input);
-  const snapshot = normalizeAnyTableSnapshot(raw.snapshot);
-  return latestSnapshotResponseSchema.parse({ snapshot });
+  return latestSnapshotResponseSchema.parse({ snapshot: input });
 }

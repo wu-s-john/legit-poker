@@ -115,6 +115,49 @@ pub mod array_map {
     }
 }
 
+/// Serde helpers for simple maps with primitive keys serialized as arrays of {key, value} objects.
+pub mod simple_map {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry<K, V> {
+        key: K,
+        value: V,
+    }
+
+    pub fn serialize<K, V, S>(
+        value: &BTreeMap<K, V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K: Serialize + Clone + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<K, &V>> = value
+            .iter()
+            .map(|(k, v)| Entry {
+                key: k.clone(),
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<K, V>>::deserialize(deserializer)?;
+        Ok(entries.into_iter().map(|entry| (entry.key, entry.value)).collect())
+    }
+}
+
 /// Serde helpers for maps keyed by 2-tuples.
 pub mod tuple_map2 {
     use super::*;
@@ -497,5 +540,305 @@ pub mod arc {
         D: Deserializer<'de>,
     {
         T::deserialize(deserializer).map(Arc::new)
+    }
+}
+
+/// Serde helpers for Arc<BTreeMap> with simple map serialization
+pub mod arc_simple_map {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    pub fn serialize<K, V, S>(
+        value: &Arc<BTreeMap<K, V>>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        K: Serialize + Clone + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        simple_map::serialize(&**value, serializer)
+    }
+
+    pub fn deserialize<'de, K, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<Arc<BTreeMap<K, V>>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        simple_map::deserialize(deserializer).map(Arc::new)
+    }
+}
+
+/// Serde helpers for player_ciphertexts: BTreeMap<(SeatId, u8), PlayerAccessibleCiphertext>
+pub mod player_ciphertext_map {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry<V> {
+        seat: u8,
+        hole_index: u8,
+        #[serde(flatten)]
+        value: V,
+    }
+
+    pub fn serialize<V, S>(
+        value: &BTreeMap<(u8, u8), V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<&V>> = value
+            .iter()
+            .map(|((seat, hole_index), v)| Entry {
+                seat: *seat,
+                hole_index: *hole_index,
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(u8, u8), V>, D::Error>
+    where
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<V>>::deserialize(deserializer)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| ((entry.seat, entry.hole_index), entry.value))
+            .collect())
+    }
+}
+
+/// Serde helpers for player_blinding_contribs: BTreeMap<(CanonicalKey, SeatId, u8), BlindingContribution>
+pub mod player_blinding_map {
+    use super::*;
+    use crate::ledger::CanonicalKey;
+    use ark_ec::CurveGroup;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(bound(
+        serialize = "C: CanonicalSerialize, V: Serialize",
+        deserialize = "C: CanonicalDeserialize, V: Deserialize<'de>"
+    ))]
+    struct Entry<C: CurveGroup, V> {
+        player_key: CanonicalKey<C>,
+        seat: u8,
+        hole_index: u8,
+        #[serde(flatten)]
+        value: V,
+    }
+
+    pub fn serialize<C, V, S>(
+        value: &BTreeMap<(CanonicalKey<C>, u8, u8), V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        C: CurveGroup,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<C, &V>> = value
+            .iter()
+            .map(|((player_key, seat, hole_index), v)| Entry {
+                player_key: player_key.clone(),
+                seat: *seat,
+                hole_index: *hole_index,
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, C, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(CanonicalKey<C>, u8, u8), V>, D::Error>
+    where
+        C: CurveGroup,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<C, V>>::deserialize(deserializer)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| ((entry.player_key, entry.seat, entry.hole_index), entry.value))
+            .collect())
+    }
+}
+
+/// Serde helpers for player_unblinding_shares: BTreeMap<(SeatId, u8), BTreeMap<CanonicalKey, Share>>
+pub mod player_unblinding_map {
+    use super::*;
+    use crate::ledger::CanonicalKey;
+    use ark_ec::CurveGroup;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(bound(
+        serialize = "C: CanonicalSerialize, V: Serialize",
+        deserialize = "C: CanonicalDeserialize, V: Deserialize<'de>"
+    ))]
+    struct Entry<C: CurveGroup, V> {
+        seat: u8,
+        hole_index: u8,
+        shares: BTreeMap<CanonicalKey<C>, V>,
+    }
+
+    pub fn serialize<C, V, S>(
+        value: &BTreeMap<(u8, u8), BTreeMap<CanonicalKey<C>, V>>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        C: CurveGroup,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<C, &V>> = value
+            .iter()
+            .map(|((seat, hole_index), shares)| Entry {
+                seat: *seat,
+                hole_index: *hole_index,
+                shares: shares.iter().map(|(k, v)| (k.clone(), v)).collect(),
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, C, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(u8, u8), BTreeMap<CanonicalKey<C>, V>>, D::Error>
+    where
+        C: CurveGroup,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<C, V>>::deserialize(deserializer)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| ((entry.seat, entry.hole_index), entry.shares))
+            .collect())
+    }
+}
+
+/// Serde helpers for player_unblinding_combined: BTreeMap<(SeatId, u8), CurvePoint>
+pub mod player_unblinding_combined_map {
+    use super::*;
+    use ark_ec::CurveGroup;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Entry {
+        seat: u8,
+        hole_index: u8,
+        value: String,
+    }
+
+    pub fn serialize<C, S>(
+        value: &BTreeMap<(u8, u8), C>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        C: CurveGroup + CanonicalSerialize,
+        S: Serializer,
+    {
+        let entries: Result<Vec<Entry>, _> = value
+            .iter()
+            .map(|((seat, hole_index), point)| {
+                let hex = serialize_curve_hex(point).map_err(SerError::custom)?;
+                Ok(Entry {
+                    seat: *seat,
+                    hole_index: *hole_index,
+                    value: hex,
+                })
+            })
+            .collect();
+        entries?.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, C, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(u8, u8), C>, D::Error>
+    where
+        C: CurveGroup + CanonicalDeserialize,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry>::deserialize(deserializer)?;
+        entries
+            .into_iter()
+            .map(|entry| {
+                let point = deserialize_curve_hex(&entry.value).map_err(DeError::custom)?;
+                Ok(((entry.seat, entry.hole_index), point))
+            })
+            .collect()
+    }
+}
+
+/// Serde helpers for community_decryption_shares: BTreeMap<(CanonicalKey, u8), CommunityDecryptionShare>
+pub mod community_decryption_map {
+    use super::*;
+    use crate::ledger::CanonicalKey;
+    use ark_ec::CurveGroup;
+    use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(bound(
+        serialize = "C: CanonicalSerialize, V: Serialize",
+        deserialize = "C: CanonicalDeserialize, V: Deserialize<'de>"
+    ))]
+    struct Entry<C: CurveGroup, V> {
+        shuffler_key: CanonicalKey<C>,
+        board_index: u8,
+        #[serde(flatten)]
+        value: V,
+    }
+
+    pub fn serialize<C, V, S>(
+        value: &BTreeMap<(CanonicalKey<C>, u8), V>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error>
+    where
+        C: CurveGroup,
+        V: Serialize,
+        S: Serializer,
+    {
+        let entries: Vec<Entry<C, &V>> = value
+            .iter()
+            .map(|((shuffler_key, board_index), v)| Entry {
+                shuffler_key: shuffler_key.clone(),
+                board_index: *board_index,
+                value: v,
+            })
+            .collect();
+        entries.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, C, V, D>(
+        deserializer: D,
+    ) -> std::result::Result<BTreeMap<(CanonicalKey<C>, u8), V>, D::Error>
+    where
+        C: CurveGroup,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<Entry<C, V>>::deserialize(deserializer)?;
+        Ok(entries
+            .into_iter()
+            .map(|entry| ((entry.shuffler_key, entry.board_index), entry.value))
+            .collect())
     }
 }

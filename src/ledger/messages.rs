@@ -1,5 +1,5 @@
 use anyhow::Result;
-use ark_crypto_primitives::signature::{schnorr::Signature as SchnorrSignature, SignatureScheme};
+use ark_crypto_primitives::signature::SignatureScheme;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use chrono::{DateTime, Utc};

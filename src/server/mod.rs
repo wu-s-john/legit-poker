@@ -2,6 +2,7 @@ pub mod bootstrap;
 pub mod demo;
 mod dto;
 mod error;
+pub mod logging;
 pub mod routes;
 
 pub use bootstrap::{run_server, ServerConfig};

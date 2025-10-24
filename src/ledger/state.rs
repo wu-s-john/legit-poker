@@ -24,6 +24,8 @@ struct HandLedger<C: CurveGroup> {
     tip_hash: StateHash,
     tip_snapshot: AnyTableSnapshot<C>,
     snapshots: HashMap<StateHash, AnyTableSnapshot<C>>,
+    message_snapshots: HashMap<StateHash, (FinalizedAnyMessageEnvelope<C>, AnyTableSnapshot<C>)>,
+    message_order: Vec<StateHash>,
 }
 
 impl<C: CurveGroup> HandLedger<C> {
@@ -35,6 +37,8 @@ impl<C: CurveGroup> HandLedger<C> {
             tip_hash: hash,
             tip_snapshot: snapshot,
             snapshots,
+            message_snapshots: HashMap::new(),
+            message_order: Vec::new(),
         }
     }
 
@@ -45,6 +49,16 @@ impl<C: CurveGroup> HandLedger<C> {
             self.tip_hash = hash;
             self.tip_snapshot = snapshot;
         }
+    }
+
+    fn insert_message_snapshot(
+        &mut self,
+        message: FinalizedAnyMessageEnvelope<C>,
+        snapshot: AnyTableSnapshot<C>,
+    ) {
+        let hash = snapshot.state_hash();
+        self.message_snapshots.insert(hash, (message, snapshot));
+        self.message_order.push(hash);
     }
 }
 
@@ -105,6 +119,43 @@ where
                 entry.insert(HandLedger::new(snapshot));
             }
         }
+    }
+
+    pub fn insert_message_snapshot(
+        &self,
+        hand_id: HandId,
+        message: FinalizedAnyMessageEnvelope<C>,
+        snapshot: AnyTableSnapshot<C>,
+    ) {
+        let mut guard = self.inner.write().expect("ledger state poisoned");
+        if let Some(ledger) = guard.get_mut(&hand_id) {
+            ledger.insert_message_snapshot(message, snapshot);
+        }
+    }
+
+    pub fn messages_up_to_sequence(
+        &self,
+        hand_id: HandId,
+        max_sequence: u32,
+    ) -> Vec<FinalizedAnyMessageEnvelope<C>> {
+        let guard = self.inner.read().expect("ledger state poisoned");
+        let Some(ledger) = guard.get(&hand_id) else {
+            return Vec::new();
+        };
+
+        ledger
+            .message_order
+            .iter()
+            .filter_map(|hash| {
+                ledger.message_snapshots.get(hash).and_then(|(msg, snapshot)| {
+                    if snapshot.sequence() <= max_sequence {
+                        Some(msg.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect()
     }
 
     pub fn set_tip(&self, hand_id: HandId, tip: Option<StateHash>) {

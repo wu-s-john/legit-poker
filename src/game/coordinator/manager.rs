@@ -37,10 +37,26 @@ use crate::{
     tokio_tools::spawn_named_task,
 };
 
+/// Shuffler secret configuration without database ID (for initial parsing)
+#[derive(Clone)]
+pub struct ShufflerSecret<C: CurveGroup> {
+    pub secret: C::ScalarField,
+}
+
+/// Bootstrapped shuffler configuration with database-assigned ID
 #[derive(Clone)]
 pub struct ShufflerSecretConfig<C: CurveGroup> {
     pub id: ShufflerId,
     pub secret: C::ScalarField,
+}
+
+impl<C: CurveGroup> From<(ShufflerId, ShufflerSecret<C>)> for ShufflerSecretConfig<C> {
+    fn from((id, secret): (ShufflerId, ShufflerSecret<C>)) -> Self {
+        Self {
+            id,
+            secret: secret.secret,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -83,11 +99,10 @@ where
 
 #[derive(Deserialize)]
 struct EnvSecretRecord {
-    id: ShufflerId,
     secret: String,
 }
 
-pub fn load_shuffler_secrets_from_env<C>(var: &str) -> Result<Vec<ShufflerSecretConfig<C>>>
+pub fn load_shuffler_secrets_from_env<C>(var: &str) -> Result<Vec<ShufflerSecret<C>>>
 where
     C: CurveGroup,
     C::ScalarField: PrimeField + CanonicalSerialize,
@@ -113,8 +128,7 @@ where
                 return Err(anyhow!("shuffler secret cannot be empty"));
             }
             let scalar = C::ScalarField::from_le_bytes_mod_order(&bytes);
-            Ok(ShufflerSecretConfig {
-                id: record.id,
+            Ok(ShufflerSecret {
                 secret: scalar,
             })
         })
@@ -317,7 +331,12 @@ where
             let shuffler = self
                 .shufflers
                 .get(&identity.shuffler_id)
-                .ok_or_else(|| anyhow!("no shuffler configured for id {:?}", identity.shuffler_id))?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no shuffler configured for shuffler id  {:?}",
+                        identity.shuffler_id
+                    )
+                })?
                 .clone();
             let subscription = shuffler
                 .subscribe_per_hand(game_id, hand_id, turn_index, &snapshot)
@@ -333,7 +352,12 @@ where
             let first = self
                 .shufflers
                 .get(&identity.shuffler_id)
-                .ok_or_else(|| anyhow!("no shuffler configured for id {:?}", identity.shuffler_id))?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no shuffler configured for shuffler id  {:?}",
+                        identity.shuffler_id
+                    )
+                })?
                 .clone();
             first
                 .kick_start_hand(game_id, hand_id)

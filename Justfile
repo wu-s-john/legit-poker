@@ -14,22 +14,19 @@ export RUST_LOG := env_var_or_default("RUST_LOG", "info")
 # Database defaults (override via environment)
 
 export DATABASE_URL := env_var_or_default("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
-export TEST_DATABASE_URL := env_var_or_default(
-    "TEST_DATABASE_URL",
-    env_var_or_default("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres")
-)
+export TEST_DATABASE_URL := env_var_or_default("TEST_DATABASE_URL", env_var_or_default("DATABASE_URL", "postgresql://postgres:postgres@127.0.0.1:54322/postgres"))
 export SCHEMA := env_var_or_default("SCHEMA", "public")
 export TABLE := env_var_or_default("TABLE", "test")
 export PUB := env_var_or_default("PUB", "supabase_realtime")
 
 # SeaORM entity generation defaults
+
 export SEAORM_OUT_DIR := env_var_or_default("SEAORM_OUT_DIR", "src/db/entity")
 export SEAORM_SCHEMA := env_var_or_default("SEAORM_SCHEMA", "public")
+
 # Default flags: derive serde on models, use `time` crate for DateTime, expanded format
-export SEAORM_FLAGS := env_var_or_default(
-    "SEAORM_FLAGS",
-    "--with-serde both --date-time-crate time --expanded-format",
-)
+
+export SEAORM_FLAGS := env_var_or_default("SEAORM_FLAGS", "--with-serde both --date-time-crate time --expanded-format")
 export SEAORM_IGNORE_TABLES := env_var_or_default("SEAORM_IGNORE_TABLES", "")
 
 # Show available tasks
@@ -60,7 +57,7 @@ run-legit-server *ARGS:
 
 # Run the legit poker server with hot reloading (watches for file changes)
 watch-legit-server *ARGS:
-    RUST_LOG={{ RUST_LOG }} cargo watch -x "run --bin legit_poker_server -- {{ ARGS }}"
+    RUST_LOG={{ RUST_LOG }} RUST_MIN_STACK=33554432 cargo watch -x "run --bin legit_poker_server -- {{ ARGS }}"
 
 # Run a binary, e.g. `just run game_demo` or `just run bayer_groth_demo`
 
@@ -70,7 +67,11 @@ run BIN *ARGS:
 
 # Start the Axum coordinator server (pass additional args after `--`)
 server *ARGS:
-    RUST_LOG={{ RUST_LOG }} cargo run --bin legit_poker_server -- {{ ARGS }}
+    RUST_LOG={{ RUST_LOG }} RUST_MIN_STACK=33554432 cargo run --bin legit_poker_server -- {{ ARGS }}
+
+# Start the Axum coordinator server in release mode (optimized)
+server-release *ARGS:
+    RUST_LOG={{ RUST_LOG }} cargo run --release --bin legit_poker_server -- {{ ARGS }}
 
 # Optimized Bayer-Groth demo (release build)
 demo:
@@ -93,7 +94,7 @@ fmt:
     cargo fmt --all
 
 # One-shot backend dev setup: start Supabase, wait for DB, apply Supabase SQL migrations
-backend-setup:
+reset-backend:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Setting up backend dev environment (supabase up, apply migrations)"
@@ -258,8 +259,6 @@ wait-db TIMEOUT='30':
     done
     echo "Database is up at ${HOST}:${PORT}."
 
-
-
 # Lightweight Postgres via Docker for local dev (no Supabase services)
 pg-up:
     #!/usr/bin/env bash
@@ -298,9 +297,21 @@ pg-logs:
     fi
 
 # --- Extras ---
+
 # Quick helper for the main game demo
 game:
     RUST_LOG={{ RUST_LOG }} cargo run --bin game_demo
+
+# Stream the demo game via SSE (Server-Sent Events)
+stream-demo HOST='localhost:4000' PUBLIC_KEY='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="http://{{ HOST }}/games/demo/stream"
+    if [[ -n "{{ PUBLIC_KEY }}" ]]; then
+        URL="${URL}?public_key={{ PUBLIC_KEY }}"
+    fi
+    echo "Streaming demo game from: ${URL}"
+    curl -N -H "Accept: text/event-stream" "${URL}"
 
 # Debug helper to dump a game's hand archive
 debug-ledger-hand game hand include-events="true" include-snapshots="true":
@@ -346,6 +357,7 @@ seaorm-version:
     sea-orm-cli --version
 
 # Generate entities from the database schema.
+
 # Uses Supabase DB URL if available; falls back to $DATABASE_URL or default local URL.
 gen-entities:
     #!/usr/bin/env bash

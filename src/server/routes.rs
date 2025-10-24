@@ -6,6 +6,7 @@ use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use axum::extract::{Path, Query};
+use axum::middleware;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
@@ -99,6 +100,7 @@ where
                 get(get_hand_messages::<C>),
             )
             .layer(Extension(context))
+            .layer(middleware::from_fn(super::logging::log_requests))
             .layer(cors);
 
         Self {
@@ -128,9 +130,15 @@ struct MessagesQuery {
     to_sequence: Option<u32>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct SnapshotQuery {
+    include_messages: Option<bool>,
+}
+
 async fn get_hand_snapshot<C>(
     Extension(ctx): Extension<Arc<ServerContext<C>>>,
     Path(path): Path<HandPath>,
+    Query(query_params): Query<SnapshotQuery>,
 ) -> Result<Json<LatestSnapshotResponse<C>>, ApiError>
 where
     C: CurveGroup
@@ -145,11 +153,37 @@ where
     C::Affine: Absorb,
 {
     let ledger_state = ctx.coordinator.state();
-    let query = LatestSnapshotQuery::new(ledger_state);
+
+    let cached_state: Vec<(i64, String)> = ledger_state
+        .hands()
+        .iter()
+        .filter_map(|hand_id| {
+            ledger_state
+                .tip_hash(*hand_id)
+                .map(|tip_hash| (*hand_id, format!("{:?}", tip_hash)))
+        })
+        .collect();
+
+    tracing::info!(
+        target = "server::routes",
+        ?cached_state,
+        "in-memory ledger state"
+    );
+
+    let query = LatestSnapshotQuery::new(Arc::clone(&ledger_state));
     let snapshot = query
         .execute(path.game_id, path.hand_id)
         .map_err(ApiError::from)?;
-    Ok(Json(LatestSnapshotResponse::from_domain(snapshot)))
+
+    let messages = if query_params.include_messages.unwrap_or(false) {
+        Some(ledger_state.messages_up_to_sequence(path.hand_id, snapshot.sequence()))
+    } else {
+        None
+    };
+
+    Ok(Json(LatestSnapshotResponse::from_domain_with_messages(
+        snapshot, messages,
+    )))
 }
 
 async fn get_hand_messages<C>(

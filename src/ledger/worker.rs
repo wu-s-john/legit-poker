@@ -262,6 +262,7 @@ where
         }
 
         self.state.upsert_snapshot(hand_id, snapshot.clone(), true);
+        self.state.insert_message_snapshot(hand_id, finalized_event.clone(), snapshot.clone());
 
         if let Err(err) = self.events_tx.send(finalized_event.clone()) {
             warn!(
