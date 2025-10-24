@@ -9,7 +9,7 @@ use crate::signing::{Signable, WithSignature};
 use anyhow::{anyhow, Context};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 
 pub(super) fn message_type<C>(message: &AnyGameMessage<C>) -> &'static str
 where
@@ -82,7 +82,7 @@ where
         .unix_timestamp_nanos()
         .try_into()
         .context("timestamp overflow converting to i64")?;
-    let created_timestamp = DateTime::from_timestamp_nanos(timestamp_nanos);
+    let created_timestamp = DateTime::<Utc>::from_timestamp_nanos(timestamp_nanos);
 
     Ok(FinalizedAnyMessageEnvelope::with_timestamp(
         envelope,
