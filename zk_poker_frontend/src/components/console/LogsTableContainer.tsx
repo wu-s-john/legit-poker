@@ -65,7 +65,7 @@ export function LogsTableContainer({
             className="text-xs font-semibold uppercase tracking-wider"
             style={{ color: "var(--color-text-muted)" }}
           >
-            Phase
+            Type
           </div>
           <div
             className="text-xs font-semibold uppercase tracking-wider"
