@@ -7,6 +7,7 @@ import type { FinalizedAnyMessageEnvelope, AnyGameMessage } from "~/lib/console/
 import {
   formatActor,
   formatMessageSummary,
+  getMessageSummaryParts,
   getPhaseConfig,
   isViewerActor,
   isShuffleMessage,
@@ -15,6 +16,7 @@ import {
 } from "~/lib/console/formatting";
 import { PhaseBadge } from "./PhaseBadge";
 import { CopyButton } from "./CopyButton";
+import { ActorName } from "./ActorName";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 
@@ -208,24 +210,24 @@ export function MessageRow({
 }: MessageRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const summary = formatMessageSummary(message.envelope.message.value);
+  const summaryParts = getMessageSummaryParts(message.envelope.message.value);
   const phaseConfig = getPhaseConfig(
     message.applied_phase,
     message.envelope.message.value,
   );
 
-  // Format timestamp to user's locale
-  const formattedTimestamp = new Date(message.created_timestamp).toLocaleString(
-    undefined,
-    {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: true,
-    }
-  );
+  // Format timestamp with milliseconds
+  const date = new Date(message.created_timestamp);
+  const month = date.toLocaleString(undefined, { month: "short" });
+  const day = date.getDate();
+  const hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const seconds = date.getSeconds().toString().padStart(2, "0");
+  const milliseconds = date.getMilliseconds().toString().padStart(3, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  const displayHours = hours % 12 || 12;
+
+  const timestampWithMs = `${month} ${day}, ${displayHours}:${minutes}:${seconds}.${milliseconds} ${ampm}`;
 
   return (
     <div
@@ -276,7 +278,7 @@ export function MessageRow({
           className="text-xs font-mono"
           style={{ color: "var(--color-text-secondary)" }}
         >
-          {formattedTimestamp}
+          {timestampWithMs}
         </div>
 
         {/* Message Type Badge */}
@@ -284,12 +286,19 @@ export function MessageRow({
           <PhaseBadge config={phaseConfig} />
         </div>
 
-        {/* Summary */}
+        {/* Message */}
         <div
           className="text-sm"
           style={{ color: "var(--color-text-primary)" }}
         >
-          {summary}
+          {summaryParts.prefix && <span>{summaryParts.prefix}</span>}
+          {summaryParts.hasActor && (
+            <ActorName
+              actor={message.envelope.actor}
+              viewerPublicKey={viewerPublicKey}
+            />
+          )}
+          <span>{summaryParts.suffix}</span>
         </div>
       </button>
 

@@ -71,7 +71,7 @@ export function LogsTableContainer({
             className="text-xs font-semibold uppercase tracking-wider"
             style={{ color: "var(--color-text-muted)" }}
           >
-            Summary
+            Message
           </div>
         </div>
       </div>
