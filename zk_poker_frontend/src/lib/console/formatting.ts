@@ -115,7 +115,10 @@ export interface MessageSummaryParts {
   suffix: string;   // Text after actor name or full message if no actor
 }
 
-export function getMessageSummaryParts(message: AnyGameMessage): MessageSummaryParts {
+export function getMessageSummaryParts(
+  message: AnyGameMessage,
+  playerMapping: Map<string, { seat: number; player_key: string }>
+): MessageSummaryParts {
   if (isShuffleMessage(message)) {
     return {
       hasActor: true,
@@ -124,9 +127,15 @@ export function getMessageSummaryParts(message: AnyGameMessage): MessageSummaryP
   }
 
   if (isBlindingMessage(message)) {
+    // Look up target player's seat from playerMapping
+    const targetPlayerInfo = playerMapping.get(message.target_player_public_key);
+    const targetPlayerLabel = targetPlayerInfo
+      ? `Player ${targetPlayerInfo.seat + 1}`
+      : "unknown player";
+
     return {
       hasActor: true,
-      suffix: ` sent blinding share for card #${message.card_in_deck_position}`,
+      suffix: ` sent partial blinding decryption share of card #${message.card_in_deck_position} to ${targetPlayerLabel}`,
     };
   }
 

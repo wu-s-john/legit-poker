@@ -31,6 +31,8 @@ where
     C: CurveGroup + CanonicalSerialize,
 {
     pub snapshot: AnyTableSnapshot<C>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub messages: Option<Vec<FinalizedAnyMessageEnvelope<C>>>,
 }
 
 impl<C> LatestSnapshotResponse<C>
@@ -38,7 +40,17 @@ where
     C: CurveGroup + CanonicalSerialize,
 {
     pub fn from_domain(snapshot: AnyTableSnapshot<C>) -> Self {
-        Self { snapshot }
+        Self {
+            snapshot,
+            messages: None,
+        }
+    }
+
+    pub fn from_domain_with_messages(
+        snapshot: AnyTableSnapshot<C>,
+        messages: Option<Vec<FinalizedAnyMessageEnvelope<C>>>,
+    ) -> Self {
+        Self { snapshot, messages }
     }
 }
 

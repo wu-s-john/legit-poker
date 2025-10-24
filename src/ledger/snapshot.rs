@@ -621,42 +621,45 @@ mod tests {
 ))]
 pub struct DealingSnapshot<C: CurveGroup> {
     #[serde(
-        serialize_with = "crate::crypto_serde::array_map::serialize",
-        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+        serialize_with = "crate::crypto_serde::simple_map::serialize",
+        deserialize_with = "crate::crypto_serde::simple_map::deserialize"
     )]
     pub assignments: BTreeMap<u8, DealtCard<C>>,
     #[serde(
-        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
-        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+        serialize_with = "crate::crypto_serde::player_ciphertext_map::serialize",
+        deserialize_with = "crate::crypto_serde::player_ciphertext_map::deserialize"
     )]
     pub player_ciphertexts: BTreeMap<(SeatId, u8), PlayerAccessibleCiphertext<C>>,
     #[serde(
-        serialize_with = "crate::crypto_serde::tuple_map3::serialize",
-        deserialize_with = "crate::crypto_serde::tuple_map3::deserialize"
+        serialize_with = "crate::crypto_serde::player_blinding_map::serialize",
+        deserialize_with = "crate::crypto_serde::player_blinding_map::deserialize"
     )]
     pub player_blinding_contribs:
         BTreeMap<(CanonicalKey<C>, SeatId, u8), PlayerTargetedBlindingContribution<C>>,
     #[serde(
-        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
-        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+        serialize_with = "crate::crypto_serde::player_unblinding_map::serialize",
+        deserialize_with = "crate::crypto_serde::player_unblinding_map::deserialize"
     )]
     pub player_unblinding_shares:
         BTreeMap<(SeatId, u8), BTreeMap<CanonicalKey<C>, PartialUnblindingShare<C>>>,
-    #[serde(with = "crate::crypto_serde::curve_map")]
+    #[serde(
+        serialize_with = "crate::crypto_serde::player_unblinding_combined_map::serialize",
+        deserialize_with = "crate::crypto_serde::player_unblinding_combined_map::deserialize"
+    )]
     pub player_unblinding_combined: BTreeMap<(SeatId, u8), C>,
     #[serde(
-        serialize_with = "crate::crypto_serde::tuple_map2::serialize",
-        deserialize_with = "crate::crypto_serde::tuple_map2::deserialize"
+        serialize_with = "crate::crypto_serde::community_decryption_map::serialize",
+        deserialize_with = "crate::crypto_serde::community_decryption_map::deserialize"
     )]
     pub community_decryption_shares: BTreeMap<(CanonicalKey<C>, u8), CommunityDecryptionShare<C>>,
     #[serde(
-        serialize_with = "crate::crypto_serde::array_map::serialize",
-        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+        serialize_with = "crate::crypto_serde::simple_map::serialize",
+        deserialize_with = "crate::crypto_serde::simple_map::deserialize"
     )]
     pub community_cards: BTreeMap<u8, CardIndex>,
     #[serde(
-        serialize_with = "crate::crypto_serde::array_map::serialize",
-        deserialize_with = "crate::crypto_serde::array_map::deserialize"
+        serialize_with = "crate::crypto_serde::simple_map::serialize",
+        deserialize_with = "crate::crypto_serde::simple_map::deserialize"
     )]
     pub card_plan: CardPlan,
 }
@@ -766,6 +769,10 @@ pub struct RevealedHand<C: CurveGroup> {
 ))]
 pub struct RevealsSnapshot<C: CurveGroup> {
     pub board: Vec<CardIndex>,
+    #[serde(
+        serialize_with = "crate::crypto_serde::simple_map::serialize",
+        deserialize_with = "crate::crypto_serde::simple_map::deserialize"
+    )]
     pub revealed_holes: BTreeMap<SeatId, RevealedHand<C>>,
 }
 
@@ -790,9 +797,9 @@ where
     pub shufflers: Shared<ShufflerRoster<C>>,
     #[serde(with = "crate::crypto_serde::arc")]
     pub players: Shared<PlayerRoster<C>>,
-    #[serde(with = "crate::crypto_serde::arc")]
+    #[serde(with = "crate::crypto_serde::arc_simple_map")]
     pub seating: Shared<SeatingMap<C>>,
-    #[serde(with = "crate::crypto_serde::arc")]
+    #[serde(with = "crate::crypto_serde::arc_simple_map")]
     pub stacks: Shared<PlayerStacks<C>>,
     pub previous_hash: Option<StateHash>,
     pub state_hash: StateHash,
@@ -862,6 +869,7 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(
     rename_all = "snake_case",
+    tag = "type",
     bound(
         serialize = "C: CanonicalSerialize",
         deserialize = "C: CanonicalDeserialize"

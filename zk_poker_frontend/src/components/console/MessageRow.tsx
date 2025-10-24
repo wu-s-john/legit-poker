@@ -24,6 +24,7 @@ interface MessageRowProps {
   message: FinalizedAnyMessageEnvelope;
   sequenceNumber: number;
   viewerPublicKey: string;
+  playerMapping: Map<string, { seat: number; player_key: string }>;
 }
 
 type VerificationState =
@@ -207,10 +208,11 @@ export function MessageRow({
   message,
   sequenceNumber,
   viewerPublicKey,
+  playerMapping,
 }: MessageRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const summaryParts = getMessageSummaryParts(message.envelope.message.value);
+  const summaryParts = getMessageSummaryParts(message.envelope.message.value, playerMapping);
   const phaseConfig = getPhaseConfig(
     message.applied_phase,
     message.envelope.message.value,

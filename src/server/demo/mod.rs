@@ -241,9 +241,11 @@ where
             .context("failed to serialize aggregated shuffler key")?;
 
         let record = ShufflerRecord {
-            display_name: format!("demo-shuffler-{}", descriptor.turn_index.saturating_add(1)),
+            display_name: format!("coordinator-shuffler-{}", descriptor.shuffler_id),
             public_key: public_key_bytes.clone(),
-            state: MaybeSaved { id: None },
+            state: MaybeSaved {
+                id: Some(descriptor.shuffler_id),
+            },
         };
 
         let registration = lobby

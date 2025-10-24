@@ -31,14 +31,12 @@ export type EventPhase = z.infer<typeof eventPhaseSchema>;
 
 /**
  * Snapshot status mirrors `SnapshotStatus`.
+ * Rust serializes as: "success" or {"failure": "reason"}
  */
-export const snapshotStatusSchema = z.discriminatedUnion('status', [
+export const snapshotStatusSchema = z.union([
+  z.literal('success'),
   z.object({
-    status: z.literal('success'),
-  }),
-  z.object({
-    status: z.literal('failure'),
-    reason: z.string().min(1),
+    failure: z.string().min(1),
   }),
 ]);
 export type SnapshotStatus = z.infer<typeof snapshotStatusSchema>;
