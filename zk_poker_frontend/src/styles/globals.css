@@ -42,6 +42,47 @@
   --color-toast-error: #dc2626;
   --color-toast-warning: #d97706;
   --color-toast-info: #2563eb;
+
+  /* Console Logs Design System */
+  --color-bg-page: #0a0e14;
+  --color-bg-nav: oklch(from #1a1f2e l c h / 0.95);
+  --color-bg-card: oklch(from #1a1f2e l c h / 0.6);
+  --color-bg-card-header: oklch(from #0f1419 l c h / 0.6);
+  --color-bg-table-header: oklch(from #0f1419 l c h / 0.8);
+  --color-bg-row-hover: oklch(from #1a1f2e l c h / 0.6);
+  --color-bg-expanded: oklch(from #0a0e14 l c h / 0.8);
+
+  --color-border-primary: #2d3748;
+  --color-border-subtle: oklch(from #2d3748 l c h / 0.3);
+  --color-border-active: #00d9ff;
+  --color-border-payload: oklch(from #2d3748 l c h / 0.6);
+
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+
+  --color-accent-teal: #00d9ff;
+  --color-accent-cyan: #22d3ee;
+  --color-accent-gold: #fbbf24;
+  --color-accent-green: #22c55e;
+  --color-accent-red: #ef4444;
+
+  --color-phase-shuffle: #3b82f6;
+  --color-phase-blind: #10b981;
+  --color-phase-unblind: #8b5cf6;
+  --color-phase-bet: #f59e0b;
+  --color-phase-showdown: #ef4444;
+
+  --color-json-key: #8b5cf6;
+  --color-json-string: #22d3ee;
+  --color-json-number: #f59e0b;
+  --color-json-bracket: #94a3b8;
+
+  /* Shadows */
+  --shadow-card: 0 20px 50px oklch(from black l c h / 0.6);
+  --shadow-nav: 0 2px 8px oklch(from black l c h / 0.15);
+  --shadow-glow-teal: 0 0 12px oklch(from #00d9ff l c h / 0.3);
+  --shadow-inset-payload: inset 0 2px 8px oklch(from black l c h / 0.3);
 }
 
 /* Base Styles */

@@ -1,6 +1,8 @@
 import type { LobbyTable, Tournament, RoomSnapshot, TableStakes } from '~/types/poker';
+import type { HandMessagesResponse } from './console/schemas';
+import { parseHandMessagesResponse } from './console/schemas';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? 'http://localhost:4000';
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -113,4 +115,18 @@ export const useRoomTranscript = (id: string, fromSeq: number) => ({
   queryKey: ['room', id, 'transcript', fromSeq],
   queryFn: () => rooms.transcript(id, fromSeq),
   enabled: !!id && fromSeq >= 0,
+});
+
+// Console logs endpoints
+export const console = {
+  getHandMessages: async (gameId: string, handId: string): Promise<HandMessagesResponse> => {
+    const data = await fetchApi<unknown>(`/games/${gameId}/hands/${handId}/messages`);
+    return parseHandMessagesResponse(data);
+  },
+};
+
+export const useHandMessages = (gameId: string, handId: string) => ({
+  queryKey: ['console', 'game', gameId, 'hand', handId, 'messages'],
+  queryFn: () => console.getHandMessages(gameId, handId),
+  enabled: !!gameId && !!handId,
 });

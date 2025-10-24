@@ -9,6 +9,7 @@ use axum::extract::{Path, Query};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
+use tower_http::cors::{Any, CorsLayer};
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::game::coordinator::GameCoordinator;
@@ -76,22 +77,29 @@ where
     pub fn new(coordinator: Arc<GameCoordinator<C>>, lobby: Arc<dyn LobbyService<C>>) -> Self {
         let context = Arc::new(ServerContext { coordinator, lobby });
 
+        // Configure CORS to allow requests from the frontend
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any);
+
         let router = Router::new()
-            .route("/game/demo", post(create_demo_game::<C>))
+            .route("/games/demo", post(create_demo_game::<C>))
             .route(
-                "/game/demo/:game_id/hand/:hand_id",
+                "/games/demo/:game_id/hands/:hand_id",
                 post(start_demo_hand::<C>),
             )
-            .route("/game/demo/stream", get(stream_demo::<C>))
+            .route("/games/demo/stream", get(stream_demo::<C>))
             .route(
-                "/game/:game_id/hand/:hand_id/snapshot",
+                "/games/:game_id/hands/:hand_id/snapshot",
                 get(get_hand_snapshot::<C>),
             )
             .route(
-                "/game/:game_id/hand/:hand_id/messages",
+                "/games/:game_id/hands/:hand_id/messages",
                 get(get_hand_messages::<C>),
             )
-            .layer(Extension(context));
+            .layer(Extension(context))
+            .layer(cors);
 
         Self {
             router,

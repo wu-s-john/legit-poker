@@ -360,12 +360,12 @@ mod tests {
                 transcript,
             },
         };
-        let finalized = FinalizedAnyMessageEnvelope {
+        let finalized = FinalizedAnyMessageEnvelope::new(
             envelope,
-            snapshot_status: SnapshotStatus::Success,
-            applied_phase: EventPhase::Shuffling,
-            snapshot_sequence_id: 1,
-        };
+            SnapshotStatus::Success,
+            EventPhase::Shuffling,
+            1,
+        );
 
         let payload = LatestSnapshotOutput {
             snapshot,

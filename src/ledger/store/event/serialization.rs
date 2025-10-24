@@ -9,6 +9,7 @@ use crate::signing::{Signable, WithSignature};
 use anyhow::{anyhow, Context};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use chrono::DateTime;
 
 pub(super) fn message_type<C>(message: &AnyGameMessage<C>) -> &'static str
 where
@@ -75,12 +76,21 @@ where
         )
     };
 
-    Ok(FinalizedAnyMessageEnvelope {
+    // Convert SeaORM TimeDateTimeWithTimeZone (time::OffsetDateTime) to chrono::DateTime<Utc>
+    let timestamp_nanos = row
+        .inserted_at
+        .unix_timestamp_nanos()
+        .try_into()
+        .context("timestamp overflow converting to i64")?;
+    let created_timestamp = DateTime::from_timestamp_nanos(timestamp_nanos);
+
+    Ok(FinalizedAnyMessageEnvelope::with_timestamp(
         envelope,
         snapshot_status,
-        applied_phase: from_db_event_phase(row.resulting_phase),
+        from_db_event_phase(row.resulting_phase),
         snapshot_sequence_id,
-    })
+        created_timestamp,
+    ))
 }
 
 pub(super) fn encode_actor<C>(actor: &AnyActor<C>) -> anyhow::Result<ActorColumns>
