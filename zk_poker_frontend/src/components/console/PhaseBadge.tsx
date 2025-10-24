@@ -9,14 +9,13 @@ interface PhaseBadgeProps {
 export function PhaseBadge({ config }: PhaseBadgeProps) {
   return (
     <div
-      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border"
+      className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border whitespace-nowrap"
       style={{
         color: config.color,
         backgroundColor: config.bgColor,
         borderColor: config.borderColor,
       }}
     >
-      <span>{config.icon}</span>
       <span>{config.label}</span>
     </div>
   );

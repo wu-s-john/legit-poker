@@ -66,58 +66,50 @@ export const AnyActorSchema = z.union([
 // ============================================================================
 
 export const GameShuffleMessageSchema = z.object({
-  Shuffle: z.object({
-    turn_index: z.number(),
-    deck_in: z.array(z.unknown()),
-    deck_out: z.array(z.unknown()),
-    proof: z.unknown(),
-  }),
+  type: z.literal("shuffle"),
+  turn_index: z.number(),
+  deck_in: z.array(z.unknown()),
+  deck_out: z.array(z.unknown()),
+  proof: z.unknown(),
 });
 
 export const GameBlindingDecryptionMessageSchema = z.object({
-  Blinding: z.object({
-    card_in_deck_position: z.number(),
-    share: z.unknown(),
-    target_player_public_key: z.string(),
-  }),
+  type: z.literal("blinding"),
+  card_in_deck_position: z.number(),
+  share: z.unknown(),
+  target_player_public_key: z.string(),
 });
 
 export const GamePartialUnblindingShareMessageSchema = z.object({
-  PartialUnblinding: z.object({
-    card_in_deck_position: z.number(),
-    share: z.unknown(),
-    target_player_public_key: z.string(),
-  }),
+  type: z.literal("partial_unblinding"),
+  card_in_deck_position: z.number(),
+  share: z.unknown(),
+  target_player_public_key: z.string(),
 });
 
 export const GamePlayerPreflopMessageSchema = z.object({
-  PlayerPreflop: z.object({
-    action: z.unknown(),
-  }),
+  type: z.literal("player_preflop"),
+  action: z.unknown(),
 });
 
 export const GamePlayerFlopMessageSchema = z.object({
-  PlayerFlop: z.object({
-    action: z.unknown(),
-  }),
+  type: z.literal("player_flop"),
+  action: z.unknown(),
 });
 
 export const GamePlayerTurnMessageSchema = z.object({
-  PlayerTurn: z.object({
-    action: z.unknown(),
-  }),
+  type: z.literal("player_turn"),
+  action: z.unknown(),
 });
 
 export const GamePlayerRiverMessageSchema = z.object({
-  PlayerRiver: z.object({
-    action: z.unknown(),
-  }),
+  type: z.literal("player_river"),
+  action: z.unknown(),
 });
 
 export const GameShowdownMessageSchema = z.object({
-  Showdown: z.object({
-    hole_cards: z.array(z.unknown()),
-  }),
+  type: z.literal("showdown"),
+  hole_cards: z.array(z.unknown()),
 });
 
 export const AnyGameMessageSchema = z.union([
@@ -226,7 +218,7 @@ export function isShufflerActor(
 export function isShuffleMessage(
   message: AnyGameMessage,
 ): message is z.infer<typeof GameShuffleMessageSchema> {
-  return "Shuffle" in message;
+  return message.type === "shuffle";
 }
 
 /**
@@ -235,7 +227,7 @@ export function isShuffleMessage(
 export function isBlindingMessage(
   message: AnyGameMessage,
 ): message is z.infer<typeof GameBlindingDecryptionMessageSchema> {
-  return "Blinding" in message;
+  return message.type === "blinding";
 }
 
 /**
@@ -244,5 +236,5 @@ export function isBlindingMessage(
 export function isPartialUnblindingMessage(
   message: AnyGameMessage,
 ): message is z.infer<typeof GamePartialUnblindingShareMessageSchema> {
-  return "PartialUnblinding" in message;
+  return message.type === "partial_unblinding";
 }

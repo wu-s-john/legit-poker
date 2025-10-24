@@ -67,47 +67,96 @@ export function formatTimestamp(isoString: string): string {
 }
 
 /**
- * Format message summary for display in table
+ * Format message summary for display in table (without actor context)
  */
 export function formatMessageSummary(message: AnyGameMessage): string {
   if (isShuffleMessage(message)) {
-    const count = message.Shuffle.deck_out.length;
+    const count = message.deck_out.length;
     return `Shuffled ${count} cards`;
   }
 
   if (isBlindingMessage(message)) {
-    return `Blinding card #${message.Blinding.card_in_deck_position}`;
+    return `Blinding card #${message.card_in_deck_position}`;
   }
 
   if (isPartialUnblindingMessage(message)) {
-    return `Share for card #${message.PartialUnblinding.card_in_deck_position}`;
+    return `Share for card #${message.card_in_deck_position}`;
   }
 
-  if ("PlayerPreflop" in message) {
-    const action = message.PlayerPreflop.action;
-    return formatPlayerAction(action);
+  if (message.type === "player_preflop") {
+    return formatPlayerAction(message.action);
   }
 
-  if ("PlayerFlop" in message) {
-    const action = message.PlayerFlop.action;
-    return formatPlayerAction(action);
+  if (message.type === "player_flop") {
+    return formatPlayerAction(message.action);
   }
 
-  if ("PlayerTurn" in message) {
-    const action = message.PlayerTurn.action;
-    return formatPlayerAction(action);
+  if (message.type === "player_turn") {
+    return formatPlayerAction(message.action);
   }
 
-  if ("PlayerRiver" in message) {
-    const action = message.PlayerRiver.action;
-    return formatPlayerAction(action);
+  if (message.type === "player_river") {
+    return formatPlayerAction(message.action);
   }
 
-  if ("Showdown" in message) {
+  if (message.type === "showdown") {
     return "Revealed hand";
   }
 
   return "Unknown message";
+}
+
+/**
+ * Get message summary parts for rich formatting with actor names
+ */
+export interface MessageSummaryParts {
+  prefix?: string;  // Text before actor name (e.g., "")
+  hasActor: boolean;
+  suffix: string;   // Text after actor name or full message if no actor
+}
+
+export function getMessageSummaryParts(message: AnyGameMessage): MessageSummaryParts {
+  if (isShuffleMessage(message)) {
+    return {
+      hasActor: true,
+      suffix: ` created a shuffle proof`,
+    };
+  }
+
+  if (isBlindingMessage(message)) {
+    return {
+      hasActor: true,
+      suffix: ` sent blinding share for card #${message.card_in_deck_position}`,
+    };
+  }
+
+  if (isPartialUnblindingMessage(message)) {
+    return {
+      hasActor: true,
+      suffix: ` sent unblinding share for card #${message.card_in_deck_position}`,
+    };
+  }
+
+  if (message.type === "player_preflop" || message.type === "player_flop" ||
+      message.type === "player_turn" || message.type === "player_river") {
+    const action = formatPlayerAction(message.action).toLowerCase();
+    return {
+      hasActor: true,
+      suffix: ` ${action}`,
+    };
+  }
+
+  if (message.type === "showdown") {
+    return {
+      hasActor: true,
+      suffix: " revealed hand",
+    };
+  }
+
+  return {
+    hasActor: false,
+    suffix: "Unknown message",
+  };
 }
 
 /**
@@ -159,90 +208,63 @@ export function getPhaseConfig(
   phase: EventPhase,
   messageType: AnyGameMessage,
 ): PhaseConfig {
-  // Differentiate Blinding vs Unblinding by message type
-  if (phase === "Dealing") {
-    if (isBlindingMessage(messageType)) {
+  // Use discriminator to determine message type directly
+  switch (messageType.type) {
+    case "shuffle":
       return {
-        label: "Blinding Decryption Share",
+        label: "Shuffle",
+        color: "var(--color-phase-shuffle)",
+        icon: "",
+        bgColor: "oklch(from var(--color-phase-shuffle) l c h / 0.1)",
+        borderColor: "oklch(from var(--color-phase-shuffle) l c h / 0.2)",
+      };
+
+    case "blinding":
+      return {
+        label: "Blinding Share",
         color: "var(--color-phase-blind)",
-        icon: "🟢",
+        icon: "",
         bgColor: "oklch(from var(--color-phase-blind) l c h / 0.1)",
         borderColor: "oklch(from var(--color-phase-blind) l c h / 0.2)",
       };
-    }
-  }
 
-  if (phase === "Reveals") {
-    if (isPartialUnblindingMessage(messageType)) {
+    case "partial_unblinding":
       return {
-        label: "Unblinding Decryption Share",
+        label: "Unblinding Share",
         color: "var(--color-phase-unblind)",
-        icon: "🟣",
+        icon: "",
         bgColor: "oklch(from var(--color-phase-unblind) l c h / 0.1)",
         borderColor: "oklch(from var(--color-phase-unblind) l c h / 0.2)",
       };
-    }
+
+    case "player_preflop":
+    case "player_flop":
+    case "player_turn":
+    case "player_river":
+      return {
+        label: "Bet",
+        color: "var(--color-phase-bet)",
+        icon: "",
+        bgColor: "oklch(from var(--color-phase-bet) l c h / 0.1)",
+        borderColor: "oklch(from var(--color-phase-bet) l c h / 0.2)",
+      };
+
+    case "showdown":
+      return {
+        label: "Showdown",
+        color: "var(--color-phase-showdown)",
+        icon: "",
+        bgColor: "oklch(from var(--color-phase-showdown) l c h / 0.1)",
+        borderColor: "oklch(from var(--color-phase-showdown) l c h / 0.2)",
+      };
+
+    default:
+      return {
+        label: "Unknown",
+        color: "var(--color-text-muted)",
+        icon: "",
+        bgColor: "oklch(from var(--color-text-muted) l c h / 0.1)",
+        borderColor: "oklch(from var(--color-text-muted) l c h / 0.2)",
+      };
   }
-
-  const configs: Record<EventPhase, PhaseConfig> = {
-    Shuffling: {
-      label: "Shuffle",
-      color: "var(--color-phase-shuffle)",
-      icon: "🔵",
-      bgColor: "oklch(from var(--color-phase-shuffle) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-phase-shuffle) l c h / 0.2)",
-    },
-    Betting: {
-      label: "Bet",
-      color: "var(--color-phase-bet)",
-      icon: "🟡",
-      bgColor: "oklch(from var(--color-phase-bet) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-phase-bet) l c h / 0.2)",
-    },
-    Showdown: {
-      label: "Showdown",
-      color: "var(--color-phase-showdown)",
-      icon: "🔴",
-      bgColor: "oklch(from var(--color-phase-showdown) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-phase-showdown) l c h / 0.2)",
-    },
-    // Fallbacks
-    Pending: {
-      label: "Pending",
-      color: "var(--color-text-muted)",
-      icon: "⏳",
-      bgColor: "oklch(from var(--color-text-muted) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-text-muted) l c h / 0.2)",
-    },
-    Dealing: {
-      label: "Dealing",
-      color: "var(--color-phase-blind)",
-      icon: "🟢",
-      bgColor: "oklch(from var(--color-phase-blind) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-phase-blind) l c h / 0.2)",
-    },
-    Reveals: {
-      label: "Reveals",
-      color: "var(--color-phase-unblind)",
-      icon: "🟣",
-      bgColor: "oklch(from var(--color-phase-unblind) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-phase-unblind) l c h / 0.2)",
-    },
-    Complete: {
-      label: "Complete",
-      color: "var(--color-accent-green)",
-      icon: "✅",
-      bgColor: "oklch(from var(--color-accent-green) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-accent-green) l c h / 0.2)",
-    },
-    Cancelled: {
-      label: "Cancelled",
-      color: "var(--color-accent-red)",
-      icon: "❌",
-      bgColor: "oklch(from var(--color-accent-red) l c h / 0.1)",
-      borderColor: "oklch(from var(--color-accent-red) l c h / 0.2)",
-    },
-  };
-
-  return configs[phase];
 }
