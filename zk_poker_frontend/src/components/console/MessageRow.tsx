@@ -376,18 +376,20 @@ export function MessageRow({
             <div
               className="rounded-lg overflow-auto"
               style={{
-                backgroundColor: "oklch(from black l c h / 0.3)",
+                backgroundColor: "#0a0e14",
                 border: "1px solid var(--color-border-payload)",
                 maxHeight: "400px",
+                boxShadow: "inset 0 2px 8px rgba(0, 0, 0, 0.4)",
               }}
               onClick={(e) => e.stopPropagation()}
             >
               <JsonView
                 src={message.envelope.message.value}
-                theme="vscode"
+                dark={true}
                 collapsed={2}
                 enableClipboard={true}
                 displayDataTypes={false}
+                displayArrayIndex={false}
                 collapseStringsAfterLength={60}
                 matchesURL={true}
                 style={{
@@ -395,7 +397,16 @@ export function MessageRow({
                   fontSize: "12px",
                   fontFamily: "ui-monospace, monospace",
                   backgroundColor: "transparent",
-                }}
+                  lineHeight: "1.6",
+                  color: "#FFD700",  // Gold for brackets/punctuation
+                  "--json-property": "#9CDCFE",  // Cyan for keys
+                  "--json-string": "#CE9178",    // Peach for strings
+                  "--json-number": "#B5CEA8",    // Green for numbers
+                  "--json-boolean": "#569CD6",   // Blue for booleans
+                  "--json-null": "#808080",      // Gray for null
+                  "--json-index": "#FFD700",     // Gold for array indices
+                  "--json-ellipsis": "#94a3b8",  // Gray for collapsed ellipsis {...}
+                } as React.CSSProperties}
               />
             </div>
 

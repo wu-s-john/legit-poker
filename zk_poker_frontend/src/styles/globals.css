@@ -78,11 +78,29 @@
   --color-json-number: #f59e0b;
   --color-json-bracket: #94a3b8;
 
+  /* Poker Noir JSON Theme (VS Code Dark+ inspired) */
+  --color-json-bg: #0a0e14;              /* Deep background (reuses --color-bg-page) */
+  --color-json-key-noir: #9CDCFE;        /* 🩵 Light cyan for property keys */
+  --color-json-string-noir: #CE9178;     /* 🟠 Warm tan/peach for string values */
+  --color-json-number-noir: #B5CEA8;     /* 🟢 Sage green for numbers */
+  --color-json-boolean: #569CD6;         /* 🔵 VS Code signature blue for booleans */
+  --color-json-null: #808080;            /* ⚫ Medium gray for null values */
+  --color-json-bracket-gold: #FFD700;    /* 🟡 Gold for brackets/braces */
+  --color-json-punctuation: #94a3b8;     /* ⚪ Light gray for commas/colons */
+
   /* Shadows */
   --shadow-card: 0 20px 50px oklch(from black l c h / 0.6);
   --shadow-nav: 0 2px 8px oklch(from black l c h / 0.15);
   --shadow-glow-teal: 0 0 12px oklch(from #00d9ff l c h / 0.3);
   --shadow-inset-payload: inset 0 2px 8px oklch(from black l c h / 0.3);
+
+  /* react18-json-view overrides (Poker Noir theme) */
+  --json-property: #9CDCFE;    /* 🩵 Cyan for property keys */
+  --json-index: #FFD700;       /* 🟡 Gold for array indices */
+  --json-number: #B5CEA8;      /* 🟢 Sage green for numbers */
+  --json-string: #CE9178;      /* 🟠 Warm peach for strings */
+  --json-boolean: #569CD6;     /* 🔵 VS Code blue for booleans */
+  --json-null: #808080;        /* ⚫ Gray for null */
 }
 
 /* Base Styles */
@@ -148,4 +166,10 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* JSON View Collapsed Content Styling */
+.json-view .jv-button {
+  color: #94a3b8 !important; /* Gray for collapsed {...} and ... */
+  opacity: 0.7;
 }
