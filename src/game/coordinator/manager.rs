@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::future::Future;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -33,8 +32,9 @@ use crate::{
         worker::{LedgerWorker, StagingLedgerUpdate, WorkerError},
         CommenceGameOutcome, LedgerOperator, LedgerState,
     },
-    shuffler::{HandSubscription, Shuffler, ShufflerRunConfig, ShufflerScheme},
+    shuffler::{HandSubscription, ShufflerRunConfig, ShufflerScheme, ShufflerService},
     shuffling::make_global_public_keys,
+    tokio_tools::spawn_named_task,
 };
 
 #[derive(Clone)]
@@ -123,25 +123,6 @@ where
 
 const LOG_TARGET: &str = "legit_poker::game::coordinator";
 
-fn spawn_named_task<F, S>(name: S, future: F) -> JoinHandle<F::Output>
-where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
-    S: Into<String>,
-{
-    let name_owned = name.into();
-    #[cfg(tokio_unstable)]
-    {
-        tokio::task::Builder::new().name(&name_owned).spawn(future)
-    }
-    #[cfg(not(tokio_unstable))]
-    {
-        use tracing::Instrument;
-        let span = tracing::info_span!("task", task_name = %name_owned);
-        tokio::spawn(future.instrument(span))
-    }
-}
-
 pub struct GameCoordinator<C>
 where
     C: CurveGroup + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
@@ -160,7 +141,8 @@ where
     realtime_stop: CancellationToken,
     realtime_handle: Option<JoinHandle<anyhow::Result<()>>>,
     worker_handle: Option<JoinHandle<Result<(), WorkerError>>>,
-    shufflers: Arc<HashMap<ShufflerId, Arc<Shuffler<C, ShufflerScheme<C>>>>>,
+    shufflers: Arc<HashMap<ShufflerId, Arc<ShufflerService<C, ShufflerScheme<C>>>>>,
+    shuffler_order: Arc<HashMap<ShufflerId, usize>>,
     active_hands: Arc<DashMap<(GameId, HandId), Vec<HandSubscription<C>>>>,
 }
 
@@ -219,6 +201,7 @@ where
         ));
 
         let mut shufflers = HashMap::with_capacity(config.shufflers.len());
+        let mut shuffler_order = HashMap::with_capacity(config.shufflers.len());
         for (index, (shuffler, public_key)) in config
             .shufflers
             .iter()
@@ -229,25 +212,25 @@ where
             rng.fill_bytes(&mut seed);
             let run_cfg = ShufflerRunConfig::new(seed);
             let signing_secret = SchnorrSecretKey::<C>(shuffler.secret.clone());
+            let events_rx = operator.event_updates();
             let snapshots_rx = operator.snapshot_updates();
-            let staged_updates_rx = operator.staging_updates();
-            let instance = Arc::new(Shuffler::<C, ShufflerScheme<C>>::new(
-                index,
+            let instance = Arc::new(ShufflerService::<C, ShufflerScheme<C>>::new(
                 shuffler.id,
                 public_key,
                 aggregated_public_key.clone(),
-                shuffler.secret.clone(),
+                signing_secret.clone(),
                 schnorr_params.clone(),
-                signing_secret,
                 submit_tx.clone(),
                 run_cfg,
-                staged_updates_rx,
+                events_rx,
                 snapshots_rx,
             ));
             shufflers.insert(shuffler.id, instance);
+            shuffler_order.insert(shuffler.id, index);
         }
 
         let shufflers = Arc::new(shufflers);
+        let shuffler_order = Arc::new(shuffler_order);
         let active_hands = Arc::new(DashMap::new());
 
         let worker = LedgerWorker::new(
@@ -274,6 +257,7 @@ where
             realtime_handle,
             worker_handle,
             shufflers,
+            shuffler_order,
             active_hands,
         })
     }
@@ -300,16 +284,18 @@ where
     {
         let mut descriptors = self
             .shufflers
-            .values()
-            .map(|shuffler| {
-                let public_key = shuffler.public_key();
-                let aggregated_public_key = shuffler.aggregated_public_key();
-                ShufflerDescriptor {
-                    shuffler_id: shuffler.shuffler_id(),
-                    turn_index: shuffler.index(),
-                    public_key: crate::ledger::CanonicalKey::new(public_key),
-                    aggregated_public_key,
-                }
+            .iter()
+            .filter_map(|(shuffler_id, shuffler)| {
+                self.shuffler_order.get(shuffler_id).map(|turn_index| {
+                    let public_key = shuffler.public_key();
+                    let aggregated_public_key = shuffler.aggregated_public_key();
+                    ShufflerDescriptor {
+                        shuffler_id: *shuffler_id,
+                        turn_index: *turn_index,
+                        public_key: crate::ledger::CanonicalKey::new(public_key),
+                        aggregated_public_key,
+                    }
+                })
             })
             .collect::<Vec<_>>();
         descriptors.sort_by_key(|descriptor| descriptor.turn_index);
