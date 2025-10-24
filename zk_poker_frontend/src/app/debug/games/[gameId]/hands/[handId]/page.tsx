@@ -5,7 +5,6 @@
 import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useHandSnapshot } from "~/lib/api";
-import { TopNavigation } from "~/components/console/TopNavigation";
 import { LogsTableContainer } from "~/components/console/LogsTableContainer";
 
 interface PageProps {
@@ -103,14 +102,6 @@ export default function HandConsoleLogsPage({ params }: PageProps) {
       className="min-h-screen"
       style={{ backgroundColor: "var(--color-bg-page)" }}
     >
-      {/* Top Navigation */}
-      <TopNavigation
-        gameId={gameId}
-        handId={handId}
-        handStatus={handStatus}
-        totalMessages={totalMessages}
-      />
-
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8">
         <LogsTableContainer

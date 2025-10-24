@@ -14,7 +14,6 @@ import {
   UserPlus,
 } from "lucide-react";
 import { AnnouncementRibbon } from "~/components/landing/AnnouncementRibbon";
-import { LandingNav } from "~/components/landing/LandingNav";
 import { TechnicalAccordion } from "~/components/landing/TechnicalAccordion";
 import { useSmoothScroll } from "~/hooks/useSmoothScroll";
 import { useScrollAnimation } from "~/hooks/useScrollAnimation";
@@ -132,7 +131,6 @@ export default function LandingPage() {
 
   return (
     <div className="bg-primary-950 min-h-screen">
-      <LandingNav />
       <AnnouncementRibbon />
 
       {/* Hero Section */}
