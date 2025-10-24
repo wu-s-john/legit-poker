@@ -1,9 +1,57 @@
 use anyhow::Result;
 use ark_crypto_primitives::signature::SignatureScheme;
+use ark_ec::CurveGroup;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const DOMAIN_TAG: &[u8] = b"legit-poker/action/v1";
+
+/// Trait for signature types that can be converted to/from bytes for hex serialization.
+pub trait SignatureBytes: Sized {
+    fn to_bytes(&self) -> Vec<u8>;
+    fn from_bytes(bytes: &[u8]) -> Result<Self>;
+}
+
+// Implement for Vec<u8> (identity conversion)
+impl SignatureBytes for Vec<u8> {
+    fn to_bytes(&self) -> Vec<u8> {
+        self.clone()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(bytes.to_vec())
+    }
+}
+
+// Implement for Schnorr signatures
+impl<C> SignatureBytes for ark_crypto_primitives::signature::schnorr::Signature<C>
+where
+    C: CurveGroup,
+    C::ScalarField: CanonicalSerialize + CanonicalDeserialize,
+{
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.prover_response
+            .serialize_compressed(&mut bytes)
+            .expect("scalar field serialization should not fail");
+        self.verifier_challenge
+            .serialize_compressed(&mut bytes)
+            .expect("scalar field serialization should not fail");
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut cursor = &bytes[..];
+        let prover_response = C::ScalarField::deserialize_compressed(&mut cursor)?;
+        let verifier_challenge = C::ScalarField::deserialize_compressed(&mut cursor)?;
+
+        Ok(Self {
+            prover_response,
+            verifier_challenge,
+        })
+    }
+}
 
 /// Builder for canonical action transcripts.
 pub struct TranscriptBuilder {
@@ -63,6 +111,7 @@ pub trait Signable {
 #[derive(Clone, Debug)]
 pub struct WithSignature<Sig, T>
 where
+    Sig: SignatureBytes,
     T: Signable,
 {
     pub value: T,
@@ -74,7 +123,7 @@ where
 
 impl<Sig, T> Serialize for WithSignature<Sig, T>
 where
-    Sig: Serialize,
+    Sig: SignatureBytes,
     T: Signable + Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -84,14 +133,16 @@ where
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("WithSignature", 2)?;
         state.serialize_field("value", &self.value)?;
-        state.serialize_field("signature", &self.signature)?;
+        // Serialize signature as hex string with 0x prefix
+        let hex_sig = format!("0x{}", hex::encode(self.signature.to_bytes()));
+        state.serialize_field("signature", &hex_sig)?;
         state.end()
     }
 }
 
 impl<'de, Sig, T> Deserialize<'de> for WithSignature<Sig, T>
 where
-    Sig: Deserialize<'de>,
+    Sig: SignatureBytes,
     T: Signable + Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -105,7 +156,7 @@ where
 
         impl<'de, Sig, T> Visitor<'de> for WithSignatureVisitor<Sig, T>
         where
-            Sig: Deserialize<'de>,
+            Sig: SignatureBytes,
             T: Signable + Deserialize<'de>,
         {
             type Value = WithSignature<Sig, T>;
@@ -119,7 +170,7 @@ where
                 A: MapAccess<'de>,
             {
                 let mut value: Option<T> = None;
-                let mut signature: Option<Sig> = None;
+                let mut signature_hex: Option<String> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
@@ -130,10 +181,10 @@ where
                             value = Some(map.next_value()?);
                         }
                         "signature" => {
-                            if signature.is_some() {
+                            if signature_hex.is_some() {
                                 return Err(serde::de::Error::duplicate_field("signature"));
                             }
-                            signature = Some(map.next_value()?);
+                            signature_hex = Some(map.next_value()?);
                         }
                         _ => {
                             let _: serde::de::IgnoredAny = map.next_value()?;
@@ -142,7 +193,16 @@ where
                 }
 
                 let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
-                let signature = signature.ok_or_else(|| serde::de::Error::missing_field("signature"))?;
+                let sig_hex = signature_hex.ok_or_else(|| serde::de::Error::missing_field("signature"))?;
+
+                // Strip 0x prefix if present
+                let hex_str = sig_hex.strip_prefix("0x").unwrap_or(&sig_hex);
+
+                // Decode hex to bytes
+                let sig_bytes = hex::decode(hex_str).map_err(serde::de::Error::custom)?;
+
+                // Convert bytes to signature type
+                let signature = Sig::from_bytes(&sig_bytes).map_err(serde::de::Error::custom)?;
 
                 // Recompute transcript from the deserialized value
                 let transcript = value.to_signing_bytes();
@@ -165,6 +225,7 @@ where
 
 impl<Sig, T> WithSignature<Sig, T>
 where
+    Sig: SignatureBytes,
     T: Signable,
 {
     /// Build a signed envelope using a provided SignatureScheme.

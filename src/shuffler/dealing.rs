@@ -11,7 +11,7 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::types::SeatId;
 use crate::ledger::actor::ShufflerActor;
 use crate::ledger::hash::default_poseidon_hasher;
-use crate::ledger::messages::{AnyMessageEnvelope, MetadataEnvelope, SignatureEncoder};
+use crate::ledger::messages::{AnyMessageEnvelope, MetadataEnvelope};
 use crate::ledger::snapshot::{
     CardDestination, CardPlan, DealingSnapshot, DealtCard, PlayerRoster, SeatingMap, Shared,
     ShufflerRoster, SnapshotSeq, TableAtDealing, TableAtPreflop,
@@ -519,7 +519,7 @@ where
         + CanonicalSerialize
         + UniformRand,
     S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
-    S::Signature: SignatureEncoder,
+    S::Signature: crate::signing::SignatureBytes,
     S::SecretKey: ShufflerSigningSecret<C>,
     A: ShufflerApi<C, S> + Send + Sync,
 {
@@ -628,7 +628,7 @@ where
     C::BaseField: ark_ff::PrimeField,
     C::Affine: Absorb,
     Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
-    Sig::Signature: SignatureEncoder,
+    Sig::Signature: crate::signing::SignatureBytes,
     Sig::SecretKey: ShufflerSigningSecret<C>,
     Shuffler: ShufflerApi<C, Sig> + Send + Sync,
 {
@@ -658,7 +658,7 @@ where
     C::BaseField: ark_ff::PrimeField,
     C::Affine: Absorb,
     Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
-    Sig::Signature: SignatureEncoder,
+    Sig::Signature: crate::signing::SignatureBytes,
     Sig::SecretKey: ShufflerSigningSecret<C>,
     Shuffler: ShufflerApi<C, Sig> + Send + Sync,
 {
@@ -718,7 +718,7 @@ where
     C::BaseField: ark_ff::PrimeField,
     C::Affine: Absorb,
     Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
-    Sig::Signature: SignatureEncoder,
+    Sig::Signature: crate::signing::SignatureBytes,
     Sig::SecretKey: ShufflerSigningSecret<C>,
     Shuffler: ShufflerApi<C, Sig> + Send + Sync,
 {
@@ -775,7 +775,7 @@ where
     C::ScalarField: CanonicalSerialize + ark_ff::PrimeField + UniformRand,
     C::BaseField: ark_ff::PrimeField,
     Sig: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
-    Sig::Signature: SignatureEncoder,
+    Sig::Signature: crate::signing::SignatureBytes,
 {
     if request.game_id != runtime.game_id || request.hand_id != runtime.hand_id {
         warn!(

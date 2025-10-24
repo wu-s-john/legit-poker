@@ -18,7 +18,7 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::ledger::actor::{AnyActor, ShufflerActor};
 use crate::ledger::messages::{
     AnyGameMessage, AnyMessageEnvelope, EnvelopedMessage, FinalizedAnyMessageEnvelope,
-    GameShuffleMessage, MetadataEnvelope, SignatureEncoder,
+    GameShuffleMessage, MetadataEnvelope,
 };
 use crate::ledger::snapshot::{AnyTableSnapshot, Shared, TableAtShuffling};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
@@ -28,7 +28,7 @@ use super::api::{ShufflerApi, ShufflerEngine, ShufflerSigningSecret};
 use super::dealing::{deal_loop, DealShufflerRequest};
 use super::hand_runtime::{HandRuntime, HandSubscription, ShufflingHandState};
 use super::{spawn_named_task, DEAL_CHANNEL_CAPACITY, LOG_TARGET};
-use crate::signing::WithSignature;
+use crate::signing::{SignatureBytes, WithSignature};
 
 #[derive(Clone, Debug)]
 pub struct ShufflerRunConfig {
@@ -76,7 +76,7 @@ where
     C::ScalarField: PrimeField + Absorb,
     S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
     S::SecretKey: ShufflerSigningSecret<C> + Send + Sync + 'static,
-    S::Signature: SignatureEncoder + Send + Sync + 'static,
+    S::Signature: SignatureBytes + Send + Sync + 'static,
     S::Parameters: Send + Sync + 'static,
     S::SecretKey: Send + Sync + 'static,
 {
@@ -151,7 +151,7 @@ where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: CanonicalSerialize + PrimeField + UniformRand + Send + Sync,
         C::BaseField: PrimeField + Send + Sync,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
+        S::Signature: SignatureBytes + Send + Sync + 'static,
         S::Parameters: Send + Sync + 'static,
         S::SecretKey: Send + Sync + 'static,
     {
@@ -288,7 +288,7 @@ where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
         C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
     {
         let key = (game_id, hand_id);
         let runtime_arc = {
@@ -347,7 +347,7 @@ where
         C: CurveAbsorb<C::BaseField>,
         C::Affine: Absorb,
         S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
+        S::Signature: SignatureBytes + Send + Sync + 'static,
     {
         let actor_clone = actor.clone();
         let game_id = runtime.game_id;
@@ -397,7 +397,7 @@ where
         C::Config: CurveConfig<ScalarField = C::ScalarField>,
         C::ScalarField: CanonicalSerialize + PrimeField + UniformRand,
         C::BaseField: PrimeField,
-        S::Signature: SignatureEncoder,
+        S::Signature: SignatureBytes,
     {
         loop {
             tokio::select! {
@@ -563,7 +563,10 @@ where
         runtime: &Arc<HandRuntime<C>>,
         public_key: &C,
         actor: &ShufflerActor<C>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S::Signature: SignatureBytes,
+    {
         let (any_envelope, deck_out_state, nonce_for_update) = {
             let mut state = runtime.shuffling.lock();
             if state.is_complete() || state.acted {
@@ -644,7 +647,7 @@ where
         C::BaseField: PrimeField + Send + Sync + 'static,
         C::Affine: Absorb,
         S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
-        S::Signature: SignatureEncoder + Send + Sync + 'static,
+        S::Signature: SignatureBytes + Send + Sync + 'static,
     {
         let actor_clone = actor.clone();
         let game_id = runtime.game_id;
@@ -861,7 +864,7 @@ where
     C::Affine: Absorb,
     S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
     S::SecretKey: ShufflerSigningSecret<C> + Send + Sync + 'static,
-    S::Signature: SignatureEncoder + Send + Sync + 'static,
+    S::Signature: SignatureBytes + Send + Sync + 'static,
 {
     ShufflerService::<C, S>::spawn_dealing_request_worker(
         shuffler_index,
