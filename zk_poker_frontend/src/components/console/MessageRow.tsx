@@ -279,7 +279,7 @@ export function MessageRow({
           {formattedTimestamp}
         </div>
 
-        {/* Phase Badge */}
+        {/* Message Type Badge */}
         <div className="flex justify-start">
           <PhaseBadge config={phaseConfig} />
         </div>
