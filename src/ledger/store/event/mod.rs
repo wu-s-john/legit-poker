@@ -608,12 +608,12 @@ mod tests {
     }
 
     fn finalized(envelope: AnyMessageEnvelope<Curve>) -> FinalizedAnyMessageEnvelope<Curve> {
-        FinalizedAnyMessageEnvelope {
+        FinalizedAnyMessageEnvelope::new(
             envelope,
-            snapshot_status: SnapshotStatus::Success,
-            applied_phase: EventPhase::Shuffling,
-            snapshot_sequence_id: 1,
-        }
+            SnapshotStatus::Success,
+            EventPhase::Shuffling,
+            1,
+        )
     }
 
     #[tokio::test]

@@ -140,12 +140,12 @@ where
 
         let (snapshot, finalized_event, apply_error) = match preview {
             Ok(snapshot) => {
-                let finalized = FinalizedAnyMessageEnvelope {
-                    envelope: event.clone(),
-                    snapshot_status: SnapshotStatus::Success,
-                    applied_phase: snapshot.event_phase(),
-                    snapshot_sequence_id: snapshot.sequence(),
-                };
+                let finalized = FinalizedAnyMessageEnvelope::new(
+                    event.clone(),
+                    SnapshotStatus::Success,
+                    snapshot.event_phase(),
+                    snapshot.sequence(),
+                );
                 (snapshot, finalized, None)
             }
             Err(apply_err) => {
@@ -159,12 +159,12 @@ where
                 let reason = apply_err.to_string();
                 let failure_snapshot =
                     clone_snapshot_for_failure(&tip_before, hasher.as_ref(), reason.clone());
-                let finalized = FinalizedAnyMessageEnvelope {
-                    envelope: event.clone(),
-                    snapshot_status: SnapshotStatus::Failure(reason.clone()),
-                    applied_phase: failure_snapshot.event_phase(),
-                    snapshot_sequence_id: failure_snapshot.sequence(),
-                };
+                let finalized = FinalizedAnyMessageEnvelope::new(
+                    event.clone(),
+                    SnapshotStatus::Failure(reason.clone()),
+                    failure_snapshot.event_phase(),
+                    failure_snapshot.sequence(),
+                );
                 (failure_snapshot, finalized, Some(reason))
             }
         };

@@ -50,6 +50,18 @@ build-release:
 build-gpu:
     cargo build --features gpu
 
+# Build only the legit poker server binary (debug)
+build-legit-server:
+    cargo build --bin legit_poker_server
+
+# Run the legit poker server (passthrough args after `--`)
+run-legit-server *ARGS:
+    RUST_LOG={{ RUST_LOG }} cargo run --bin legit_poker_server -- {{ ARGS }}
+
+# Run the legit poker server with hot reloading (watches for file changes)
+watch-legit-server *ARGS:
+    RUST_LOG={{ RUST_LOG }} cargo watch -x "run --bin legit_poker_server -- {{ ARGS }}"
+
 # Run a binary, e.g. `just run game_demo` or `just run bayer_groth_demo`
 
 # Extra args after `--` go to the binary: `just run game_demo -- -vv`

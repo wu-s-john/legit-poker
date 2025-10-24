@@ -60,7 +60,7 @@ pub trait Signable {
 
 /// A signed envelope carrying a signable value, its signature, and the exact
 /// transcript bytes that were signed (domain-separated and canonicalized).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct WithSignature<Sig, T>
 where
     T: Signable,
@@ -68,7 +68,99 @@ where
     pub value: T,
     pub signature: Sig,
     /// Canonical bytes used for signing/verification.
+    /// This field is recomputed during deserialization and not serialized.
     pub transcript: Vec<u8>,
+}
+
+impl<Sig, T> Serialize for WithSignature<Sig, T>
+where
+    Sig: Serialize,
+    T: Signable + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("WithSignature", 2)?;
+        state.serialize_field("value", &self.value)?;
+        state.serialize_field("signature", &self.signature)?;
+        state.end()
+    }
+}
+
+impl<'de, Sig, T> Deserialize<'de> for WithSignature<Sig, T>
+where
+    Sig: Deserialize<'de>,
+    T: Signable + Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{MapAccess, Visitor};
+        use std::fmt;
+
+        struct WithSignatureVisitor<Sig, T>(std::marker::PhantomData<(Sig, T)>);
+
+        impl<'de, Sig, T> Visitor<'de> for WithSignatureVisitor<Sig, T>
+        where
+            Sig: Deserialize<'de>,
+            T: Signable + Deserialize<'de>,
+        {
+            type Value = WithSignature<Sig, T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct WithSignature")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut value: Option<T> = None;
+                let mut signature: Option<Sig> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "value" => {
+                            if value.is_some() {
+                                return Err(serde::de::Error::duplicate_field("value"));
+                            }
+                            value = Some(map.next_value()?);
+                        }
+                        "signature" => {
+                            if signature.is_some() {
+                                return Err(serde::de::Error::duplicate_field("signature"));
+                            }
+                            signature = Some(map.next_value()?);
+                        }
+                        _ => {
+                            let _: serde::de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
+                let signature = signature.ok_or_else(|| serde::de::Error::missing_field("signature"))?;
+
+                // Recompute transcript from the deserialized value
+                let transcript = value.to_signing_bytes();
+
+                Ok(WithSignature {
+                    value,
+                    signature,
+                    transcript,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "WithSignature",
+            &["value", "signature"],
+            WithSignatureVisitor(std::marker::PhantomData),
+        )
+    }
 }
 
 impl<Sig, T> WithSignature<Sig, T>

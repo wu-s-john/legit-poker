@@ -450,12 +450,12 @@ mod tests {
         };
 
         let failure_reason = "boom".to_string();
-        let finalized = FinalizedAnyMessageEnvelope {
+        let finalized = FinalizedAnyMessageEnvelope::new(
             envelope,
-            snapshot_status: SnapshotStatus::Failure(failure_reason.clone()),
+            SnapshotStatus::Failure(failure_reason.clone()),
             applied_phase,
-            snapshot_sequence_id: initial_sequence + 1,
-        };
+            initial_sequence + 1,
+        );
 
         state
             .replay(vec![finalized])

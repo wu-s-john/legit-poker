@@ -2,6 +2,7 @@ use anyhow::Result;
 use ark_crypto_primitives::signature::{schnorr::Signature as SchnorrSignature, SignatureScheme};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use chrono::{DateTime, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -495,6 +496,46 @@ where
     pub snapshot_status: SnapshotStatus,
     pub applied_phase: EventPhase,
     pub snapshot_sequence_id: SnapshotSeq,
+    #[serde(with = "chrono::serde::ts_milliseconds")]
+    pub created_timestamp: DateTime<Utc>,
+}
+
+impl<C> FinalizedAnyMessageEnvelope<C>
+where
+    C: CurveGroup,
+{
+    /// Create a new FinalizedAnyMessageEnvelope with the current timestamp
+    pub fn new(
+        envelope: AnyMessageEnvelope<C>,
+        snapshot_status: SnapshotStatus,
+        applied_phase: EventPhase,
+        snapshot_sequence_id: SnapshotSeq,
+    ) -> Self {
+        Self {
+            envelope,
+            snapshot_status,
+            applied_phase,
+            snapshot_sequence_id,
+            created_timestamp: Utc::now(),
+        }
+    }
+
+    /// Create a FinalizedAnyMessageEnvelope with an explicit timestamp
+    pub fn with_timestamp(
+        envelope: AnyMessageEnvelope<C>,
+        snapshot_status: SnapshotStatus,
+        applied_phase: EventPhase,
+        snapshot_sequence_id: SnapshotSeq,
+        created_timestamp: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            envelope,
+            snapshot_status,
+            applied_phase,
+            snapshot_sequence_id,
+            created_timestamp,
+        }
+    }
 }
 
 pub trait SignatureEncoder {
@@ -838,12 +879,12 @@ mod tests {
         };
         assert_round_trip_json(&envelope);
 
-        let finalized = FinalizedAnyMessageEnvelope {
+        let finalized = FinalizedAnyMessageEnvelope::new(
             envelope,
-            snapshot_status: SnapshotStatus::Failure("error".to_string()),
-            applied_phase: EventPhase::Betting,
-            snapshot_sequence_id: 12,
-        };
+            SnapshotStatus::Failure("error".to_string()),
+            EventPhase::Betting,
+            12,
+        );
         assert_round_trip_json(&finalized);
     }
 
