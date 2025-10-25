@@ -1,11 +1,14 @@
-use anyhow::{anyhow, Context};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use anyhow::{anyhow, bail, Context};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
-use ark_serialize::CanonicalSerialize;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
 };
 use serde_json::Value as JsonValue;
 use tracing::info;
@@ -14,23 +17,29 @@ use crate::curve_absorb::CurveAbsorb;
 use crate::db::entity::sea_orm_active_enums::{
     self as db_enums, ApplicationStatus as DbApplicationStatus,
 };
-use crate::db::entity::{games, hand_configs, hands, phases, table_snapshots};
+use crate::db::entity::{
+    games, hand_configs, hand_player, hand_shufflers, hands, phases, players, shufflers,
+    table_snapshots,
+};
 use crate::engine::nl::events::NormalizedAction;
 use crate::engine::nl::state::BettingState;
 use crate::engine::nl::types::{
     HandConfig, PlayerState as EnginePlayerState, PlayerStatus as EnginePlayerStatus,
-    Pot as EnginePot, Pots as EnginePots, Street,
+    Pot as EnginePot, Pots as EnginePots, Street, TableStakes,
 };
 use crate::ledger::hash::LedgerHasher;
+use crate::ledger::identity::CanonicalKey;
+use crate::ledger::messages::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::ledger::snapshot::{
     AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, CardDestination, PhaseBetting,
-    PhaseComplete, RevealsSnapshot, ShufflingSnapshot, SnapshotSeq, SnapshotStatus, TableAtDealing,
-    TableAtShowdown, TableAtShuffling, TableSnapshot,
+    PhaseComplete, PhaseDealing, PhaseShuffling, PhaseShowdown, PlayerIdentity, PlayerRoster,
+    PlayerStacks, RevealsSnapshot, SeatingMap, ShufflerIdentity, ShufflerRoster,
+    ShufflingSnapshot, SnapshotSeq, SnapshotStatus, TableAtDealing, TableAtShowdown,
+    TableAtShuffling, TableSnapshot, DealingSnapshot,
 };
 use crate::ledger::types::{GameId, HandId, StateHash};
 use crate::showdown::HandCategory;
 use crate::shuffling::data_structures::DECK_SIZE;
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub(super) struct PreparedPhase {
@@ -943,3 +952,547 @@ async fn insert_phase_if_needed(
 }
 
 pub(super) const SNAPSHOT_LOG_TARGET: &str = "legit_poker::ledger::snapshot_store";
+
+// ---- Snapshot Deserialization --------------------------------------------------------------
+
+/// Loads player roster from database for a given hand
+async fn load_player_roster<C>(
+    conn: &DatabaseConnection,
+    hand_id: HandId,
+) -> anyhow::Result<PlayerRoster<C>>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
+{
+    let hand_players = hand_player::Entity::find()
+        .filter(hand_player::Column::HandId.eq(hand_id))
+        .all(conn)
+        .await
+        .context("failed to query hand_player")?;
+
+    let mut roster = BTreeMap::new();
+
+    for hp in hand_players {
+        let player_row = players::Entity::find_by_id(hp.player_id)
+            .one(conn)
+            .await
+            .context("failed to query player")?
+            .ok_or_else(|| anyhow!("player {} not found", hp.player_id))?;
+
+        let public_key = C::deserialize_compressed(&player_row.public_key[..])
+            .context("failed to deserialize player public key")?;
+        let player_key = CanonicalKey::from_bytes(&player_row.public_key)?;
+
+        let identity = PlayerIdentity {
+            public_key,
+            player_key: player_key.clone(),
+            player_id: u64::try_from(hp.player_id)
+                .map_err(|_| anyhow!("player_id {} is negative", hp.player_id))?,
+            nonce: u64::try_from(hp.nonce)
+                .map_err(|_| anyhow!("player nonce {} is negative", hp.nonce))?,
+            seat: hp.seat.try_into()
+                .map_err(|_| anyhow!("player seat {} is invalid", hp.seat))?,
+        };
+
+        roster.insert(player_key, identity);
+    }
+
+    Ok(roster)
+}
+
+/// Loads shuffler roster from database for a given hand
+async fn load_shuffler_roster<C>(
+    conn: &DatabaseConnection,
+    hand_id: HandId,
+) -> anyhow::Result<ShufflerRoster<C>>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
+{
+    let hand_shufflers = hand_shufflers::Entity::find()
+        .filter(hand_shufflers::Column::HandId.eq(hand_id))
+        .order_by_asc(hand_shufflers::Column::Sequence)
+        .all(conn)
+        .await
+        .context("failed to query hand_shufflers")?;
+
+    let mut roster = BTreeMap::new();
+    let mut aggregated = C::zero();
+
+    for hs in hand_shufflers {
+        let shuffler_row = shufflers::Entity::find_by_id(hs.shuffler_id)
+            .one(conn)
+            .await
+            .context("failed to query shuffler")?
+            .ok_or_else(|| anyhow!("shuffler {} not found", hs.shuffler_id))?;
+
+        let public_key = C::deserialize_compressed(&shuffler_row.public_key[..])
+            .context("failed to deserialize shuffler public key")?;
+        let shuffler_key = CanonicalKey::from_bytes(&shuffler_row.public_key)?;
+
+        // Aggregate public keys in sequence order
+        aggregated = aggregated + public_key;
+
+        let identity = ShufflerIdentity {
+            public_key,
+            shuffler_key: shuffler_key.clone(),
+            shuffler_id: hs.shuffler_id,
+            aggregated_public_key: aggregated,
+        };
+
+        roster.insert(shuffler_key, identity);
+    }
+
+    Ok(roster)
+}
+
+/// Loads seating map from database for a given hand
+async fn load_seating_map<C>(
+    conn: &DatabaseConnection,
+    hand_id: HandId,
+) -> anyhow::Result<SeatingMap<C>>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize,
+{
+    let hand_players = hand_player::Entity::find()
+        .filter(hand_player::Column::HandId.eq(hand_id))
+        .all(conn)
+        .await
+        .context("failed to query hand_player for seating")?;
+
+    let mut seating = BTreeMap::new();
+
+    for hp in hand_players {
+        let player_row = players::Entity::find_by_id(hp.player_id)
+            .one(conn)
+            .await
+            .context("failed to query player for seating")?
+            .ok_or_else(|| anyhow!("player {} not found", hp.player_id))?;
+
+        let player_key = CanonicalKey::from_bytes(&player_row.public_key)?;
+        let seat = hp.seat.try_into()
+            .map_err(|_| anyhow!("player seat {} is invalid", hp.seat))?;
+
+        seating.insert(seat, Some(player_key));
+    }
+
+    Ok(seating)
+}
+
+/// Reconstructs an `AnyTableSnapshot` from database models
+pub(crate) async fn reconstruct_snapshot_from_db<C>(
+    snapshot_row: table_snapshots::Model,
+    conn: &DatabaseConnection,
+) -> anyhow::Result<AnyTableSnapshot<C>>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C::BaseField: PrimeField + CanonicalSerialize + CanonicalDeserialize,
+    C::ScalarField: PrimeField + Absorb + CanonicalSerialize + CanonicalDeserialize,
+    C::Affine: Absorb,
+{
+    // Street types are already imported at module level
+
+    info!(
+        target = SNAPSHOT_LOG_TARGET,
+        game_id = snapshot_row.game_id,
+        hand_id = snapshot_row.hand_id,
+        sequence = snapshot_row.sequence,
+        "reconstructing snapshot from database"
+    );
+
+    // Load hand config
+    let hand_config = load_hand_config(conn, snapshot_row.hand_config_id).await?;
+
+    // Deserialize player stacks
+    let stacks: PlayerStacks<C> = serde_json::from_value(snapshot_row.player_stacks.clone())
+        .context("failed to deserialize player stacks")?;
+
+    // Convert sequence to u32
+    let sequence = u32::try_from(snapshot_row.sequence)
+        .map_err(|_| anyhow!("snapshot sequence {} is negative", snapshot_row.sequence))?;
+
+    // Convert state hashes
+    let state_hash = StateHash::from_bytes(snapshot_row.state_hash.clone())
+        .context("failed to parse state hash")?;
+    let previous_hash = snapshot_row.previous_hash
+        .clone()
+        .map(StateHash::from_bytes)
+        .transpose()
+        .context("failed to parse previous hash")?;
+
+    // Reconstruct snapshot status
+    let status = match snapshot_row.application_status {
+        DbApplicationStatus::Success => SnapshotStatus::Success,
+        DbApplicationStatus::Failure => SnapshotStatus::Failure(
+            snapshot_row.failure_reason.clone()
+                .unwrap_or_else(|| "unknown failure".to_string())
+        ),
+    };
+
+    // Load rosters from database (these are derived from hand_player and hand_shufflers tables)
+    let players_roster = load_player_roster::<C>(conn, snapshot_row.hand_id).await?;
+    let shufflers_roster = load_shuffler_roster::<C>(conn, snapshot_row.hand_id).await?;
+    let seating_map = load_seating_map::<C>(conn, snapshot_row.hand_id).await?;
+
+    // Determine phase based on which hash columns are populated
+    let phase_kind = determine_phase_kind(&snapshot_row)?;
+
+    match phase_kind {
+        db_enums::PhaseKind::Shuffling => {
+            let shuffling = load_phase::<ShufflingSnapshot<C>>(
+                conn,
+                snapshot_row.shuffling_hash.as_ref()
+                    .ok_or_else(|| anyhow!("shuffling phase missing hash"))?
+                    .as_slice(),
+                db_enums::PhaseKind::Shuffling,
+            ).await?;
+
+            let table = TableSnapshot::<PhaseShuffling, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing: (),
+                betting: (),
+                reveals: (),
+            };
+
+            Ok(AnyTableSnapshot::Shuffling(table))
+        }
+        db_enums::PhaseKind::Dealing => {
+            let shuffling = load_phase::<ShufflingSnapshot<C>>(
+                conn,
+                snapshot_row.shuffling_hash.as_ref()
+                    .ok_or_else(|| anyhow!("dealing phase missing shuffling hash"))?.as_slice(),
+                db_enums::PhaseKind::Shuffling,
+            ).await?;
+
+            let dealing = load_phase::<DealingSnapshot<C>>(
+                conn,
+                snapshot_row.dealing_hash.as_ref()
+                    .ok_or_else(|| anyhow!("dealing phase missing dealing hash"))?.as_slice(),
+                db_enums::PhaseKind::Dealing,
+            ).await?;
+
+            let table = TableSnapshot::<PhaseDealing, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config.clone(),
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting: (),
+                reveals: (),
+            };
+
+            Ok(AnyTableSnapshot::Dealing(table))
+        }
+        db_enums::PhaseKind::Betting => {
+            // Load all phase snapshots
+            let shuffling = load_phase::<ShufflingSnapshot<C>>(
+                conn,
+                snapshot_row.shuffling_hash.as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing shuffling hash"))?.as_slice(),
+                db_enums::PhaseKind::Shuffling,
+            ).await?;
+
+            let dealing = load_phase::<DealingSnapshot<C>>(
+                conn,
+                snapshot_row.dealing_hash.as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing dealing hash"))?.as_slice(),
+                db_enums::PhaseKind::Dealing,
+            ).await?;
+
+            let betting = load_phase::<BettingSnapshot<C>>(
+                conn,
+                snapshot_row.betting_hash.as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing betting hash"))?.as_slice(),
+                db_enums::PhaseKind::Betting,
+            ).await?;
+
+            let reveals = load_phase::<RevealsSnapshot<C>>(
+                conn,
+                snapshot_row.reveals_hash.as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing reveals hash"))?.as_slice(),
+                db_enums::PhaseKind::Reveals,
+            ).await?;
+
+            // Determine which street based on betting state
+            reconstruct_betting_snapshot(
+                snapshot_row,
+                hand_config,
+                stacks,
+                sequence,
+                state_hash,
+                previous_hash,
+                status,
+                shufflers_roster,
+                players_roster,
+                seating_map,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            )
+        }
+        db_enums::PhaseKind::Reveals => {
+            // Load all phase snapshots
+            let shuffling = load_phase::<ShufflingSnapshot<C>>(
+                conn,
+                snapshot_row.shuffling_hash.as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing shuffling hash"))?.as_slice(),
+                db_enums::PhaseKind::Shuffling,
+            ).await?;
+
+            let dealing = load_phase::<DealingSnapshot<C>>(
+                conn,
+                snapshot_row.dealing_hash.as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing dealing hash"))?.as_slice(),
+                db_enums::PhaseKind::Dealing,
+            ).await?;
+
+            let betting = load_phase::<BettingSnapshot<C>>(
+                conn,
+                snapshot_row.betting_hash.as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing betting hash"))?.as_slice(),
+                db_enums::PhaseKind::Betting,
+            ).await?;
+
+            let reveals = load_phase::<RevealsSnapshot<C>>(
+                conn,
+                snapshot_row.reveals_hash.as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing reveals hash"))?.as_slice(),
+                db_enums::PhaseKind::Reveals,
+            ).await?;
+
+            // Determine if showdown or complete based on application status
+            // Complete phase is the terminal state after all reveals are done and hand is finalized
+            // For now, we'll always reconstruct as Showdown since Complete is the terminal state
+            // TODO: Add logic to distinguish Showdown vs Complete if needed based on application status or other indicators
+            let table = TableSnapshot::<PhaseShowdown, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            };
+            Ok(AnyTableSnapshot::Showdown(table))
+        }
+    }
+}
+
+/// Determines the phase kind based on which hash columns are populated
+fn determine_phase_kind(snapshot_row: &table_snapshots::Model) -> anyhow::Result<db_enums::PhaseKind> {
+    match (
+        &snapshot_row.shuffling_hash,
+        &snapshot_row.dealing_hash,
+        &snapshot_row.betting_hash,
+        &snapshot_row.reveals_hash,
+    ) {
+        (Some(_), None, None, None) => Ok(db_enums::PhaseKind::Shuffling),
+        (Some(_), Some(_), None, None) => Ok(db_enums::PhaseKind::Dealing),
+        (Some(_), Some(_), Some(_), Some(_)) if snapshot_row.reveals_hash.as_ref().map(|v| !v.is_empty()).unwrap_or(false) => {
+            // If reveals hash is populated and non-empty, it's reveals phase
+            Ok(db_enums::PhaseKind::Reveals)
+        }
+        (Some(_), Some(_), Some(_), _) => Ok(db_enums::PhaseKind::Betting),
+        _ => bail!(
+            "Invalid phase hash combination for snapshot game_id={} hand_id={} seq={}",
+            snapshot_row.game_id,
+            snapshot_row.hand_id,
+            snapshot_row.sequence
+        ),
+    }
+}
+
+/// Loads a phase snapshot from the database by its hash
+async fn load_phase<T>(
+    conn: &DatabaseConnection,
+    hash_bytes: &[u8],
+    expected_kind: db_enums::PhaseKind,
+) -> anyhow::Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let phase_row = phases::Entity::find_by_id(hash_bytes.to_vec())
+        .one(conn)
+        .await
+        .context("failed to query phase by hash")?
+        .ok_or_else(|| anyhow!("phase with hash {} not found", hex::encode(hash_bytes)))?;
+
+    if phase_row.phase_type != expected_kind {
+        bail!(
+            "phase hash {} has type {:?}, expected {:?}",
+            hex::encode(hash_bytes),
+            phase_row.phase_type,
+            expected_kind
+        );
+    }
+
+    serde_json::from_value(phase_row.payload)
+        .context("failed to deserialize phase payload")
+}
+
+/// Loads hand config from database
+async fn load_hand_config(
+    conn: &DatabaseConnection,
+    hand_config_id: i64,
+) -> anyhow::Result<Arc<HandConfig>> {
+    let config_row = hand_configs::Entity::find_by_id(hand_config_id)
+        .one(conn)
+        .await
+        .context("failed to query hand config")?
+        .ok_or_else(|| anyhow!("hand config {} not found", hand_config_id))?;
+
+    // Construct HandConfig from individual database fields
+    let config = HandConfig {
+        stakes: TableStakes {
+            small_blind: u64::try_from(config_row.small_blind)
+                .map_err(|_| anyhow!("small_blind {} is negative", config_row.small_blind))?,
+            big_blind: u64::try_from(config_row.big_blind)
+                .map_err(|_| anyhow!("big_blind {} is negative", config_row.big_blind))?,
+            ante: u64::try_from(config_row.ante)
+                .map_err(|_| anyhow!("ante {} is negative", config_row.ante))?,
+        },
+        button: config_row.button_seat.try_into()
+            .map_err(|_| anyhow!("button_seat {} is invalid", config_row.button_seat))?,
+        small_blind_seat: config_row.small_blind_seat.try_into()
+            .map_err(|_| anyhow!("small_blind_seat {} is invalid", config_row.small_blind_seat))?,
+        big_blind_seat: config_row.big_blind_seat.try_into()
+            .map_err(|_| anyhow!("big_blind_seat {} is invalid", config_row.big_blind_seat))?,
+        check_raise_allowed: config_row.check_raise_allowed,
+    };
+
+    Ok(Arc::new(config))
+}
+
+/// Reconstructs a betting phase snapshot, determining the street
+fn reconstruct_betting_snapshot<C>(
+    snapshot_row: table_snapshots::Model,
+    hand_config: Arc<HandConfig>,
+    stacks: PlayerStacks<C>,
+    sequence: u32,
+    state_hash: StateHash,
+    previous_hash: Option<StateHash>,
+    status: SnapshotStatus,
+    shufflers_roster: ShufflerRoster<C>,
+    players_roster: PlayerRoster<C>,
+    seating_map: SeatingMap<C>,
+    shuffling: ShufflingSnapshot<C>,
+    dealing: DealingSnapshot<C>,
+    betting: BettingSnapshot<C>,
+    reveals: RevealsSnapshot<C>,
+) -> anyhow::Result<AnyTableSnapshot<C>>
+where
+    C: CurveGroup,
+{
+    // Street types are already imported at module level
+    // Determine street from betting state
+    let street = betting.state.street;
+
+    match street {
+        Street::Preflop => {
+            let table = TableSnapshot::<PhaseBetting<PreflopStreet>, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            };
+            Ok(AnyTableSnapshot::Preflop(table))
+        }
+        Street::Flop => {
+            let table = TableSnapshot::<PhaseBetting<FlopStreet>, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            };
+            Ok(AnyTableSnapshot::Flop(table))
+        }
+        Street::Turn => {
+            let table = TableSnapshot::<PhaseBetting<TurnStreet>, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            };
+            Ok(AnyTableSnapshot::Turn(table))
+        }
+        Street::River => {
+            let table = TableSnapshot::<PhaseBetting<RiverStreet>, C> {
+                game_id: snapshot_row.game_id,
+                hand_id: Some(snapshot_row.hand_id),
+                sequence,
+                cfg: hand_config,
+                shufflers: Arc::new(shufflers_roster.clone()),
+                players: Arc::new(players_roster.clone()),
+                seating: Arc::new(seating_map.clone()),
+                stacks: Arc::new(stacks),
+                previous_hash,
+                state_hash,
+                status,
+                shuffling,
+                dealing,
+                betting,
+                reveals,
+            };
+            Ok(AnyTableSnapshot::River(table))
+        }
+    }
+}

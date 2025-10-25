@@ -383,6 +383,13 @@ mod tests {
         ) -> anyhow::Result<()> {
             Ok(())
         }
+
+        async fn load_latest_snapshot(
+            &self,
+            _hand_id: HandId,
+        ) -> anyhow::Result<Option<AnyTableSnapshot<C>>> {
+            Ok(None)
+        }
     }
 
     fn sample_cipher() -> ElGamalCiphertext<Curve> {
