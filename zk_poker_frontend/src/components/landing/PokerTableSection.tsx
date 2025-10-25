@@ -1,0 +1,107 @@
+// components/landing/PokerTableSection.tsx
+
+"use client";
+
+import { Spade, Play } from "lucide-react";
+
+interface PokerTableSectionProps {
+  isDemoActive: boolean;
+  onStartDemo: () => void;
+  sseStatus: "idle" | "connecting" | "connected" | "error" | "completed";
+}
+
+/**
+ * Poker table section for landing page demo
+ *
+ * States:
+ * - Before demo: Green felt with "Start Demo" button
+ * - After demo: Placeholder visualization with SSE status
+ */
+export function PokerTableSection({
+  isDemoActive,
+  onStartDemo,
+  sseStatus,
+}: PokerTableSectionProps) {
+  // Determine button state based on SSE status
+  const isConnecting = sseStatus === "connecting";
+  const isActive = isDemoActive && (sseStatus === "connected" || sseStatus === "completed");
+  const hasError = sseStatus === "error";
+  const canStartDemo = !isDemoActive && sseStatus === "idle";
+
+  return (
+    <div
+      className="rounded-xl md:rounded-2xl border-2 md:border-4 p-8 min-h-[400px] md:min-h-[600px] flex items-center justify-center"
+      style={{
+        background:
+          "linear-gradient(135deg, #0a4d3c 0%, #084a38 50%, #063d2f 100%)",
+        borderColor: "var(--color-table-border)", // #1e3a5f
+      }}
+    >
+      {!isDemoActive ? (
+        /* Initial State: Start Demo Button */
+        <div className="text-center">
+          <Spade className="mx-auto mb-6 h-12 w-12 md:h-16 md:w-16 text-white/80" />
+          <h3 className="mb-4 text-xl md:text-2xl font-semibold text-white">
+            Interactive Poker Table
+          </h3>
+          <p className="mb-8 text-xs md:text-sm text-white/70">
+            Watch cryptographic shuffling in real-time
+          </p>
+
+          {/* Button with loading state */}
+          <button
+            onClick={onStartDemo}
+            disabled={!canStartDemo || isConnecting}
+            className="flex items-center gap-2 mx-auto px-6 md:px-8 py-2 md:py-3 text-sm md:text-base font-semibold text-white rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95 disabled:hover:scale-100"
+            style={{
+              backgroundColor: isConnecting ? "#94a3b8" : "#3b82f6",
+            }}
+            onMouseEnter={(e) => {
+              if (!isConnecting) {
+                e.currentTarget.style.backgroundColor = "#2563eb";
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isConnecting) {
+                e.currentTarget.style.backgroundColor = "#3b82f6";
+              }
+            }}
+          >
+            {isConnecting ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Connecting...
+              </>
+            ) : (
+              <>
+                <Play size={20} />
+                Start Demo
+              </>
+            )}
+          </button>
+
+          {/* Error message */}
+          {hasError && (
+            <p className="mt-4 text-xs text-red-400">
+              Failed to connect. Please check backend server.
+            </p>
+          )}
+        </div>
+      ) : (
+        /* Active State: Poker Table Visualization Placeholder */
+        <div className="text-center">
+          <Spade className="mx-auto mb-4 h-12 w-12 animate-pulse text-white/80" />
+          <p className="text-lg font-semibold text-white">
+            Poker Table Visualization
+          </p>
+          <p className="mt-2 text-sm text-white/70">
+            Coming soon - 3D table with cards and players
+          </p>
+          <p className="mt-4 text-xs text-white/50">
+            Demo active • SSE status: {sseStatus}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

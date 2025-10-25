@@ -14,16 +14,16 @@ const cardSchema = z.object({
 export const demoStreamEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('player_created'),
-    gameId: gameIdSchema,
+    game_id: gameIdSchema,
     seat: seatIdSchema,
-    displayName: z.string().min(1),
-    publicKey: hexString,
+    display_name: z.string().min(1),
+    public_key: hexString,
   }),
   z.object({
     type: z.literal('hand_created'),
-    gameId: gameIdSchema,
-    handId: handIdSchema,
-    playerCount: z.number().int().min(1),
+    game_id: gameIdSchema,
+    hand_id: handIdSchema,
+    player_count: z.number().int().min(1),
     snapshot: tableSnapshotShufflingSchema,
   }),
   finalizedEnvelopeSchema.extend({
@@ -31,21 +31,21 @@ export const demoStreamEventSchema = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('community_decrypted'),
-    gameId: gameIdSchema,
-    handId: handIdSchema,
+    game_id: gameIdSchema,
+    hand_id: handIdSchema,
     cards: z.array(cardSchema),
   }),
   z.object({
     type: z.literal('hole_cards_decrypted'),
-    gameId: gameIdSchema,
-    handId: handIdSchema,
+    game_id: gameIdSchema,
+    hand_id: handIdSchema,
     seat: seatIdSchema,
     cards: z.tuple([cardSchema, cardSchema]),
   }),
   z.object({
     type: z.literal('hand_completed'),
-    gameId: gameIdSchema,
-    handId: handIdSchema,
+    game_id: gameIdSchema,
+    hand_id: handIdSchema,
   }),
 ]);
 

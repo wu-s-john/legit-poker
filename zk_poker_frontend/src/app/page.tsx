@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { AnnouncementRibbon } from "~/components/landing/AnnouncementRibbon";
 import { TechnicalAccordion } from "~/components/landing/TechnicalAccordion";
+import { DemoSection } from "~/components/landing/DemoSection";
 import { useSmoothScroll } from "~/hooks/useSmoothScroll";
 import { useScrollAnimation } from "~/hooks/useScrollAnimation";
 
@@ -185,53 +186,10 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Interactive Poker Demo Section - Placeholder */}
+      {/* Interactive Poker Demo Section */}
       <section id="play" className="bg-primary-950 py-12 md:py-20 lg:py-32">
-        <div
-          ref={demoAnimation.ref}
-          className={`mx-auto max-w-6xl px-4 transition-all duration-1000 sm:px-6 ${
-            demoAnimation.isVisible
-              ? "translate-y-0 opacity-100"
-              : "translate-y-10 opacity-0"
-          }`}
-        >
-          <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
-            PLAY A HAND, WATCH IT PROVE ITSELF
-          </h2>
-
-          {/* Placeholder for poker table */}
-          <div className="border-table-border bg-felt mx-auto max-w-4xl rounded-xl border-2 p-4 shadow-2xl sm:p-6 md:rounded-2xl md:border-4 md:p-8">
-            <div className="flex min-h-[280px] items-center justify-center text-center sm:min-h-[400px]">
-              <div>
-                <Spade className="mx-auto mb-4 h-12 w-12 text-white/80 sm:h-16 sm:w-16" />
-                <p className="text-base font-semibold text-white sm:text-lg">
-                  Interactive Poker Table
-                </p>
-                <p className="mt-2 text-xs text-white/70 sm:text-sm">
-                  Coming soon - Full playable demo
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <p className="text-primary-200 mt-6 text-center text-base md:mt-8 md:text-lg">
-            Real poker. Real opponents. Mathematically guaranteed fairness.
-          </p>
-
-          <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row sm:gap-4 md:mt-8">
-            <Link
-              href="/lobby"
-              className="border-primary-400 text-primary-400 hover:bg-primary-400/10 flex items-center justify-center gap-2 rounded-lg border-2 px-6 py-3 text-base font-semibold transition-colors sm:inline-flex sm:py-2"
-            >
-              Start Your Own Game
-            </Link>
-            <Link
-              href="/invite"
-              className="text-primary-300 hover:text-primary-100 inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-colors"
-            >
-              Invite Friends
-            </Link>
-          </div>
+        <div ref={demoAnimation.ref}>
+          <DemoSection isVisible={demoAnimation.isVisible} />
         </div>
       </section>
 

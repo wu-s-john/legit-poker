@@ -16,16 +16,17 @@ const chips = z.union([
 
 /**
  * Event phase mirrors `EventPhase` in Rust.
+ * Rust serializes these as PascalCase variants.
  */
 export const eventPhaseSchema = z.enum([
-  'pending',
-  'shuffling',
-  'dealing',
-  'betting',
-  'reveals',
-  'showdown',
-  'complete',
-  'cancelled',
+  'Pending',
+  'Shuffling',
+  'Dealing',
+  'Betting',
+  'Reveals',
+  'Showdown',
+  'Complete',
+  'Cancelled',
 ]);
 export type EventPhase = z.infer<typeof eventPhaseSchema>;
 
@@ -64,19 +65,21 @@ export type PlayerBetAction = z.infer<typeof playerBetActionSchema>;
 
 /**
  * Actor union for `AnyActor`.
+ * Backend uses tagged enum format: {"Player": {...}}, {"Shuffler": {...}}, or "None"
  */
 export const anyActorSchema = z.union([
+  z.literal('None'),
   z.object({
-    kind: z.literal('none'),
+    Player: z.object({
+      seat_id: z.number().int().min(0).max(255),
+      player_id: z.number().int().nonnegative(),
+    }),
   }),
   z.object({
-    kind: z.literal('player'),
-    seatId: z.number().int().min(0).max(255),
-    playerId: z.number().int().nonnegative(),
-  }),
-  z.object({
-    kind: z.literal('shuffler'),
-    shufflerId: z.number().int(),
+    Shuffler: z.object({
+      shuffler_id: z.number().int(),
+      shuffler_key: hexString,
+    }),
   }),
 ]);
 export type AnyActor = z.infer<typeof anyActorSchema>;
@@ -87,19 +90,45 @@ export type AnyActor = z.infer<typeof anyActorSchema>;
  */
 const DECK_SIZE = 52 as const;
 
+const elGamalCiphertextSchema = z.object({
+  c1: hexString,
+  c2: hexString,
+});
+
+const sortedCiphertextSchema = z.object({
+  ciphertext: elGamalCiphertextSchema,
+  randomizer: hexString,
+});
+
+const shuffleProofSchema = z.object({
+  input_deck: z.array(elGamalCiphertextSchema).length(DECK_SIZE),
+  sorted_deck: z.array(sortedCiphertextSchema).length(DECK_SIZE),
+  rerandomization_values: z.array(hexString).length(DECK_SIZE),
+});
+
 const shuffleMessageSchema = z.object({
   type: z.literal('shuffle'),
   turn_index: z.number().int().min(0).max(0xffff),
-  deck_in: z.array(hexString).length(DECK_SIZE),
-  deck_out: z.array(hexString).length(DECK_SIZE),
-  proof: hexString,
+  deck_in: z.array(elGamalCiphertextSchema).length(DECK_SIZE),
+  deck_out: z.array(elGamalCiphertextSchema).length(DECK_SIZE),
+  proof: shuffleProofSchema,
+  _curve: z.null().optional(),
 });
 
 const blindingMessageSchema = z.object({
   type: z.literal('blinding'),
   card_in_deck_position: z.number().int().min(0).max(255),
-  share: hexString,
+  share: z.object({
+    blinding_base_contribution: hexString,
+    blinding_combined_contribution: hexString,
+    proof: z.object({
+      t_g: hexString,
+      t_h: hexString,
+      z: hexString,
+    }),
+  }),
   target_player_public_key: hexString,
+  _curve: z.null().optional(),
 });
 
 const partialUnblindingMessageSchema = z.object({
@@ -162,11 +191,11 @@ export type WithSignature = z.infer<typeof withSignatureSchema>;
  * Core envelope (`AnyMessageEnvelope`).
  */
 export const anyMessageEnvelopeSchema = z.object({
-  handId: z.number().int().nonnegative(),
-  gameId: z.number().int().nonnegative(),
+  hand_id: z.number().int().nonnegative(),
+  game_id: z.number().int().nonnegative(),
   actor: anyActorSchema,
   nonce: z.number().int().nonnegative(),
-  publicKey: hexString,
+  public_key: hexString,
   message: withSignatureSchema,
 });
 export type AnyMessageEnvelope = z.infer<typeof anyMessageEnvelopeSchema>;
@@ -175,9 +204,15 @@ export type AnyMessageEnvelope = z.infer<typeof anyMessageEnvelopeSchema>;
  * Finalized envelope – mirrors `FinalizedAnyMessageEnvelope<C>` in Rust.
  */
 export const finalizedEnvelopeSchema = z.object({
-  envelope: anyMessageEnvelopeSchema,
-  snapshotStatus: snapshotStatusSchema,
-  appliedPhase: eventPhaseSchema,
-  snapshotSequenceId: z.number().int().nonnegative(),
+  hand_id: z.number().int().nonnegative(),
+  game_id: z.number().int().nonnegative(),
+  actor: anyActorSchema,
+  nonce: z.number().int().nonnegative(),
+  public_key: hexString,
+  message: withSignatureSchema,
+  snapshot_status: snapshotStatusSchema,
+  applied_phase: eventPhaseSchema,
+  snapshot_sequence_id: z.number().int().nonnegative(),
+  created_timestamp: z.number().int().nonnegative(),
 });
 export type FinalizedAnyMessageEnvelope = z.infer<typeof finalizedEnvelopeSchema>;
