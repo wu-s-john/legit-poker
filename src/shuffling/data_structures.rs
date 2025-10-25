@@ -9,7 +9,7 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::signing::DomainSeparated;
 
 pub const DECK_SIZE: usize = 52;
 
@@ -133,59 +133,23 @@ impl<C: CurveGroup> ShuffleProof<C> {
     }
 }
 
-pub fn append_ciphertext<C: CurveGroup>(
-    builder: &mut TranscriptBuilder,
-    ciphertext: &ElGamalCiphertext<C>,
-) {
-    let mut buf = Vec::new();
-    ciphertext
-        .serialize_compressed(&mut buf)
-        .expect("ciphertext serialization should succeed");
-    builder.append_bytes(&buf);
-}
 
-pub fn append_curve_point<C: CurveGroup>(builder: &mut TranscriptBuilder, point: &C) {
-    let mut buf = Vec::new();
-    point
-        .serialize_compressed(&mut buf)
-        .expect("curve serialization should succeed");
-    builder.append_bytes(&buf);
-}
 
-pub fn append_shuffle_proof<C: CurveGroup>(
-    builder: &mut TranscriptBuilder,
-    proof: &ShuffleProof<C>,
-) {
-    let mut buf = Vec::new();
-    proof
-        .serialize_compressed(&mut buf)
-        .expect("shuffle proof serialization should succeed");
-    builder.append_bytes(&buf);
-}
-
-impl<C> Signable for ElGamalCiphertext<C>
+impl<C> DomainSeparated for ElGamalCiphertext<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "shuffling/elgamal_ciphertext_v1"
     }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        append_ciphertext(builder, self);
-    }
 }
 
-impl<C> Signable for ShuffleProof<C>
+impl<C> DomainSeparated for ShuffleProof<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "shuffling/shuffle_proof_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        append_shuffle_proof(builder, self);
     }
 }
 
@@ -211,7 +175,9 @@ mod tests {
         let cipher_a = sample_ciphertext();
         let cipher_b = cipher_a.clone();
 
-        assert_eq!(cipher_a.to_signing_bytes(), cipher_b.to_signing_bytes());
+        let bytes_a = crate::signing::signing_bytes(&cipher_a).unwrap();
+        let bytes_b = crate::signing::signing_bytes(&cipher_b).unwrap();
+        assert_eq!(bytes_a, bytes_b);
 
         let generator = Curve::generator();
         let different = ElGamalCiphertext::new(
@@ -219,7 +185,8 @@ mod tests {
             generator * Scalar::from(11u64),
         );
 
-        assert_ne!(cipher_a.to_signing_bytes(), different.to_signing_bytes());
+        let bytes_different = crate::signing::signing_bytes(&different).unwrap();
+        assert_ne!(bytes_a, bytes_different);
     }
 
     fn sample_shuffle_proof() -> ShuffleProof<Curve> {
@@ -234,12 +201,15 @@ mod tests {
         let proof_a = sample_shuffle_proof();
         let proof_b = proof_a.clone();
 
-        assert_eq!(proof_a.to_signing_bytes(), proof_b.to_signing_bytes());
+        let bytes_a = crate::signing::signing_bytes(&proof_a).unwrap();
+        let bytes_b = crate::signing::signing_bytes(&proof_b).unwrap();
+        assert_eq!(bytes_a, bytes_b);
 
         let mut different = proof_a.clone();
         different.rerandomization_values[0] = Scalar::from(1u64);
 
-        assert_ne!(proof_a.to_signing_bytes(), different.to_signing_bytes());
+        let bytes_different = crate::signing::signing_bytes(&different).unwrap();
+        assert_ne!(bytes_a, bytes_different);
     }
 
     #[test]

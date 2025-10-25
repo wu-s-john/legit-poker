@@ -5,7 +5,7 @@ use crate::ledger::messages::{AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMe
 use crate::ledger::serialization::deserialize_curve_bytes;
 use crate::ledger::snapshot::SnapshotStatus;
 use crate::ledger::types::EventPhase;
-use crate::signing::{Signable, WithSignature};
+use crate::signing::WithSignature;
 use anyhow::{anyhow, Context};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -53,7 +53,6 @@ where
     let with_signature = WithSignature {
         value: message.clone(),
         signature: row.signature.clone(),
-        transcript: message.to_signing_bytes(),
     };
 
     let envelope = AnyMessageEnvelope {

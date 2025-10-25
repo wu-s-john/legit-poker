@@ -550,7 +550,6 @@ where
                 message: WithSignature {
                     value: message.clone(),
                     signature: finalized.envelope.message.signature.clone(),
-                    transcript: finalized.envelope.message.transcript.clone(),
                 },
             }),
             _ => None,

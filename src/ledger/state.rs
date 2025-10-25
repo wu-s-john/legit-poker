@@ -5,6 +5,7 @@ use anyhow::{bail, Context};
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::ledger::actor::{AnyActor, PlayerActor, ShufflerActor};
@@ -17,7 +18,7 @@ use crate::ledger::messages::{
 use crate::ledger::snapshot::{clone_snapshot_for_failure, AnyTableSnapshot, SnapshotStatus};
 use crate::ledger::transition::apply_transition;
 use crate::ledger::types::{HandId, StateHash};
-use crate::signing::WithSignature;
+use crate::signing::{DomainSeparated, WithSignature};
 type SharedHasher = Arc<dyn LedgerHasher + Send + Sync>;
 
 struct HandLedger<C: CurveGroup> {
@@ -271,12 +272,11 @@ fn remap_signature<C, M>(
 ) -> WithSignature<crate::ledger::SignatureBytes, M>
 where
     C: CurveGroup,
-    M: crate::signing::Signable,
+    M: CanonicalSerialize + DomainSeparated,
 {
     WithSignature {
         value,
         signature: original.signature.clone(),
-        transcript: original.transcript.clone(),
     }
 }
 
@@ -496,7 +496,6 @@ mod tests {
             message: WithSignature {
                 value: AnyGameMessage::Shuffle(shuffle_message),
                 signature: Vec::new(),
-                transcript: Vec::new(),
             },
         };
 

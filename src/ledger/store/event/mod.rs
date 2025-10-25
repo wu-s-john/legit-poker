@@ -602,7 +602,6 @@ mod tests {
             message: WithSignature {
                 value: message,
                 signature: Vec::new(),
-                transcript: Vec::new(),
             },
         }
     }

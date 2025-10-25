@@ -1,16 +1,16 @@
 use ark_ec::CurveGroup;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::{self, CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     engine::nl::{PlayerId, SeatId},
     ledger::{CanonicalKey, ShufflerId},
-    signing::{Signable, TranscriptBuilder},
+    signing::DomainSeparated,
 };
 
 pub trait GameActor {}
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -23,20 +23,13 @@ pub struct PlayerActor<C: CurveGroup> {
 
 impl<C: CurveGroup> GameActor for PlayerActor<C> {}
 
-impl<C: CurveGroup> Signable for PlayerActor<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for PlayerActor<C> {
+    fn domain_string() -> &'static str {
         "ledger/player_actor_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(1);
-        builder.append_u8(self.seat_id);
-        builder.append_u64(self.player_id);
-        self.player_key.write_transcript(builder);
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -48,15 +41,9 @@ pub struct ShufflerActor<C: CurveGroup> {
 
 impl<C: CurveGroup> GameActor for ShufflerActor<C> {}
 
-impl<C: CurveGroup> Signable for ShufflerActor<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for ShufflerActor<C> {
+    fn domain_string() -> &'static str {
         "ledger/shuffler_actor_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(2);
-        builder.append_i64(self.shuffler_id);
-        self.shuffler_key.write_transcript(builder);
     }
 }
 
@@ -86,32 +73,98 @@ impl<C: CurveGroup> Default for AnyActor<C> {
 
 impl<C: CurveGroup> GameActor for AnyActor<C> {}
 
-impl<C: CurveGroup> Signable for AnyActor<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for AnyActor<C> {
+    fn domain_string() -> &'static str {
         "ledger/any_actor_v1"
     }
+}
 
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+impl<C: CurveGroup> CanonicalSerialize for AnyActor<C> {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
         match self {
-            AnyActor::None => builder.append_u8(0),
+            AnyActor::None => {
+                0u8.serialize_with_mode(&mut writer, compress)?;
+            }
             AnyActor::Player {
                 seat_id,
                 player_id,
                 player_key,
             } => {
-                builder.append_u8(1);
-                builder.append_u8(*seat_id);
-                builder.append_u64(*player_id);
-                player_key.write_transcript(builder);
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                seat_id.serialize_with_mode(&mut writer, compress)?;
+                player_id.serialize_with_mode(&mut writer, compress)?;
+                player_key.serialize_with_mode(&mut writer, compress)?;
             }
             AnyActor::Shuffler {
                 shuffler_id,
                 shuffler_key,
             } => {
-                builder.append_u8(2);
-                builder.append_i64(*shuffler_id);
-                shuffler_key.write_transcript(builder);
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                shuffler_id.serialize_with_mode(&mut writer, compress)?;
+                shuffler_key.serialize_with_mode(&mut writer, compress)?;
             }
         }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        1 + match self {
+            AnyActor::None => 0,
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => {
+                seat_id.serialized_size(compress)
+                    + player_id.serialized_size(compress)
+                    + player_key.serialized_size(compress)
+            }
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => shuffler_id.serialized_size(compress) + shuffler_key.serialized_size(compress),
+        }
+    }
+}
+
+impl<C: CurveGroup> CanonicalDeserialize for AnyActor<C> {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        match discriminant {
+            0 => Ok(AnyActor::None),
+            1 => {
+                let seat_id = SeatId::deserialize_with_mode(&mut reader, compress, validate)?;
+                let player_id = PlayerId::deserialize_with_mode(&mut reader, compress, validate)?;
+                let player_key = CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(AnyActor::Player {
+                    seat_id,
+                    player_id,
+                    player_key,
+                })
+            }
+            2 => {
+                let shuffler_id = ShufflerId::deserialize_with_mode(&mut reader, compress, validate)?;
+                let shuffler_key = CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
+                Ok(AnyActor::Shuffler {
+                    shuffler_id,
+                    shuffler_key,
+                })
+            }
+            _ => Err(ark_serialize::SerializationError::InvalidData),
+        }
+    }
+}
+
+impl<C: CurveGroup> ark_serialize::Valid for AnyActor<C> {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
     }
 }

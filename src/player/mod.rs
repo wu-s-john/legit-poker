@@ -5,6 +5,7 @@ use ark_crypto_primitives::signature::schnorr::Schnorr;
 use ark_crypto_primitives::signature::SignatureScheme;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -12,12 +13,12 @@ use sha2::Digest;
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::types::SeatId;
 use crate::showdown::{choose_best5_from7, pack_score_field, Card, HandCategory, Index};
-use crate::signing::{Signable, SignatureBytes, TranscriptBuilder, WithSignature};
+use crate::signing::{DomainSeparated, SignatureBytes, WithSignature};
 use crate::PlayerAccessibleCiphertext;
 
 use rand::SeedableRng;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct PlayerActionBet {
     pub seat: SeatId,
     pub action: PlayerBetAction,
@@ -25,32 +26,9 @@ pub struct PlayerActionBet {
     pub nonce: u64,
 }
 
-impl Signable for PlayerActionBet {
-    fn domain_kind(&self) -> &'static str {
+impl DomainSeparated for PlayerActionBet {
+    fn domain_string() -> &'static str {
         "player_action_bet_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(self.seat);
-        append_player_bet_action(builder, &self.action);
-        builder.append_u64(self.nonce);
-    }
-}
-
-pub(crate) fn append_player_bet_action(builder: &mut TranscriptBuilder, action: &PlayerBetAction) {
-    match action {
-        PlayerBetAction::Fold => builder.append_u8(0),
-        PlayerBetAction::Check => builder.append_u8(1),
-        PlayerBetAction::Call => builder.append_u8(2),
-        PlayerBetAction::BetTo { to } => {
-            builder.append_u8(3);
-            builder.append_u64(*to);
-        }
-        PlayerBetAction::RaiseTo { to } => {
-            builder.append_u8(4);
-            builder.append_u64(*to);
-        }
-        PlayerBetAction::AllIn => builder.append_u8(5),
     }
 }
 

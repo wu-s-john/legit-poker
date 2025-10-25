@@ -29,10 +29,7 @@ use crate::ledger::snapshot::{
 };
 use crate::ledger::types::{GameId, HandId, StateHash};
 use crate::showdown::HandCategory;
-use crate::shuffling::data_structures::{
-    append_ciphertext, append_curve_point, append_shuffle_proof, DECK_SIZE,
-};
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::shuffling::data_structures::DECK_SIZE;
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -317,26 +314,31 @@ where
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
     C::Affine: Absorb,
 {
-    let mut builder = TranscriptBuilder::new("ledger/phase/shuffling");
-    builder.append_u64(DECK_SIZE as u64);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/phase/shuffling\0");
+
+    (DECK_SIZE as u64).serialize_compressed(&mut bytes)?;
     for cipher in &shuffling.initial_deck {
-        append_ciphertext(&mut builder, cipher);
+        cipher.serialize_compressed(&mut bytes)?;
     }
-    builder.append_u64(shuffling.steps.len() as u64);
+
+    (shuffling.steps.len() as u64).serialize_compressed(&mut bytes)?;
     for step in &shuffling.steps {
-        append_curve_point(&mut builder, &step.shuffler_public_key);
-        append_shuffle_proof(&mut builder, &step.proof);
+        step.shuffler_public_key.serialize_compressed(&mut bytes)?;
+        step.proof.serialize_compressed(&mut bytes)?;
     }
-    builder.append_u64(DECK_SIZE as u64);
+
+    (DECK_SIZE as u64).serialize_compressed(&mut bytes)?;
     for cipher in &shuffling.final_deck {
-        append_ciphertext(&mut builder, cipher);
+        cipher.serialize_compressed(&mut bytes)?;
     }
-    builder.append_u64(shuffling.expected_order.len() as u64);
+
+    (shuffling.expected_order.len() as u64).serialize_compressed(&mut bytes)?;
     for key in &shuffling.expected_order {
-        key.write_transcript(&mut builder);
+        key.serialize_compressed(&mut bytes)?;
     }
-    let payload = builder.finish();
-    let hash = hasher.hash(&payload);
+
+    let hash = hasher.hash(&bytes);
     let payload_json =
         serde_json::to_value(shuffling).context("failed to serialize shuffling phase")?;
     Ok((
@@ -359,13 +361,14 @@ where
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
     C::Affine: Absorb,
 {
-    let mut builder = TranscriptBuilder::new("ledger/phase/dealing");
-    append_dealing_phase(&mut builder, dealing)?;
-    Ok(hasher.hash(&builder.finish()))
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/phase/dealing\0");
+    serialize_dealing_phase(&mut bytes, dealing)?;
+    Ok(hasher.hash(&bytes))
 }
 
-fn append_dealing_phase<C>(
-    builder: &mut TranscriptBuilder,
+fn serialize_dealing_phase<C>(
+    bytes: &mut Vec<u8>,
     dealing: &crate::ledger::snapshot::DealingSnapshot<C>,
 ) -> anyhow::Result<()>
 where
@@ -374,82 +377,82 @@ where
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
     C::Affine: Absorb,
 {
-    builder.append_u64(dealing.assignments.len() as u64);
+    (dealing.assignments.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&card_index, dealt) in dealing.assignments.iter() {
-        builder.append_u8(card_index);
-        append_ciphertext(builder, &dealt.cipher);
+        card_index.serialize_compressed(&mut *bytes)?;
+        dealt.cipher.serialize_compressed(&mut *bytes)?;
         match dealt.source_index {
             Some(idx) => {
-                builder.append_u8(1);
-                builder.append_u8(idx);
+                1u8.serialize_compressed(&mut *bytes)?;
+                idx.serialize_compressed(&mut *bytes)?;
             }
-            None => builder.append_u8(0),
+            None => 0u8.serialize_compressed(&mut *bytes)?,
         }
     }
 
-    builder.append_u64(dealing.player_ciphertexts.len() as u64);
+    (dealing.player_ciphertexts.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&(seat, hole_index), ciphertext) in dealing.player_ciphertexts.iter() {
-        builder.append_u8(seat);
-        builder.append_u8(hole_index);
-        ciphertext.write_transcript(builder);
+        seat.serialize_compressed(&mut *bytes)?;
+        hole_index.serialize_compressed(&mut *bytes)?;
+        ciphertext.serialize_compressed(&mut *bytes)?;
     }
 
-    builder.append_u64(dealing.player_blinding_contribs.len() as u64);
+    (dealing.player_blinding_contribs.len() as u64).serialize_compressed(&mut *bytes)?;
     for ((shuffler_key, seat, hole_index), contrib) in dealing.player_blinding_contribs.iter() {
-        shuffler_key.write_transcript(builder);
-        builder.append_u8(*seat);
-        builder.append_u8(*hole_index);
-        contrib.write_transcript(builder);
+        shuffler_key.serialize_compressed(&mut *bytes)?;
+        seat.serialize_compressed(&mut *bytes)?;
+        hole_index.serialize_compressed(&mut *bytes)?;
+        contrib.serialize_compressed(&mut *bytes)?;
     }
 
-    builder.append_u64(dealing.player_unblinding_shares.len() as u64);
+    (dealing.player_unblinding_shares.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&(seat, hole_index), shares) in dealing.player_unblinding_shares.iter() {
-        builder.append_u8(seat);
-        builder.append_u8(hole_index);
-        builder.append_u64(shares.len() as u64);
+        seat.serialize_compressed(&mut *bytes)?;
+        hole_index.serialize_compressed(&mut *bytes)?;
+        (shares.len() as u64).serialize_compressed(&mut *bytes)?;
         for (member_key, share) in shares {
-            member_key.write_transcript(builder);
-            share.write_transcript(builder);
+            member_key.serialize_compressed(&mut *bytes)?;
+            share.serialize_compressed(&mut *bytes)?;
         }
     }
 
-    builder.append_u64(dealing.player_unblinding_combined.len() as u64);
+    (dealing.player_unblinding_combined.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&(seat, hole_index), combined) in dealing.player_unblinding_combined.iter() {
-        builder.append_u8(seat);
-        builder.append_u8(hole_index);
-        append_curve_point(builder, combined);
+        seat.serialize_compressed(&mut *bytes)?;
+        hole_index.serialize_compressed(&mut *bytes)?;
+        combined.serialize_compressed(&mut *bytes)?;
     }
 
-    builder.append_u64(dealing.community_decryption_shares.len() as u64);
+    (dealing.community_decryption_shares.len() as u64).serialize_compressed(&mut *bytes)?;
     for ((shuffler_key, card_index), share) in dealing.community_decryption_shares.iter() {
-        shuffler_key.write_transcript(builder);
-        builder.append_u8(*card_index);
-        append_curve_point(builder, &share.share);
-        share.proof.write_transcript(builder);
-        share.member_key.write_transcript(builder);
+        shuffler_key.serialize_compressed(&mut *bytes)?;
+        card_index.serialize_compressed(&mut *bytes)?;
+        share.share.serialize_compressed(&mut *bytes)?;
+        share.proof.serialize_compressed(&mut *bytes)?;
+        share.member_key.serialize_compressed(&mut *bytes)?;
     }
 
-    builder.append_u64(dealing.community_cards.len() as u64);
+    (dealing.community_cards.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&card_index, &value) in dealing.community_cards.iter() {
-        builder.append_u8(card_index);
-        builder.append_u8(value);
+        card_index.serialize_compressed(&mut *bytes)?;
+        value.serialize_compressed(&mut *bytes)?;
     }
 
-    builder.append_u64(dealing.card_plan.len() as u64);
+    (dealing.card_plan.len() as u64).serialize_compressed(&mut *bytes)?;
     for (&card, destination) in dealing.card_plan.iter() {
-        builder.append_u8(card);
+        card.serialize_compressed(&mut *bytes)?;
         match destination {
             CardDestination::Hole { seat, hole_index } => {
-                builder.append_u8(0);
-                builder.append_u8(*seat);
-                builder.append_u8(*hole_index);
+                0u8.serialize_compressed(&mut *bytes)?;
+                seat.serialize_compressed(&mut *bytes)?;
+                hole_index.serialize_compressed(&mut *bytes)?;
             }
             CardDestination::Board { board_index } => {
-                builder.append_u8(1);
-                builder.append_u8(*board_index);
+                1u8.serialize_compressed(&mut *bytes)?;
+                board_index.serialize_compressed(&mut *bytes)?;
             }
-            CardDestination::Burn => builder.append_u8(2),
-            CardDestination::Unused => builder.append_u8(3),
+            CardDestination::Burn => 2u8.serialize_compressed(&mut *bytes)?,
+            CardDestination::Unused => 3u8.serialize_compressed(&mut *bytes)?,
         }
     }
 
@@ -466,10 +469,10 @@ where
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
     C::Affine: Absorb,
 {
-    let mut builder = TranscriptBuilder::new("ledger/phase/dealing");
-    append_dealing_phase(&mut builder, dealing)?;
-    let payload = builder.finish();
-    let hash = hasher.hash(&payload);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/phase/dealing\0");
+    serialize_dealing_phase(&mut bytes, dealing)?;
+    let hash = hasher.hash(&bytes);
     let payload_json =
         serde_json::to_value(dealing).context("failed to serialize dealing phase")?;
     Ok((
@@ -492,15 +495,15 @@ where
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
 {
-    let mut builder = TranscriptBuilder::new("ledger/phase/betting");
-    append_betting_state(&mut builder, &betting.state);
-    builder.append_u64(betting.last_events.len() as u64);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/phase/betting\0");
+    serialize_betting_state(&mut bytes, &betting.state)?;
+    (betting.last_events.len() as u64).serialize_compressed(&mut bytes)?;
     for event in &betting.last_events {
-        append_player_action(&mut builder, event);
+        serialize_player_action(&mut bytes, event)?;
     }
 
-    let payload = builder.finish();
-    let hash = hasher.hash(&payload);
+    let hash = hasher.hash(&bytes);
     let payload_json =
         serde_json::to_value(betting).context("failed to serialize betting phase")?;
     Ok((
@@ -523,32 +526,36 @@ where
     C::ScalarField: PrimeField + Absorb,
     C::Affine: Absorb,
 {
-    let mut builder = TranscriptBuilder::new("ledger/phase/reveals");
-    builder.append_u64(reveals.board.len() as u64);
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/phase/reveals\0");
+
+    (reveals.board.len() as u64).serialize_compressed(&mut bytes)?;
     for card in &reveals.board {
-        builder.append_u8(*card);
-    }
-    builder.append_u64(reveals.revealed_holes.len() as u64);
-    for (&seat, hand) in reveals.revealed_holes.iter() {
-        builder.append_u8(seat);
-        for value in &hand.hole {
-            builder.append_u8(*value);
-        }
-        for cipher in &hand.hole_ciphertexts {
-            cipher.write_transcript(&mut builder);
-        }
-        for value in &hand.best_five {
-            builder.append_u8(*value);
-        }
-        builder.append_bytes(hand_category_label(hand.best_category).as_bytes());
-        for value in &hand.best_tiebreak {
-            builder.append_u8(*value);
-        }
-        builder.append_u64(hand.best_score as u64);
+        card.serialize_compressed(&mut bytes)?;
     }
 
-    let payload = builder.finish();
-    let hash = hasher.hash(&payload);
+    (reveals.revealed_holes.len() as u64).serialize_compressed(&mut bytes)?;
+    for (&seat, hand) in reveals.revealed_holes.iter() {
+        seat.serialize_compressed(&mut bytes)?;
+        for value in &hand.hole {
+            value.serialize_compressed(&mut bytes)?;
+        }
+        for cipher in &hand.hole_ciphertexts {
+            cipher.serialize_compressed(&mut bytes)?;
+        }
+        for value in &hand.best_five {
+            value.serialize_compressed(&mut bytes)?;
+        }
+        let label = hand_category_label(hand.best_category);
+        bytes.extend_from_slice(&(label.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(label.as_bytes());
+        for value in &hand.best_tiebreak {
+            value.serialize_compressed(&mut bytes)?;
+        }
+        (hand.best_score as u64).serialize_compressed(&mut bytes)?;
+    }
+
+    let hash = hasher.hash(&bytes);
     let payload_json =
         serde_json::to_value(reveals).context("failed to serialize reveals phase")?;
     Ok((
@@ -584,156 +591,181 @@ fn hand_category_label(category: HandCategory) -> &'static str {
     }
 }
 
-fn append_betting_state(builder: &mut TranscriptBuilder, state: &BettingState) {
-    builder.append_bytes(street_label(state.street).as_bytes());
-    builder.append_u8(state.button);
-    builder.append_u8(state.first_to_act);
-    builder.append_u8(state.to_act);
-    builder.append_u64(state.current_bet_to_match);
-    builder.append_u64(state.last_full_raise_amount);
+fn serialize_betting_state(bytes: &mut Vec<u8>, state: &BettingState) -> anyhow::Result<()> {
+    let label = street_label(state.street);
+    bytes.extend_from_slice(&(label.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(label.as_bytes());
+
+    state.button.serialize_compressed(&mut *bytes)?;
+    state.first_to_act.serialize_compressed(&mut *bytes)?;
+    state.to_act.serialize_compressed(&mut *bytes)?;
+    state.current_bet_to_match.serialize_compressed(&mut *bytes)?;
+    state.last_full_raise_amount.serialize_compressed(&mut *bytes)?;
     match state.last_aggressor {
         Some(seat) => {
-            builder.append_u8(1);
-            builder.append_u8(seat);
+            1u8.serialize_compressed(&mut *bytes)?;
+            seat.serialize_compressed(&mut *bytes)?;
         }
-        None => builder.append_u8(0),
+        None => 0u8.serialize_compressed(&mut *bytes)?,
     }
-    builder.append_u8(state.voluntary_bet_opened as u8);
+    (state.voluntary_bet_opened as u8).serialize_compressed(&mut *bytes)?;
 
-    builder.append_u64(state.players.len() as u64);
+    (state.players.len() as u64).serialize_compressed(&mut *bytes)?;
     for player in &state.players {
-        append_player_state(builder, player);
+        serialize_player_state(bytes, player)?;
     }
 
-    append_pots(builder, &state.pots);
-    state.cfg.append_to_transcript(builder);
+    serialize_pots(bytes, &state.pots)?;
+    // Inline HandConfig serialization
+    state.cfg.stakes.small_blind.serialize_compressed(&mut *bytes)?;
+    state.cfg.stakes.big_blind.serialize_compressed(&mut *bytes)?;
+    state.cfg.stakes.ante.serialize_compressed(&mut *bytes)?;
+    state.cfg.button.serialize_compressed(&mut *bytes)?;
+    state.cfg.small_blind_seat.serialize_compressed(&mut *bytes)?;
+    state.cfg.big_blind_seat.serialize_compressed(&mut *bytes)?;
+    (state.cfg.check_raise_allowed as u8).serialize_compressed(&mut *bytes)?;
 
-    builder.append_u64(state.pending_to_match.len() as u64);
+    (state.pending_to_match.len() as u64).serialize_compressed(&mut *bytes)?;
     for seat in &state.pending_to_match {
-        builder.append_u8(*seat);
+        seat.serialize_compressed(&mut *bytes)?;
     }
-    builder.append_u8(state.betting_locked_all_in as u8);
+    (state.betting_locked_all_in as u8).serialize_compressed(&mut *bytes)?;
 
-    builder.append_u64(state.action_log.0.len() as u64);
+    (state.action_log.0.len() as u64).serialize_compressed(&mut *bytes)?;
     for entry in &state.action_log.0 {
-        builder.append_bytes(street_label(entry.street).as_bytes());
-        builder.append_u8(entry.seat);
-        append_normalized_action(builder, &entry.action);
-        builder.append_u64(entry.price_to_call_before);
-        builder.append_u64(entry.current_bet_to_match_after);
+        let street = street_label(entry.street);
+        bytes.extend_from_slice(&(street.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(street.as_bytes());
+        entry.seat.serialize_compressed(&mut *bytes)?;
+        serialize_normalized_action(bytes, &entry.action)?;
+        entry.price_to_call_before.serialize_compressed(&mut *bytes)?;
+        entry.current_bet_to_match_after.serialize_compressed(&mut *bytes)?;
     }
+
+    Ok(())
 }
 
-fn append_player_state(builder: &mut TranscriptBuilder, state: &EnginePlayerState) {
-    builder.append_u8(state.seat);
+fn serialize_player_state(bytes: &mut Vec<u8>, state: &EnginePlayerState) -> anyhow::Result<()> {
+    state.seat.serialize_compressed(&mut *bytes)?;
     match state.player_id {
         Some(id) => {
-            builder.append_u8(1);
-            builder.append_u64(id);
+            1u8.serialize_compressed(&mut *bytes)?;
+            id.serialize_compressed(&mut *bytes)?;
         }
-        None => builder.append_u8(0),
+        None => 0u8.serialize_compressed(&mut *bytes)?,
     }
-    builder.append_u64(state.stack);
-    builder.append_u64(state.committed_this_round);
-    builder.append_u64(state.committed_total);
-    builder.append_u8(match state.status {
-        EnginePlayerStatus::Active => 0,
-        EnginePlayerStatus::Folded => 1,
-        EnginePlayerStatus::AllIn => 2,
-        EnginePlayerStatus::SittingOut => 3,
-    });
-    builder.append_u8(state.has_acted_this_round as u8);
+    state.stack.serialize_compressed(&mut *bytes)?;
+    state.committed_this_round.serialize_compressed(&mut *bytes)?;
+    state.committed_total.serialize_compressed(&mut *bytes)?;
+    let status_byte = match state.status {
+        EnginePlayerStatus::Active => 0u8,
+        EnginePlayerStatus::Folded => 1u8,
+        EnginePlayerStatus::AllIn => 2u8,
+        EnginePlayerStatus::SittingOut => 3u8,
+    };
+    status_byte.serialize_compressed(&mut *bytes)?;
+    (state.has_acted_this_round as u8).serialize_compressed(&mut *bytes)?;
+
+    Ok(())
 }
 
-fn append_pots(builder: &mut TranscriptBuilder, pots: &EnginePots) {
-    append_pot(builder, &pots.main);
-    builder.append_u64(pots.sides.len() as u64);
+fn serialize_pots(bytes: &mut Vec<u8>, pots: &EnginePots) -> anyhow::Result<()> {
+    serialize_pot(bytes, &pots.main)?;
+    (pots.sides.len() as u64).serialize_compressed(&mut *bytes)?;
     for pot in &pots.sides {
-        append_pot(builder, pot);
+        serialize_pot(bytes, pot)?;
     }
+    Ok(())
 }
 
-fn append_pot(builder: &mut TranscriptBuilder, pot: &EnginePot) {
-    builder.append_u64(pot.amount);
-    builder.append_u64(pot.eligible.len() as u64);
+fn serialize_pot(bytes: &mut Vec<u8>, pot: &EnginePot) -> anyhow::Result<()> {
+    pot.amount.serialize_compressed(&mut *bytes)?;
+    (pot.eligible.len() as u64).serialize_compressed(&mut *bytes)?;
     for seat in &pot.eligible {
-        builder.append_u8(*seat);
+        seat.serialize_compressed(&mut *bytes)?;
     }
+    Ok(())
 }
 
-fn append_normalized_action(builder: &mut TranscriptBuilder, action: &NormalizedAction) {
+fn serialize_normalized_action(bytes: &mut Vec<u8>, action: &NormalizedAction) -> anyhow::Result<()> {
     match action {
-        NormalizedAction::Fold => builder.append_u8(0),
-        NormalizedAction::Check => builder.append_u8(1),
+        NormalizedAction::Fold => 0u8.serialize_compressed(&mut *bytes)?,
+        NormalizedAction::Check => 1u8.serialize_compressed(&mut *bytes)?,
         NormalizedAction::Call {
             call_amount,
             full_call,
         } => {
-            builder.append_u8(2);
-            builder.append_u64(*call_amount);
-            builder.append_u8(*full_call as u8);
+            2u8.serialize_compressed(&mut *bytes)?;
+            call_amount.serialize_compressed(&mut *bytes)?;
+            (*full_call as u8).serialize_compressed(&mut *bytes)?;
         }
         NormalizedAction::Bet { to } => {
-            builder.append_u8(3);
-            builder.append_u64(*to);
+            3u8.serialize_compressed(&mut *bytes)?;
+            to.serialize_compressed(&mut *bytes)?;
         }
         NormalizedAction::Raise {
             to,
             raise_amount,
             full_raise,
         } => {
-            builder.append_u8(4);
-            builder.append_u64(*to);
-            builder.append_u64(*raise_amount);
-            builder.append_u8(*full_raise as u8);
+            4u8.serialize_compressed(&mut *bytes)?;
+            to.serialize_compressed(&mut *bytes)?;
+            raise_amount.serialize_compressed(&mut *bytes)?;
+            (*full_raise as u8).serialize_compressed(&mut *bytes)?;
         }
         NormalizedAction::AllInAsCall {
             call_amount,
             full_call,
         } => {
-            builder.append_u8(5);
-            builder.append_u64(*call_amount);
-            builder.append_u8(*full_call as u8);
+            5u8.serialize_compressed(&mut *bytes)?;
+            call_amount.serialize_compressed(&mut *bytes)?;
+            (*full_call as u8).serialize_compressed(&mut *bytes)?;
         }
         NormalizedAction::AllInAsBet { to } => {
-            builder.append_u8(6);
-            builder.append_u64(*to);
+            6u8.serialize_compressed(&mut *bytes)?;
+            to.serialize_compressed(&mut *bytes)?;
         }
         NormalizedAction::AllInAsRaise {
             to,
             raise_amount,
             full_raise,
         } => {
-            builder.append_u8(7);
-            builder.append_u64(*to);
-            builder.append_u64(*raise_amount);
-            builder.append_u8(*full_raise as u8);
+            7u8.serialize_compressed(&mut *bytes)?;
+            to.serialize_compressed(&mut *bytes)?;
+            raise_amount.serialize_compressed(&mut *bytes)?;
+            (*full_raise as u8).serialize_compressed(&mut *bytes)?;
         }
     }
+    Ok(())
 }
 
-fn append_player_action<C>(builder: &mut TranscriptBuilder, event: &AnyPlayerActionMsg<C>)
+fn serialize_player_action<C>(bytes: &mut Vec<u8>, event: &AnyPlayerActionMsg<C>) -> anyhow::Result<()>
 where
     C: CurveGroup,
 {
     match event {
         AnyPlayerActionMsg::Preflop(msg) => {
-            builder.append_bytes(b"preflop");
-            msg.write_transcript(builder);
+            bytes.extend_from_slice(&(7u32).to_be_bytes()); // "preflop".len()
+            bytes.extend_from_slice(b"preflop");
+            msg.serialize_compressed(&mut *bytes)?;
         }
         AnyPlayerActionMsg::Flop(msg) => {
-            builder.append_bytes(b"flop");
-            msg.write_transcript(builder);
+            bytes.extend_from_slice(&(4u32).to_be_bytes()); // "flop".len()
+            bytes.extend_from_slice(b"flop");
+            msg.serialize_compressed(&mut *bytes)?;
         }
         AnyPlayerActionMsg::Turn(msg) => {
-            builder.append_bytes(b"turn");
-            msg.write_transcript(builder);
+            bytes.extend_from_slice(&(4u32).to_be_bytes()); // "turn".len()
+            bytes.extend_from_slice(b"turn");
+            msg.serialize_compressed(&mut *bytes)?;
         }
         AnyPlayerActionMsg::River(msg) => {
-            builder.append_bytes(b"river");
-            msg.write_transcript(builder);
+            bytes.extend_from_slice(&(5u32).to_be_bytes()); // "river".len()
+            bytes.extend_from_slice(b"river");
+            msg.serialize_compressed(&mut *bytes)?;
         }
     }
+    Ok(())
 }
 
 fn cast_sequence(sequence: SnapshotSeq) -> anyhow::Result<i32> {

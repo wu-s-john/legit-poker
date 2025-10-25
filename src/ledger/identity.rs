@@ -5,7 +5,7 @@ use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{de::Error as DeError, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::signing::DomainSeparated;
 
 /// Curve point wrapper that caches canonical compressed bytes so it can be
 /// ordered, hashed, and serialized cheaply.
@@ -140,16 +140,12 @@ where
     }
 }
 
-impl<C> Signable for CanonicalKey<C>
+impl<C> DomainSeparated for CanonicalKey<C>
 where
     C: CurveGroup + CanonicalSerialize,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/canonical_key_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_bytes(&self.bytes);
     }
 }
 

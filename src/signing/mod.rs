@@ -1,11 +1,40 @@
 use anyhow::Result;
-use ark_crypto_primitives::signature::SignatureScheme;
+use ark_crypto_primitives::signature::{schnorr::Signature, SignatureScheme};
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
-const DOMAIN_TAG: &[u8] = b"legit-poker/action/v1";
+/// Trait for types that can be signed with domain separation.
+///
+/// This trait provides a domain string for cryptographic domain separation
+/// when computing signing bytes via canonical serialization.
+pub trait DomainSeparated {
+    /// Returns the domain separation string for this type.
+    /// Must be unique across all signable types in the application.
+    fn domain_string() -> &'static str;
+}
+
+/// Compute canonical signing bytes for a value.
+///
+/// This function serializes a value using arkworks' `CanonicalSerialize`
+/// trait, which provides deterministic byte encoding suitable for
+/// cryptographic signatures.
+///
+/// # Arguments
+/// * `value` - The value to serialize
+///
+/// # Returns
+/// A vector of compressed canonical bytes suitable for signing
+pub fn signing_bytes<T>(value: &T) -> Result<Vec<u8>>
+where
+    T: CanonicalSerialize + DomainSeparated,
+{
+    let mut bytes = Vec::new();
+    value
+        .serialize_compressed(&mut bytes)
+        .map_err(|e| anyhow::anyhow!("canonical serialization failed: {}", e))?;
+    Ok(bytes)
+}
 
 /// Trait for signature types that can be converted to/from bytes for hex serialization.
 pub trait SignatureBytes: Sized {
@@ -25,7 +54,7 @@ impl SignatureBytes for Vec<u8> {
 }
 
 // Implement for Schnorr signatures
-impl<C> SignatureBytes for ark_crypto_primitives::signature::schnorr::Signature<C>
+impl<C> SignatureBytes for Signature<C>
 where
     C: CurveGroup,
     C::ScalarField: CanonicalSerialize + CanonicalDeserialize,
@@ -53,78 +82,24 @@ where
     }
 }
 
-/// Builder for canonical action transcripts.
-pub struct TranscriptBuilder {
-    buffer: Vec<u8>,
-}
-
-impl TranscriptBuilder {
-    pub fn new(kind: &'static str) -> Self {
-        let mut buffer = Vec::with_capacity(128);
-        buffer.extend_from_slice(DOMAIN_TAG);
-        buffer.extend_from_slice(&(kind.len() as u16).to_be_bytes());
-        buffer.extend_from_slice(kind.as_bytes());
-        Self { buffer }
-    }
-
-    pub fn append_u8(&mut self, value: u8) {
-        self.buffer.push(value);
-    }
-
-    pub fn append_u64(&mut self, value: u64) {
-        self.buffer.extend_from_slice(&value.to_be_bytes());
-    }
-
-    pub fn append_i64(&mut self, value: i64) {
-        self.buffer.extend_from_slice(&value.to_be_bytes());
-    }
-
-    pub fn append_bytes(&mut self, bytes: &[u8]) {
-        self.buffer
-            .extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-        self.buffer.extend_from_slice(bytes);
-    }
-
-    pub fn finish(self) -> Vec<u8> {
-        self.buffer
-    }
-}
-
-/// Values that can be signed into a canonical transcript.
-pub trait Signable {
-    /// Logical kind string used for domain separation.
-    fn domain_kind(&self) -> &'static str;
-
-    /// Append this value's canonical representation into the transcript builder.
-    fn write_transcript(&self, builder: &mut TranscriptBuilder);
-
-    /// Obtain canonical signing bytes.
-    fn to_signing_bytes(&self) -> Vec<u8> {
-        let mut builder = TranscriptBuilder::new(self.domain_kind());
-        self.write_transcript(&mut builder);
-        builder.finish()
-    }
-}
-
-/// A signed envelope carrying a signable value, its signature, and the exact
-/// transcript bytes that were signed (domain-separated and canonicalized).
+/// A signed envelope carrying a value and its cryptographic signature.
+///
+/// The signing bytes are computed on-demand via canonical serialization,
+/// eliminating the need to store redundant transcript data.
 #[derive(Clone, Debug)]
 pub struct WithSignature<Sig, T>
 where
     Sig: SignatureBytes,
-    T: Signable,
+    T: CanonicalSerialize + DomainSeparated,
 {
     pub value: T,
     pub signature: Sig,
-    /// Canonical bytes used for signing/verification.
-    /// This field is recomputed during deserialization and not serialized.
-    pub transcript: Vec<u8>,
 }
 
 impl<Sig, T> Serialize for WithSignature<Sig, T>
 where
     Sig: SignatureBytes,
-    T: Signable + Serialize,
+    T: CanonicalSerialize + DomainSeparated + Serialize,
 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -143,7 +118,7 @@ where
 impl<'de, Sig, T> Deserialize<'de> for WithSignature<Sig, T>
 where
     Sig: SignatureBytes,
-    T: Signable + Deserialize<'de>,
+    T: CanonicalSerialize + DomainSeparated + Deserialize<'de>,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -157,7 +132,7 @@ where
         impl<'de, Sig, T> Visitor<'de> for WithSignatureVisitor<Sig, T>
         where
             Sig: SignatureBytes,
-            T: Signable + Deserialize<'de>,
+            T: CanonicalSerialize + DomainSeparated + Deserialize<'de>,
         {
             type Value = WithSignature<Sig, T>;
 
@@ -193,7 +168,8 @@ where
                 }
 
                 let value = value.ok_or_else(|| serde::de::Error::missing_field("value"))?;
-                let sig_hex = signature_hex.ok_or_else(|| serde::de::Error::missing_field("signature"))?;
+                let sig_hex =
+                    signature_hex.ok_or_else(|| serde::de::Error::missing_field("signature"))?;
 
                 // Strip 0x prefix if present
                 let hex_str = sig_hex.strip_prefix("0x").unwrap_or(&sig_hex);
@@ -204,14 +180,9 @@ where
                 // Convert bytes to signature type
                 let signature = Sig::from_bytes(&sig_bytes).map_err(serde::de::Error::custom)?;
 
-                // Recompute transcript from the deserialized value
-                let transcript = value.to_signing_bytes();
+                // No need to precompute transcript - computed on-demand in verify()
 
-                Ok(WithSignature {
-                    value,
-                    signature,
-                    transcript,
-                })
+                Ok(WithSignature { value, signature })
             }
         }
 
@@ -226,11 +197,12 @@ where
 impl<Sig, T> WithSignature<Sig, T>
 where
     Sig: SignatureBytes,
-    T: Signable,
+    T: CanonicalSerialize + DomainSeparated,
 {
     /// Build a signed envelope using a provided SignatureScheme.
     ///
-    /// The transcript is constructed from the value's `to_signing_bytes`.
+    /// The signing bytes are computed from the value's canonical serialization,
+    /// signed, and then discarded (recomputed on-demand for verification).
     pub fn new<S, R>(
         value: T,
         params: &S::Parameters,
@@ -241,102 +213,27 @@ where
         S: SignatureScheme<Signature = Sig>,
         R: rand::Rng,
     {
-        let transcript = value.to_signing_bytes();
+        // Compute signing bytes transiently for signing
+        let signing_bytes = signing_bytes(&value)?;
 
-        // Sign transcript using the provided scheme
-        let signature = S::sign(params, sk, &transcript, rng)
+        // Sign the canonical bytes
+        let signature = S::sign(params, sk, &signing_bytes, rng)
             .map_err(|e| anyhow::anyhow!("signature error: {e}"))?;
 
-        Ok(WithSignature {
-            value,
-            signature,
-            transcript,
-        })
+        Ok(WithSignature { value, signature })
     }
 
     /// Verify this signature against the provided public parameters and key.
+    ///
+    /// Recomputes the signing bytes on-demand from the stored value.
     pub fn verify<S>(&self, params: &S::Parameters, pk: &S::PublicKey) -> Result<bool>
     where
         S: SignatureScheme<Signature = Sig>,
     {
-        S::verify(params, pk, &self.transcript, &self.signature)
+        // Recompute signing bytes on-demand
+        let signing_bytes = signing_bytes(&self.value)?;
+
+        S::verify(params, pk, &signing_bytes, &self.signature)
             .map_err(|e| anyhow::anyhow!("signature error: {e}"))
-    }
-}
-
-impl Signable for u8 {
-    fn domain_kind(&self) -> &'static str {
-        "primitive/u8_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(*self);
-    }
-}
-
-impl Signable for u64 {
-    fn domain_kind(&self) -> &'static str {
-        "primitive/u64_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u64(*self);
-    }
-}
-
-impl Signable for i64 {
-    fn domain_kind(&self) -> &'static str {
-        "primitive/i64_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_i64(*self);
-    }
-}
-
-impl Signable for bool {
-    fn domain_kind(&self) -> &'static str {
-        "primitive/bool_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(*self as u8);
-    }
-}
-
-impl<T> Signable for Option<T>
-where
-    T: Signable,
-{
-    fn domain_kind(&self) -> &'static str {
-        "option/v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        match self {
-            Some(value) => {
-                builder.append_u8(1);
-                value.write_transcript(builder);
-            }
-            None => builder.append_u8(0),
-        }
-    }
-}
-
-impl<K, V> Signable for BTreeMap<K, V>
-where
-    K: Ord + Signable,
-    V: Signable,
-{
-    fn domain_kind(&self) -> &'static str {
-        "collection/btree_map_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u64(self.len() as u64);
-        for (key, value) in self.iter() {
-            key.write_transcript(builder);
-            value.write_transcript(builder);
-        }
     }
 }

@@ -1,7 +1,6 @@
 use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
-use crate::shuffling::data_structures::append_curve_point;
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::signing::DomainSeparated;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::{BigInteger, PrimeField, UniformRand};
@@ -32,19 +31,12 @@ pub struct ChaumPedersenProof<C: CurveGroup> {
     pub z: C::ScalarField,
 }
 
-impl<C> Signable for ChaumPedersenProof<C>
+impl<C> DomainSeparated for ChaumPedersenProof<C>
 where
     C: CurveGroup,
-    C::ScalarField: PrimeField,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "chaum_pedersen/proof_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        append_curve_point(builder, &self.t_g);
-        append_curve_point(builder, &self.t_h);
-        builder.append_bytes(&self.z.into_bigint().to_bytes_be());
     }
 }
 

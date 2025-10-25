@@ -11,15 +11,13 @@ use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::ledger::actor::AnyActor;
 use crate::ledger::{GameActor, GameId, HandId, PlayerActor, ShufflerActor};
-use crate::player::append_player_bet_action;
-use crate::shuffling::data_structures::{
-    append_ciphertext, append_curve_point, append_shuffle_proof, ElGamalCiphertext, ShuffleProof,
-    DECK_SIZE,
-};
+use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
-use crate::signing::{Signable, SignatureBytes as SignatureBytesT, TranscriptBuilder, WithSignature};
+use crate::signing::{
+    DomainSeparated, SignatureBytes as SignatureBytesT, WithSignature,
+};
 use rand::Rng;
 
 use super::snapshot::phases::{
@@ -41,6 +39,127 @@ pub struct FlopStreet;
 pub struct TurnStreet;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RiverStreet;
+
+// Manual CanonicalSerialize implementations for unit structs
+impl CanonicalSerialize for PreflopStreet {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        0
+    }
+}
+
+impl CanonicalDeserialize for PreflopStreet {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(PreflopStreet)
+    }
+}
+
+impl ark_serialize::Valid for PreflopStreet {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for FlopStreet {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        0
+    }
+}
+
+impl CanonicalDeserialize for FlopStreet {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(FlopStreet)
+    }
+}
+
+impl ark_serialize::Valid for FlopStreet {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for TurnStreet {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        0
+    }
+}
+
+impl CanonicalDeserialize for TurnStreet {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(TurnStreet)
+    }
+}
+
+impl ark_serialize::Valid for TurnStreet {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalSerialize for RiverStreet {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        _writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        0
+    }
+}
+
+impl CanonicalDeserialize for RiverStreet {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        _reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        Ok(RiverStreet)
+    }
+}
+
+impl ark_serialize::Valid for RiverStreet {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
 
 impl Street for PreflopStreet {
     fn status() -> HandStatus {
@@ -92,18 +211,63 @@ where
     pub _curve: PhantomData<C>,
 }
 
-impl<R, C> Signable for GamePlayerMessage<R, C>
+impl<R, C> CanonicalSerialize for GamePlayerMessage<R, C>
+where
+    R: Street + CanonicalSerialize,
+    C: CurveGroup,
+{
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        self.street.serialize_with_mode(&mut writer, compress)?;
+        self.action.serialize_with_mode(&mut writer, compress)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        self.street.serialized_size(compress) + self.action.serialized_size(compress)
+    }
+}
+
+impl<R, C> CanonicalDeserialize for GamePlayerMessage<R, C>
+where
+    R: Street + CanonicalSerialize + CanonicalDeserialize,
+    C: CurveGroup,
+{
+    fn deserialize_with_mode<RE: ark_serialize::Read>(
+        mut reader: RE,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let street = R::deserialize_with_mode(&mut reader, compress, validate)?;
+        let action = PlayerBetAction::deserialize_with_mode(&mut reader, compress, validate)?;
+        Ok(Self {
+            street,
+            action,
+            _curve: PhantomData,
+        })
+    }
+}
+
+impl<R, C> ark_serialize::Valid for GamePlayerMessage<R, C>
+where
+    R: Street + CanonicalSerialize + CanonicalDeserialize,
+    C: CurveGroup,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
+
+impl<R, C> DomainSeparated for GamePlayerMessage<R, C>
 where
     R: Street,
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/game_player_message_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_bytes(R::transcript_kind().as_bytes());
-        append_player_bet_action(builder, &self.action);
     }
 }
 
@@ -122,7 +286,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
@@ -140,23 +304,12 @@ where
     pub _curve: PhantomData<C>,
 }
 
-impl<C> Signable for GameShuffleMessage<C>
+impl<C> DomainSeparated for GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/game_shuffle_message_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u64(u64::from(self.turn_index));
-        for cipher in &self.deck_in {
-            append_ciphertext(builder, cipher);
-        }
-        for cipher in &self.deck_out {
-            append_ciphertext(builder, cipher);
-        }
-        append_shuffle_proof(builder, &self.proof);
     }
 }
 
@@ -181,7 +334,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
@@ -197,18 +350,12 @@ where
     pub _curve: PhantomData<C>,
 }
 
-impl<C> Signable for GameBlindingDecryptionMessage<C>
+impl<C> DomainSeparated for GameBlindingDecryptionMessage<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/game_blinding_decryption_message_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(self.card_in_deck_position);
-        append_curve_point(builder, &self.target_player_public_key);
-        self.share.write_transcript(builder);
     }
 }
 
@@ -231,7 +378,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -247,18 +394,12 @@ where
     pub _curve: PhantomData<C>,
 }
 
-impl<C> Signable for GamePartialUnblindingShareMessage<C>
+impl<C> DomainSeparated for GamePartialUnblindingShareMessage<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/game_partial_unblinding_share_message_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(self.card_in_deck_position);
-        append_curve_point(builder, &self.target_player_public_key);
-        self.share.write_transcript(builder);
     }
 }
 
@@ -281,7 +422,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize, C::BaseField: CanonicalSerialize, C::ScalarField: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize, C::BaseField: CanonicalDeserialize, C::ScalarField: CanonicalDeserialize"
@@ -296,24 +437,12 @@ where
     pub _curve: PhantomData<C>,
 }
 
-impl<C> Signable for GameShowdownMessage<C>
+impl<C> DomainSeparated for GameShowdownMessage<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/game_showdown_message_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        for proof in &self.chaum_pedersen_proofs {
-            proof.write_transcript(builder);
-        }
-        for &pos in &self.card_in_deck_position {
-            builder.append_u8(pos);
-        }
-        for ct in &self.hole_ciphertexts {
-            ct.write_transcript(builder);
-        }
     }
 }
 
@@ -356,49 +485,121 @@ where
     Showdown(GameShowdownMessage<C>),
 }
 
-impl<C> Signable for AnyGameMessage<C>
+impl<C> DomainSeparated for AnyGameMessage<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
+    fn domain_string() -> &'static str {
         "ledger/message_v1"
     }
+}
 
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
+impl<C> CanonicalSerialize for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
         match self {
             AnyGameMessage::Shuffle(msg) => {
-                builder.append_u8(0);
-                builder.append_bytes(&msg.to_signing_bytes());
+                0u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::Blinding(msg) => {
-                builder.append_u8(1);
-                builder.append_bytes(&msg.to_signing_bytes());
+                1u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::PartialUnblinding(msg) => {
-                builder.append_u8(2);
-                builder.append_bytes(&msg.to_signing_bytes());
+                2u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::PlayerPreflop(msg) => {
-                builder.append_u8(3);
-                builder.append_bytes(&msg.to_signing_bytes());
+                3u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::PlayerFlop(msg) => {
-                builder.append_u8(4);
-                builder.append_bytes(&msg.to_signing_bytes());
+                4u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::PlayerTurn(msg) => {
-                builder.append_u8(5);
-                builder.append_bytes(&msg.to_signing_bytes());
+                5u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::PlayerRiver(msg) => {
-                builder.append_u8(6);
-                builder.append_bytes(&msg.to_signing_bytes());
+                6u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
             AnyGameMessage::Showdown(msg) => {
-                builder.append_u8(7);
-                builder.append_bytes(&msg.to_signing_bytes());
+                7u8.serialize_with_mode(&mut writer, compress)?;
+                msg.serialize_with_mode(&mut writer, compress)?;
             }
         }
+        Ok(())
+    }
+
+    fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
+        1 + match self {
+            AnyGameMessage::Shuffle(msg) => msg.serialized_size(compress),
+            AnyGameMessage::Blinding(msg) => msg.serialized_size(compress),
+            AnyGameMessage::PartialUnblinding(msg) => msg.serialized_size(compress),
+            AnyGameMessage::PlayerPreflop(msg) => msg.serialized_size(compress),
+            AnyGameMessage::PlayerFlop(msg) => msg.serialized_size(compress),
+            AnyGameMessage::PlayerTurn(msg) => msg.serialized_size(compress),
+            AnyGameMessage::PlayerRiver(msg) => msg.serialized_size(compress),
+            AnyGameMessage::Showdown(msg) => msg.serialized_size(compress),
+        }
+    }
+}
+
+impl<C> CanonicalDeserialize for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        mut reader: R,
+        compress: ark_serialize::Compress,
+        validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let discriminant = u8::deserialize_with_mode(&mut reader, compress, validate)?;
+        match discriminant {
+            0 => Ok(AnyGameMessage::Shuffle(
+                GameShuffleMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            1 => Ok(AnyGameMessage::Blinding(
+                GameBlindingDecryptionMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            2 => Ok(AnyGameMessage::PartialUnblinding(
+                GamePartialUnblindingShareMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            3 => Ok(AnyGameMessage::PlayerPreflop(
+                GamePlayerMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            4 => Ok(AnyGameMessage::PlayerFlop(
+                GamePlayerMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            5 => Ok(AnyGameMessage::PlayerTurn(
+                GamePlayerMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            6 => Ok(AnyGameMessage::PlayerRiver(
+                GamePlayerMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            7 => Ok(AnyGameMessage::Showdown(
+                GameShowdownMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+            )),
+            _ => Err(ark_serialize::SerializationError::InvalidData),
+        }
+    }
+}
+
+impl<C> ark_serialize::Valid for AnyGameMessage<C>
+where
+    C: CurveGroup,
+{
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
     }
 }
 
@@ -455,7 +656,7 @@ where
 pub struct EnvelopedMessage<C, M = AnyGameMessage<C>>
 where
     C: CurveGroup,
-    M: GameMessage<C> + Signable,
+    M: GameMessage<C> + CanonicalSerialize + DomainSeparated,
 {
     pub hand_id: HandId,
     pub game_id: GameId,
@@ -564,14 +765,13 @@ where
     S: SignatureScheme,
     S::Signature: SignatureBytesT,
     C: CurveGroup,
-    M: GameMessage<C> + Signable,
+    M: GameMessage<C> + CanonicalSerialize + DomainSeparated,
     R: Rng,
 {
     let signed = WithSignature::<S::Signature, M>::new::<S, _>(message, params, secret, rng)?;
     let WithSignature {
         value,
         signature,
-        transcript,
     } = signed;
     let signature_bytes = SignatureBytesT::to_bytes(&signature);
 
@@ -584,7 +784,6 @@ where
         message: WithSignature {
             value,
             signature: signature_bytes,
-            transcript,
         },
     })
 }
@@ -641,7 +840,7 @@ impl<C: CurveGroup> GameMessage<C> for GameShowdownMessage<C> {
 mod tests {
     use super::*;
     use crate::player::PlayerActionBet;
-    use crate::signing::{Signable, WithSignature};
+    use crate::signing::WithSignature;
     use crate::test_utils::serde::assert_round_trip_json;
     use anyhow::Result;
     use ark_crypto_primitives::signature::{schnorr::Schnorr, SignatureScheme};
@@ -707,16 +906,18 @@ mod tests {
 
     fn sign_and_verify<T>(value: T) -> Result<()>
     where
-        T: Signable + Clone,
+        T: CanonicalSerialize + DomainSeparated + Clone,
     {
         let (params, pk, sk) = test_keypair();
         let mut rng = StdRng::from_seed([99u8; 32]);
-        let expected = value.to_signing_bytes();
+        let expected = crate::signing::signing_bytes(&value)?;
         let signed = WithSignature::<<Scheme as SignatureScheme>::Signature, T>::new::<
             Scheme,
             StdRng,
         >(value.clone(), &params, &sk, &mut rng)?;
-        assert_eq!(signed.transcript, expected);
+        // Verify that signing bytes can be recomputed
+        let actual = crate::signing::signing_bytes(&signed.value)?;
+        assert_eq!(actual, expected);
         assert!(signed.verify::<Scheme>(&params, &pk)?);
         Ok(())
     }
@@ -818,7 +1019,6 @@ mod tests {
     fn envelopes_round_trip_with_serde() {
         let player_message =
             GamePlayerMessage::<PreflopStreet, GrumpkinProjective>::new(PlayerBetAction::Call);
-        let transcript_player = player_message.to_signing_bytes();
         let player_envelope = EnvelopedMessage::<GrumpkinProjective, _> {
             hand_id: 10,
             game_id: 20,
@@ -832,7 +1032,6 @@ mod tests {
             message: WithSignature {
                 value: player_message,
                 signature: vec![0, 1, 2],
-                transcript: transcript_player,
             },
         };
         assert_round_trip_json(&player_envelope);
@@ -841,7 +1040,6 @@ mod tests {
             PreflopStreet,
             GrumpkinProjective,
         >::new(PlayerBetAction::Check));
-        let transcript_any = any_message.to_signing_bytes();
         let envelope = AnyMessageEnvelope {
             hand_id: 30,
             game_id: 40,
@@ -855,7 +1053,6 @@ mod tests {
             message: WithSignature {
                 value: any_message,
                 signature: vec![4, 5, 6],
-                transcript: transcript_any,
             },
         };
         assert_round_trip_json(&envelope);

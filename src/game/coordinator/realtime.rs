@@ -642,7 +642,6 @@ where
     let WithSignature {
         value,
         signature,
-        transcript,
     } = message;
 
     let shuffle_message = match value {
@@ -684,7 +683,6 @@ where
         message: WithSignature {
             value: shuffle_message,
             signature,
-            transcript,
         },
     };
 

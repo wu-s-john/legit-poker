@@ -3,6 +3,7 @@ use ark_crypto_primitives::signature::SignatureScheme;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand, Zero};
+use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ use crate::shuffling::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
     DECK_SIZE,
 };
-use crate::signing::{Signable, SignatureBytes, WithSignature};
+use crate::signing::{DomainSeparated, SignatureBytes, WithSignature};
 
 use super::Deck;
 
@@ -342,7 +343,7 @@ where
         rng: &mut R,
     ) -> Result<(EnvelopedMessage<C, M>, AnyMessageEnvelope<C>)>
     where
-        M: GameMessage<C, Actor = ShufflerActor<C>> + Signable + Clone,
+        M: GameMessage<C, Actor = ShufflerActor<C>> + Clone + CanonicalSerialize + DomainSeparated,
         R: Rng,
         S::Signature: SignatureBytes,
         AnyGameMessage<C>: From<M>,
@@ -369,7 +370,7 @@ where
 
     fn to_any_envelope<M>(envelope: &EnvelopedMessage<C, M>) -> AnyMessageEnvelope<C>
     where
-        M: GameMessage<C, Actor = ShufflerActor<C>> + Clone + Signable,
+        M: GameMessage<C, Actor = ShufflerActor<C>> + Clone + CanonicalSerialize + DomainSeparated,
         AnyGameMessage<C>: From<M>,
     {
         let ShufflerActor {
@@ -389,7 +390,6 @@ where
             message: WithSignature {
                 value: AnyGameMessage::from(envelope.message.value.clone()),
                 signature: envelope.message.signature.clone(),
-                transcript: envelope.message.transcript.clone(),
             },
         }
     }

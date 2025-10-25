@@ -108,10 +108,13 @@ impl<C: CurveGroup> Verifier<C> for LedgerVerifier<C> {
             return Err(VerifyError::InvalidMessage);
         }
 
+        // Compute signing bytes on-demand
+        let signing_bytes = crate::signing::signing_bytes(&envelope.message.value)
+            .map_err(|_| VerifyError::InvalidMessage)?;
         self.signature
             .verify(
                 &envelope.public_key,
-                &envelope.message.transcript,
+                &signing_bytes,
                 &envelope.message.signature,
             )
             .then_some(())
@@ -730,7 +733,6 @@ mod tests {
     use crate::shuffling::player_decryption::{
         PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
     };
-    use crate::signing::Signable;
     use ark_bn254::G1Projective as Curve;
     use ark_ec::PrimeGroup;
     use ark_ff::Zero;
@@ -800,6 +802,11 @@ mod tests {
         if let AnyGameMessage::Blinding(ref mut msg) = envelope.message.value {
             msg.card_in_deck_position = 200; // invalid
         }
+        // Recompute signature after modifying message
+        let signing_bytes = crate::signing::signing_bytes(&envelope.message.value)
+            .expect("signing bytes should compute");
+        envelope.message.signature = signing_bytes;
+
         let verifier = harness.verifier();
         let result = verifier.verify(HAND_ID, envelope);
         assert!(matches!(result, Err(VerifyError::InvalidMessage)));
@@ -1439,8 +1446,14 @@ mod tests {
         actor: AnyActor<C>,
         public_key: C,
         nonce: u64,
-    ) -> AnyMessageEnvelope<C> {
-        let transcript = message.to_signing_bytes();
+    ) -> AnyMessageEnvelope<C>
+    where
+        C: ark_serialize::CanonicalSerialize,
+    {
+        // Compute signing bytes for the test signature validator
+        let signing_bytes = crate::signing::signing_bytes(&message)
+            .expect("signing bytes computation should not fail");
+
         AnyMessageEnvelope {
             hand_id,
             game_id: GAME_ID,
@@ -1449,8 +1462,8 @@ mod tests {
             public_key,
             message: crate::signing::WithSignature {
                 value: message,
-                signature: transcript.clone(),
-                transcript,
+                // TranscriptSignatureValidator expects signature == signing_bytes
+                signature: signing_bytes,
             },
         }
     }

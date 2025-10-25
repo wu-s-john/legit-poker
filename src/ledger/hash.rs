@@ -3,15 +3,14 @@ use std::sync::Arc;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
+use ark_serialize::CanonicalSerialize;
 use sha2::{Digest, Sha256};
 
 use crate::ledger::messages::{EnvelopedMessage, GameMessage};
 use crate::ledger::snapshot::{HandPhase, TableSnapshot};
-use crate::ledger::types::{GameId, HandId, StateHash};
+use crate::ledger::types::StateHash;
 use crate::poseidon_config;
-use crate::signing::{Signable, TranscriptBuilder};
-
-use crate::shuffling::data_structures::append_curve_point;
+use crate::signing::DomainSeparated;
 
 /// Trait abstracting over the hashing backend used by the ledger.
 pub trait LedgerHasher: Send + Sync {
@@ -67,17 +66,6 @@ pub fn default_poseidon_hasher<F: PrimeField>() -> Arc<dyn LedgerHasher + Send +
     Arc::new(LedgerHasherPoseidon::new(poseidon_config::<F>()))
 }
 
-fn append_ids(builder: &mut TranscriptBuilder, game_id: GameId, hand_id: Option<HandId>) {
-    builder.append_i64(game_id);
-    match hand_id {
-        Some(id) => {
-            builder.append_u8(1);
-            builder.append_i64(id);
-        }
-        None => builder.append_u8(0),
-    }
-}
-
 pub fn initial_snapshot_hash<P, C>(
     snapshot: &TableSnapshot<P, C>,
     hasher: &dyn LedgerHasher,
@@ -86,40 +74,104 @@ where
     P: HandPhase<C>,
     C: CurveGroup,
 {
-    let mut builder = TranscriptBuilder::new("ledger/state/init");
-    append_ids(&mut builder, snapshot.game_id, snapshot.hand_id);
+    let mut bytes = Vec::new();
+    // Domain separation
+    bytes.extend_from_slice(b"ledger/state/init\0");
 
-    builder.append_u8(1);
-    snapshot.cfg.write_transcript(&mut builder);
+    // Serialize snapshot metadata
+    snapshot.game_id.serialize_compressed(&mut bytes)
+        .expect("game_id serialization should not fail");
 
-    snapshot.shufflers.as_ref().write_transcript(&mut builder);
-    snapshot.players.as_ref().write_transcript(&mut builder);
-    snapshot.seating.as_ref().write_transcript(&mut builder);
-    snapshot.stacks.as_ref().write_transcript(&mut builder);
+    // Serialize optional hand_id
+    if let Some(hand_id) = snapshot.hand_id {
+        1u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
+        hand_id.serialize_compressed(&mut bytes)
+            .expect("hand_id serialization should not fail");
+    } else {
+        0u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
+    }
 
-    hasher.hash(&builder.finish())
+    // Version byte
+    1u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
+
+    // Serialize snapshot state
+    // Dereference Arc to get HandConfig
+    snapshot.cfg.as_ref().serialize_compressed(&mut bytes)
+        .expect("cfg serialization should not fail");
+
+    // Serialize BTreeMaps by serializing their entries
+    let shufflers_count = snapshot.shufflers.len() as u64;
+    shufflers_count.serialize_compressed(&mut bytes)
+        .expect("shufflers count serialization should not fail");
+    for (key, value) in snapshot.shufflers.as_ref().iter() {
+        key.serialize_compressed(&mut bytes)
+            .expect("shuffler key serialization should not fail");
+        value.serialize_compressed(&mut bytes)
+            .expect("shuffler value serialization should not fail");
+    }
+
+    let players_count = snapshot.players.len() as u64;
+    players_count.serialize_compressed(&mut bytes)
+        .expect("players count serialization should not fail");
+    for (key, value) in snapshot.players.as_ref().iter() {
+        key.serialize_compressed(&mut bytes)
+            .expect("player key serialization should not fail");
+        value.serialize_compressed(&mut bytes)
+            .expect("player value serialization should not fail");
+    }
+
+    snapshot.seating.as_ref().serialize_compressed(&mut bytes)
+        .expect("seating serialization should not fail");
+
+    let stacks_count = snapshot.stacks.len() as u64;
+    stacks_count.serialize_compressed(&mut bytes)
+        .expect("stacks count serialization should not fail");
+    for (seat, stack_info) in snapshot.stacks.as_ref().iter() {
+        seat.serialize_compressed(&mut bytes)
+            .expect("seat serialization should not fail");
+        stack_info.serialize_compressed(&mut bytes)
+            .expect("stack info serialization should not fail");
+    }
+
+    hasher.hash(&bytes)
 }
 
 pub fn message_hash<C, M>(envelope: &EnvelopedMessage<C, M>, hasher: &dyn LedgerHasher) -> StateHash
 where
     C: CurveGroup,
-    M: GameMessage<C> + Signable,
-    M::Actor: Signable,
+    M: GameMessage<C> + CanonicalSerialize + DomainSeparated,
+    M::Actor: CanonicalSerialize,
 {
-    let mut builder = TranscriptBuilder::new("ledger/state/msg");
-    append_ids(&mut builder, envelope.game_id, Some(envelope.hand_id));
-    builder.append_u64(envelope.nonce);
-    envelope.actor.write_transcript(&mut builder);
+    let mut bytes = Vec::new();
+    // Domain separation
+    bytes.extend_from_slice(b"ledger/state/msg\0");
 
-    append_curve_point(&mut builder, &envelope.public_key);
-    builder.append_bytes(&envelope.message.transcript);
+    // Serialize envelope metadata
+    envelope.game_id.serialize_compressed(&mut bytes)
+        .expect("game_id serialization should not fail");
+    envelope.hand_id.serialize_compressed(&mut bytes)
+        .expect("hand_id serialization should not fail");
+    envelope.nonce.serialize_compressed(&mut bytes)
+        .expect("nonce serialization should not fail");
+    envelope.actor.serialize_compressed(&mut bytes)
+        .expect("actor serialization should not fail");
+    envelope.public_key.serialize_compressed(&mut bytes)
+        .expect("public_key serialization should not fail");
 
-    hasher.hash(&builder.finish())
+    // Serialize message payload using signing_bytes (which includes message's domain tag)
+    let signing_bytes = crate::signing::signing_bytes(&envelope.message.value)
+        .expect("canonical serialization should not fail for valid messages");
+    bytes.extend_from_slice(&signing_bytes);
+
+    hasher.hash(&bytes)
 }
 
 pub fn chain_hash(previous: StateHash, message: StateHash, hasher: &dyn LedgerHasher) -> StateHash {
-    let mut builder = TranscriptBuilder::new("ledger/state/chain");
-    builder.append_bytes(previous.as_bytes());
-    builder.append_bytes(message.as_bytes());
-    hasher.hash(&builder.finish())
+    let mut bytes = Vec::new();
+    // Domain separation
+    bytes.extend_from_slice(b"ledger/state/chain\0");
+    // Serialize previous and message state hashes
+    bytes.extend_from_slice(previous.as_bytes());
+    bytes.extend_from_slice(message.as_bytes());
+    hasher.hash(&bytes)
 }

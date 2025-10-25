@@ -1,5 +1,6 @@
 use super::events::NormalizedAction;
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::signing::DomainSeparated;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 pub type Chips = u64;
@@ -22,6 +23,42 @@ pub enum PlayerStatus {
     Folded,     // out of hand
     AllIn,      // cannot act; still eligible for pots
     SittingOut, // not dealt in
+}
+
+// Manual CanonicalSerialize implementation for PlayerStatus
+impl CanonicalSerialize for PlayerStatus {
+    fn serialize_with_mode<W: ark_serialize::Write>(
+        &self,
+        mut writer: W,
+        _compress: ark_serialize::Compress,
+    ) -> Result<(), ark_serialize::SerializationError> {
+        let byte = PlayerStatus::as_byte(*self);
+        writer.write_all(&[byte])?;
+        Ok(())
+    }
+
+    fn serialized_size(&self, _compress: ark_serialize::Compress) -> usize {
+        1
+    }
+}
+
+impl ark_serialize::Valid for PlayerStatus {
+    fn check(&self) -> Result<(), ark_serialize::SerializationError> {
+        Ok(())
+    }
+}
+
+impl CanonicalDeserialize for PlayerStatus {
+    fn deserialize_with_mode<R: ark_serialize::Read>(
+        mut reader: R,
+        _compress: ark_serialize::Compress,
+        _validate: ark_serialize::Validate,
+    ) -> Result<Self, ark_serialize::SerializationError> {
+        let mut byte = [0u8; 1];
+        reader.read_exact(&mut byte)?;
+        PlayerStatus::from_byte(byte[0])
+            .ok_or_else(|| ark_serialize::SerializationError::InvalidData)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +87,7 @@ pub struct Pots {
     pub sides: Vec<Pot>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct TableStakes {
     pub small_blind: Chips,
     pub big_blind: Chips,
@@ -58,7 +95,7 @@ pub struct TableStakes {
 }
 
 /// Fixed for the hand (No-Limit only).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 pub struct HandConfig {
     pub stakes: TableStakes,
     pub button: SeatId,
@@ -67,25 +104,9 @@ pub struct HandConfig {
     pub check_raise_allowed: bool, // default true in standard NLH
 }
 
-impl HandConfig {
-    pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u64(self.stakes.small_blind);
-        builder.append_u64(self.stakes.big_blind);
-        builder.append_u64(self.stakes.ante);
-        builder.append_u8(self.button);
-        builder.append_u8(self.small_blind_seat);
-        builder.append_u8(self.big_blind_seat);
-        builder.append_u8(self.check_raise_allowed as u8);
-    }
-}
-
-impl Signable for HandConfig {
-    fn domain_kind(&self) -> &'static str {
+impl DomainSeparated for HandConfig {
+    fn domain_string() -> &'static str {
         "engine/nl/hand_config_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        self.append_to_transcript(builder);
     }
 }
 
@@ -96,6 +117,16 @@ impl PlayerStatus {
             PlayerStatus::Folded => 1,
             PlayerStatus::AllIn => 2,
             PlayerStatus::SittingOut => 3,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(PlayerStatus::Active),
+            1 => Some(PlayerStatus::Folded),
+            2 => Some(PlayerStatus::AllIn),
+            3 => Some(PlayerStatus::SittingOut),
+            _ => None,
         }
     }
 }

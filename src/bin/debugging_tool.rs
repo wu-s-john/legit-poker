@@ -211,10 +211,10 @@ struct MessageWithSignatureDisplay {
 impl From<WithSignature<SignatureBytes, AnyGameMessage<Curve>>> for MessageWithSignatureDisplay {
     fn from(with_sig: WithSignature<SignatureBytes, AnyGameMessage<Curve>>) -> Self {
         let signature_hash = sha256_hex(&with_sig.signature);
-        let transcript_hex = if with_sig.transcript.is_empty() {
-            None
-        } else {
-            Some(format!("0x{}", hex::encode(&with_sig.transcript)))
+        // Transcript is now computed on-demand via signing_bytes()
+        let transcript_hex = match zk_poker::signing::signing_bytes(&with_sig.value) {
+            Ok(bytes) if !bytes.is_empty() => Some(format!("0x{}", hex::encode(&bytes))),
+            _ => None,
         };
 
         Self {

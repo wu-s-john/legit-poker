@@ -28,14 +28,11 @@ use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId, StateHash};
 use crate::ledger::CanonicalKey;
 use crate::showdown::HandCategory;
 use crate::shuffling::community_decryption::CommunityDecryptionShare;
-use crate::shuffling::data_structures::{
-    append_curve_point, ElGamalCiphertext, ShuffleProof, DECK_SIZE,
-};
+use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
-use crate::signing::Signable;
-use crate::signing::TranscriptBuilder;
+use crate::signing::DomainSeparated;
 use ark_ff::PrimeField;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 
@@ -51,7 +48,7 @@ pub type SnapshotSeq = u32;
 
 // ---- Player identity / seating --------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -65,16 +62,8 @@ pub struct PlayerIdentity<C: CurveGroup> {
     pub seat: SeatId,
 }
 
-impl<C: CurveGroup> PlayerIdentity<C> {
-    pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_u8(self.seat);
-        builder.append_u64(self.nonce);
-        builder.append_u64(self.player_id);
-        append_curve_point(builder, &self.public_key);
-    }
-}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -100,25 +89,15 @@ pub enum SnapshotStatus {
     Failure(String),
 }
 
-impl<C: CurveGroup> Signable for PlayerIdentity<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for PlayerIdentity<C> {
+    fn domain_string() -> &'static str {
         "ledger/player_identity_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        self.append_to_transcript(builder);
     }
 }
 
-impl<C: CurveGroup> Signable for ShufflerIdentity<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for ShufflerIdentity<C> {
+    fn domain_string() -> &'static str {
         "ledger/shuffler_identity_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        builder.append_i64(self.shuffler_id);
-        append_curve_point(builder, &self.public_key);
-        append_curve_point(builder, &self.aggregated_public_key);
     }
 }
 
@@ -161,7 +140,7 @@ pub struct DealtCard<C: CurveGroup> {
     pub source_index: Option<u8>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
@@ -174,28 +153,10 @@ pub struct PlayerStackInfo<C: CurveGroup> {
     pub status: PlayerStatus,
 }
 
-impl<C: CurveGroup> PlayerStackInfo<C> {
-    pub fn append_to_transcript(&self, builder: &mut TranscriptBuilder) {
-        match &self.player_key {
-            Some(player_key) => {
-                builder.append_u8(1);
-                builder.append_bytes(player_key.bytes());
-            }
-            None => builder.append_u8(0),
-        }
-        builder.append_u64(self.starting_stack);
-        builder.append_u64(self.committed_blind);
-        builder.append_u8(self.status.as_byte());
-    }
-}
 
-impl<C: CurveGroup> Signable for PlayerStackInfo<C> {
-    fn domain_kind(&self) -> &'static str {
+impl<C: CurveGroup> DomainSeparated for PlayerStackInfo<C> {
+    fn domain_string() -> &'static str {
         "ledger/player_stack_info_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        self.append_to_transcript(builder);
     }
 }
 
@@ -854,8 +815,8 @@ where
         envelope: &EnvelopedMessage<C, M>,
         hasher: &dyn LedgerHasher,
     ) where
-        M: GameMessage<C> + Signable,
-        M::Actor: Signable,
+        M: GameMessage<C> + ark_serialize::CanonicalSerialize + crate::signing::DomainSeparated,
+        M::Actor: ark_serialize::CanonicalSerialize,
     {
         let message = message_hash(envelope, hasher);
         let chained = chain_hash(self.state_hash, message, hasher);
@@ -1013,9 +974,10 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
 }
 
 fn failure_chain_hash(previous: StateHash, reason: &str, hasher: &dyn LedgerHasher) -> StateHash {
-    let mut builder = TranscriptBuilder::new("ledger/state/failure");
-    builder.append_bytes(reason.as_bytes());
-    let failure_message = hasher.hash(&builder.finish());
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"ledger/state/failure\0");
+    bytes.extend_from_slice(reason.as_bytes());
+    let failure_message = hasher.hash(&bytes);
     chain_hash(previous, failure_message, hasher)
 }
 

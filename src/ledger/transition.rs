@@ -24,7 +24,6 @@ use crate::poseidon_config;
 use crate::showdown::{choose_best5_from7, idx_of};
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 use crate::shuffling::player_decryption::combine_unblinding_shares;
-use crate::signing::Signable;
 use std::collections::BTreeMap;
 use tracing::{
     error,
@@ -34,7 +33,8 @@ use tracing::{
 
 const LOG_TARGET: &str = "legit_poker::ledger::transition";
 
-pub trait TransitionHandler<C>: GameMessage<C> + Signable
+pub trait TransitionHandler<C>:
+    GameMessage<C> + CanonicalSerialize + crate::signing::DomainSeparated
 where
     C: CurveGroup + CanonicalSerialize,
 {
@@ -55,7 +55,7 @@ pub fn apply_transition<C, M, H>(
 ) -> Result<AnyTableSnapshot<C>>
 where
     C: CurveGroup,
-    M: TransitionHandler<C>,
+    M: TransitionHandler<C> + ark_serialize::CanonicalSerialize + crate::signing::DomainSeparated,
     H: LedgerHasher,
 {
     <M as TransitionHandler<C>>::apply_transition(snapshot, envelope, hasher)
@@ -1478,11 +1478,9 @@ mod tests {
         C::BaseField: Zero,
         C::ScalarField: Zero,
     {
-        let transcript = message.to_signing_bytes();
         let with_sig = WithSignature {
             value: message,
             signature: Vec::new(),
-            transcript,
         };
 
         let shuffler_key = ctx.shuffler_keys.get(&shuffler_id).expect("shuffler key");
@@ -1508,11 +1506,9 @@ mod tests {
         shuffler_id: ShufflerId,
         message: GameBlindingDecryptionMessage<C>,
     ) -> EnvelopedMessage<C, GameBlindingDecryptionMessage<C>> {
-        let transcript = message.to_signing_bytes();
         let with_sig = WithSignature {
             value: message,
             signature: Vec::new(),
-            transcript,
         };
 
         let shuffler_key = ctx.shuffler_keys.get(&shuffler_id).expect("shuffler key");
@@ -1570,16 +1566,14 @@ mod tests {
         action: PlayerBetAction,
     ) -> EnvelopedMessage<Curve, GamePlayerMessage<R, Curve>>
     where
-        R: Street + Default,
+        R: Street + Default + ark_serialize::CanonicalSerialize,
         GamePlayerMessage<R, Curve>: GameMessage<Curve, Actor = PlayerActor<Curve>>,
     {
         let (actor, _, public_key) = player_actor_info(ctx, seat);
         let message = GamePlayerMessage::<R, Curve>::new(action);
-        let transcript = message.to_signing_bytes();
         let with_sig = WithSignature {
             value: message,
             signature: Vec::new(),
-            transcript,
         };
         EnvelopedMessage {
             hand_id: ctx.hand_id,
@@ -1663,11 +1657,9 @@ mod tests {
             .cloned()
             .expect("player secret available");
         let message = build_showdown_message(snapshot, seat, player_secret);
-        let transcript = message.to_signing_bytes();
         let with_sig = WithSignature {
             value: message,
             signature: Vec::new(),
-            transcript,
         };
         EnvelopedMessage {
             hand_id: ctx.hand_id,

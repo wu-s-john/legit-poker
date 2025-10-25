@@ -1,7 +1,7 @@
 use crate::chaum_pedersen::ChaumPedersenProof;
 use crate::curve_absorb::CurveAbsorb;
 use crate::poseidon_config;
-use crate::shuffling::data_structures::{append_curve_point, ElGamalCiphertext};
+use crate::shuffling::data_structures::ElGamalCiphertext;
 use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, Absorb, CryptographicSponge};
 use ark_ec::{AffineRepr, CurveGroup};
 use ark_ff::PrimeField;
@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tracing::{instrument, warn};
 
-use crate::signing::{Signable, TranscriptBuilder};
+use crate::signing::DomainSeparated;
 
 const LOG_TARGET: &str = "legit_poker::shuffling::player_decryption";
 
@@ -32,22 +32,6 @@ pub struct PlayerTargetedBlindingContribution<C: CurveGroup> {
     pub blinding_combined_contribution: C,
     /// Proof that the same δ_j was used for both contributions
     pub proof: ChaumPedersenProof<C>,
-}
-
-impl<C> Signable for PlayerTargetedBlindingContribution<C>
-where
-    C: CurveGroup,
-    C::ScalarField: PrimeField,
-{
-    fn domain_kind(&self) -> &'static str {
-        "player_decryption/blinding_contribution_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        append_curve_point(builder, &self.blinding_base_contribution);
-        append_curve_point(builder, &self.blinding_combined_contribution);
-        self.proof.write_transcript(builder);
-    }
 }
 
 impl<C> PlayerTargetedBlindingContribution<C>
@@ -147,25 +131,6 @@ pub struct PlayerAccessibleCiphertext<C: CurveGroup> {
     pub shuffler_proofs: Vec<ChaumPedersenProof<C>>,
 }
 
-impl<C> Signable for PlayerAccessibleCiphertext<C>
-where
-    C: CurveGroup,
-    C::ScalarField: PrimeField,
-{
-    fn domain_kind(&self) -> &'static str {
-        "player_decryption/player_accessible_ciphertext_v1"
-    }
-
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        append_curve_point(builder, &self.blinded_base);
-        append_curve_point(builder, &self.blinded_message_with_player_key);
-        append_curve_point(builder, &self.player_unblinding_helper);
-        for proof in &self.shuffler_proofs {
-            proof.write_transcript(builder);
-        }
-    }
-}
-
 /// Partial unblinding share from a single committee member
 /// Each committee member j provides their portion of unblinding: blinded_base^x_j where x_j is their secret share
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
@@ -181,17 +146,30 @@ pub struct PartialUnblindingShare<C: CurveGroup> {
     pub member_key: crate::ledger::CanonicalKey<C>,
 }
 
-impl<C> Signable for PartialUnblindingShare<C>
+impl<C> DomainSeparated for PlayerTargetedBlindingContribution<C>
 where
     C: CurveGroup,
 {
-    fn domain_kind(&self) -> &'static str {
-        "player_decryption/partial_unblinding_share_v1"
+    fn domain_string() -> &'static str {
+        "player_decryption/blinding_contribution_v1"
     }
+}
 
-    fn write_transcript(&self, builder: &mut TranscriptBuilder) {
-        self.member_key.write_transcript(builder);
-        append_curve_point(builder, &self.share);
+impl<C> DomainSeparated for PlayerAccessibleCiphertext<C>
+where
+    C: CurveGroup,
+{
+    fn domain_string() -> &'static str {
+        "player_decryption/player_accessible_ciphertext_v1"
+    }
+}
+
+impl<C> DomainSeparated for PartialUnblindingShare<C>
+where
+    C: CurveGroup,
+{
+    fn domain_string() -> &'static str {
+        "player_decryption/partial_unblinding_share_v1"
     }
 }
 
