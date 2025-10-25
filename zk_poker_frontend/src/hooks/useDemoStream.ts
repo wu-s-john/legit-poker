@@ -3,7 +3,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/console/schemas";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
 import { demoStreamEventSchema } from "~/lib/demoStreamEventSchema";
 
 const API_BASE =
@@ -145,14 +145,20 @@ export function useDemoStream(enabled: boolean = true) {
           console.log("[SSE] Full rawData:", rawData);
           console.log("[SSE] Envelope object:", rawData.envelope);
 
-          // The finalized fields are at the OUTER level (rawData), not inside envelope
+          // The finalized envelope has ALL fields from envelope plus the finalized fields
+          // at the top level (not nested under 'envelope')
           const finalizedEnvelope = {
             type: "game_event",
-            ...rawData.envelope,
-            snapshot_status: rawData.snapshot_status, // From outer level!
-            applied_phase: rawData.applied_phase, // From outer level!
-            snapshot_sequence_id: rawData.snapshot_sequence_id, // From outer level!
-            created_timestamp: rawData.created_timestamp, // From outer level!
+            hand_id: rawData.envelope.hand_id,
+            game_id: rawData.envelope.game_id,
+            actor: rawData.envelope.actor,
+            nonce: rawData.envelope.nonce,
+            public_key: rawData.envelope.public_key,
+            message: rawData.envelope.message,
+            snapshot_status: rawData.snapshot_status,
+            applied_phase: rawData.applied_phase,
+            snapshot_sequence_id: rawData.snapshot_sequence_id,
+            created_timestamp: rawData.created_timestamp,
           };
 
           console.log("[SSE] Merged finalized envelope:", finalizedEnvelope);

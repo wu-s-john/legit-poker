@@ -119,7 +119,7 @@ export function CompactLogsPanel({
         ) : (
           messages.map((msg) => (
             <CompactMessageRow
-              key={msg.snapshot_sequence_id}
+              key={`${msg.hand_id}-${msg.snapshot_sequence_id}`}
               message={msg}
               viewerPublicKey="placeholder_viewer_key"
               playerMapping={playerMapping}

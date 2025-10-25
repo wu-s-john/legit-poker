@@ -207,7 +207,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
               className="font-mono"
               style={{ color: "var(--color-text-secondary)" }}
             >
-              {message.envelope.nonce}
+              {message.nonce}
             </span>
           </div>
           <span style={{ color: "var(--color-text-muted)" }}>•</span>
@@ -219,11 +219,11 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {hasVerifiableProof(message.envelope.message.value) && (
-            <VerifyProofButton message={message.envelope.message.value} />
+          {hasVerifiableProof(message.message.value) && (
+            <VerifyProofButton message={message.message.value} />
           )}
           <CopyButton
-            text={JSON.stringify(message.envelope.message, null, 2)}
+            text={JSON.stringify(message.message, null, 2)}
             label="Copy Payload"
           />
         </div>
@@ -241,7 +241,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
         onClick={(e) => e.stopPropagation()}
       >
         <JsonView
-          src={message.envelope.message.value as any}
+          src={message.message.value as any}
           dark={true}
           collapsed={2}
           enableClipboard={true}
@@ -272,7 +272,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
         className="pt-3"
         style={{ borderTop: "1px solid var(--color-border-subtle)" }}
       >
-        <SignatureDisplay signature={message.envelope.message.signature} />
+        <SignatureDisplay signature={message.message.signature} />
       </div>
     </div>
   );

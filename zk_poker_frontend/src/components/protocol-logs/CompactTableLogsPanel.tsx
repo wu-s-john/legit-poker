@@ -3,7 +3,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/console/schemas";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
 import { CompactTableRow } from "./CompactTableRow";
 
 interface CompactTableLogsPanelProps {
@@ -15,15 +15,16 @@ interface CompactTableLogsPanelProps {
 }
 
 /**
- * Hybrid table logs panel component
- * Combines debug page's table structure with developer console aesthetic
+ * Card-based protocol logs panel component
+ * Clean, scannable layout with developer console aesthetic
  *
  * Features:
- * - Table headers: SEQ | TIME | TYPE
- * - Solid dark background (#0a0e14)
- * - Cyan accent border (#00d9ff)
+ * - Card-based rows (no table columns)
+ * - Dark blue background matching landing page (primary-950)
+ * - Primary blue accent border (#7c91ff)
  * - LIVE indicator with pulsing dot
- * - Multi-line rows with expandable JSON
+ * - Expandable cards with full JSON payload
+ * - Phase-based subtle background colors
  */
 export function CompactTableLogsPanel({
   messages,
@@ -51,13 +52,13 @@ export function CompactTableLogsPanel({
     <div
       className={`${containerClasses} flex flex-col rounded-xl overflow-hidden`}
       style={{
-        backgroundColor: "#0a0e14",
-        borderLeft: "2px solid #00d9ff", // Cyan accent
+        backgroundColor: "#0a0a2f", // Match landing page primary-950
+        borderLeft: "2px solid #7c91ff", // Primary blue accent
         borderTop: "1px solid #2d3748",
         borderRight: "1px solid #2d3748",
         borderBottom: "1px solid #2d3748",
         boxShadow: `
-          inset 4px 0 12px rgba(0, 217, 255, 0.08),
+          inset 4px 0 12px rgba(124, 145, 255, 0.08),
           0 20px 50px rgba(0, 0, 0, 0.6)
         `,
       }}
@@ -66,7 +67,7 @@ export function CompactTableLogsPanel({
       <header
         className="px-4 py-3 flex items-center justify-between shrink-0 border-b"
         style={{
-          backgroundColor: "#0f1419",
+          backgroundColor: "#1a1a4f", // Match landing page primary-900
           borderColor: "#2d3748",
         }}
       >
@@ -79,18 +80,18 @@ export function CompactTableLogsPanel({
           </h3>
           <span
             className="text-xs font-medium"
-            style={{ color: "#00d9ff" }}
+            style={{ color: "#7c91ff" }} // Primary blue
           >
             ({messages.length})
           </span>
           {/* LIVE indicator */}
           <div
             className="flex items-center gap-1 text-xs"
-            style={{ color: "#00d9ff" }}
+            style={{ color: "#7c91ff" }} // Primary blue
           >
             <span
               className="w-2 h-2 rounded-full animate-pulse"
-              style={{ backgroundColor: "#00d9ff" }}
+              style={{ backgroundColor: "#7c91ff" }} // Primary blue
             />
             LIVE
           </div>
@@ -124,20 +125,6 @@ export function CompactTableLogsPanel({
         </button>
       </header>
 
-      {/* Column Headers */}
-      <div
-        className="px-4 py-2 grid grid-cols-[40px_60px_1fr] gap-2 border-b text-xs font-semibold uppercase tracking-wider shrink-0"
-        style={{
-          backgroundColor: "#0f1419",
-          borderColor: "#2d3748",
-          color: "#64748b",
-        }}
-      >
-        <div>SEQ</div>
-        <div>TIME</div>
-        <div>TYPE</div>
-      </div>
-
       {/* Scrollable Card List */}
       <div
         ref={scrollContainerRef}
@@ -164,7 +151,7 @@ export function CompactTableLogsPanel({
         ) : (
           messages.map((msg, idx) => (
             <CompactTableRow
-              key={msg.snapshot_sequence_id}
+              key={`${msg.hand_id}-${msg.snapshot_sequence_id}`}
               message={msg}
               sequenceNumber={idx}
               viewerPublicKey="placeholder_viewer_key"
