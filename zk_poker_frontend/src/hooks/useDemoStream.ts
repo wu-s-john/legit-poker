@@ -228,10 +228,10 @@ export function useDemoStream(enabled: boolean = true) {
           // Handle hand_created event - extract player mapping
           if (parsed.type === "hand_created") {
             console.log(
-              "[SSE] hand_created event - gameId:",
-              parsed.gameId,
-              "handId:",
-              parsed.handId,
+              "[SSE] hand_created event - game_id:",
+              parsed.game_id,
+              "hand_id:",
+              parsed.hand_id,
             );
             setState((prev) => {
               const mapping = new Map<
@@ -253,8 +253,8 @@ export function useDemoStream(enabled: boolean = true) {
 
               return {
                 ...prev,
-                gameId: parsed.gameId,
-                handId: parsed.handId,
+                gameId: parsed.game_id,
+                handId: parsed.hand_id,
                 playerMapping: mapping,
               };
             });

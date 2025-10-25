@@ -52,6 +52,7 @@ impl<C: CurveGroup> DomainSeparated for ShufflerActor<C> {
     serialize = "C: CanonicalSerialize",
     deserialize = "C: CanonicalDeserialize"
 ))]
+#[serde(rename_all = "snake_case")]
 pub enum AnyActor<C: CurveGroup> {
     None,
     Player {

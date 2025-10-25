@@ -16,17 +16,17 @@ const chips = z.union([
 
 /**
  * Event phase mirrors `EventPhase` in Rust.
- * Rust serializes these as PascalCase variants.
+ * Rust serializes these as snake_case variants.
  */
 export const eventPhaseSchema = z.enum([
-  'Pending',
-  'Shuffling',
-  'Dealing',
-  'Betting',
-  'Reveals',
-  'Showdown',
-  'Complete',
-  'Cancelled',
+  'pending',
+  'shuffling',
+  'dealing',
+  'betting',
+  'reveals',
+  'showdown',
+  'complete',
+  'cancelled',
 ]);
 export type EventPhase = z.infer<typeof eventPhaseSchema>;
 
@@ -46,17 +46,17 @@ export type SnapshotStatus = z.infer<typeof snapshotStatusSchema>;
  * Player betting actions (`PlayerBetAction`).
  */
 export const playerBetActionSchema = z.union([
-  z.literal('Fold'),
-  z.literal('Check'),
-  z.literal('Call'),
-  z.literal('AllIn'),
+  z.literal('fold'),
+  z.literal('check'),
+  z.literal('call'),
+  z.literal('all_in'),
   z.object({
-    BetTo: z.object({
+    bet_to: z.object({
       to: chips,
     }),
   }),
   z.object({
-    RaiseTo: z.object({
+    raise_to: z.object({
       to: chips,
     }),
   }),
@@ -65,18 +65,18 @@ export type PlayerBetAction = z.infer<typeof playerBetActionSchema>;
 
 /**
  * Actor union for `AnyActor`.
- * Backend uses tagged enum format: {"Player": {...}}, {"Shuffler": {...}}, or "None"
+ * Backend uses tagged enum format: {"player": {...}}, {"shuffler": {...}}, or "none"
  */
 export const anyActorSchema = z.union([
-  z.literal('None'),
+  z.literal('none'),
   z.object({
-    Player: z.object({
+    player: z.object({
       seat_id: z.number().int().min(0).max(255),
       player_id: z.number().int().nonnegative(),
     }),
   }),
   z.object({
-    Shuffler: z.object({
+    shuffler: z.object({
       shuffler_id: z.number().int(),
       shuffler_key: hexString,
     }),

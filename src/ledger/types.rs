@@ -5,12 +5,14 @@ pub type HandId = i64;
 pub type ShufflerId = i64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EntityKind {
     Player,
     Shuffler,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HandStatus {
     Pending,
     Shuffling,
@@ -22,6 +24,7 @@ pub enum HandStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventPhase {
     Pending,
     Shuffling,

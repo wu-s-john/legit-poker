@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::types::Chips;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlayerBetAction {
     Fold,
     Check,               // only when price_to_call == 0
