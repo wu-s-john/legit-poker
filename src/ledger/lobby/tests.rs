@@ -15,7 +15,7 @@ use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::state::LedgerState;
 use crate::ledger::store::snapshot::PreparedSnapshot;
 use crate::ledger::store::{EventStore, SeaOrmEventStore, SnapshotStore};
-use crate::ledger::types::{GameId, ShufflerId};
+use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::verifier::LedgerVerifier;
 use crate::ledger::worker::LedgerWorker;
@@ -822,6 +822,13 @@ where
         _prepared: &PreparedSnapshot,
     ) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        _hand_id: HandId,
+    ) -> anyhow::Result<Option<AnyTableSnapshot<C>>> {
+        Ok(None)
     }
 }
 

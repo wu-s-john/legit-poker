@@ -7,14 +7,16 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use async_trait::async_trait;
-use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+use sea_orm::{ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, TransactionTrait};
 use tracing::info;
 
 use crate::curve_absorb::CurveAbsorb;
+use crate::db::entity::table_snapshots;
 use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
+use crate::ledger::types::HandId;
 
-use self::serialization::{prepare_snapshot_data, SNAPSHOT_LOG_TARGET};
+use self::serialization::{prepare_snapshot_data, reconstruct_snapshot_from_db, SNAPSHOT_LOG_TARGET};
 
 pub use self::serialization::{compute_dealing_hash, persist_prepared_snapshot, PreparedSnapshot};
 
@@ -51,6 +53,13 @@ where
         txn: &DatabaseTransaction,
         prepared: &PreparedSnapshot,
     ) -> anyhow::Result<()>;
+
+    /// Loads the latest snapshot for a given hand from the database.
+    /// Returns None if no snapshots exist for the hand.
+    async fn load_latest_snapshot(
+        &self,
+        hand_id: HandId,
+    ) -> anyhow::Result<Option<AnyTableSnapshot<C>>>;
 }
 
 pub struct SeaOrmSnapshotStore<C>
@@ -122,5 +131,44 @@ where
             "snapshot persisted"
         );
         Ok(())
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        hand_id: HandId,
+    ) -> anyhow::Result<Option<AnyTableSnapshot<C>>> {
+        info!(
+            target = SNAPSHOT_LOG_TARGET,
+            hand_id = hand_id,
+            "loading latest snapshot from database"
+        );
+
+        // Query for the latest snapshot by hand_id, ordered by sequence DESC
+        let snapshot_row = table_snapshots::Entity::find()
+            .filter(table_snapshots::Column::HandId.eq(hand_id))
+            .order_by_desc(table_snapshots::Column::Sequence)
+            .one(&self.connection)
+            .await?;
+
+        match snapshot_row {
+            Some(row) => {
+                info!(
+                    target = SNAPSHOT_LOG_TARGET,
+                    hand_id = hand_id,
+                    sequence = row.sequence,
+                    "found latest snapshot"
+                );
+                let snapshot = reconstruct_snapshot_from_db(row, &self.connection).await?;
+                Ok(Some(snapshot))
+            }
+            None => {
+                info!(
+                    target = SNAPSHOT_LOG_TARGET,
+                    hand_id = hand_id,
+                    "no snapshots found for hand"
+                );
+                Ok(None)
+            }
+        }
     }
 }

@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod catchup;
 pub mod hash;
 pub mod identity;
 pub mod lobby;
@@ -19,6 +20,7 @@ pub mod worker;
 pub mod test_support;
 
 pub use actor::{AnyActor, GameActor, PlayerActor, ShufflerActor};
+pub use catchup::{catchup_hand_from_db, CatchupError, CatchupRequest, CatchupResult};
 pub use identity::CanonicalKey;
 pub use lobby::storage::{
     InMemoryLobbyStorage, LobbyStorage, LobbyStorageTxn, NewGame, NewGamePlayer, NewGameShuffler,

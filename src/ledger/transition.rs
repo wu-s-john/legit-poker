@@ -38,25 +38,23 @@ pub trait TransitionHandler<C>:
 where
     C: CurveGroup + CanonicalSerialize,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
     where
-        Self: Sized,
-        H: LedgerHasher;
+        Self: Sized;
 }
 
-pub fn apply_transition<C, M, H>(
+pub fn apply_transition<C, M>(
     snapshot: TableSnapshot<M::Phase, C>,
     envelope: &EnvelopedMessage<C, M>,
-    hasher: &H,
+    hasher: &dyn LedgerHasher,
 ) -> Result<AnyTableSnapshot<C>>
 where
     C: CurveGroup,
     M: TransitionHandler<C> + ark_serialize::CanonicalSerialize + crate::signing::DomainSeparated,
-    H: LedgerHasher,
 {
     <M as TransitionHandler<C>>::apply_transition(snapshot, envelope, hasher)
 }
@@ -217,13 +215,11 @@ impl<C> TransitionHandler<C> for GameShuffleMessage<C>
 where
     C: CurveGroup,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let shuffler_id = envelope.actor.shuffler_id;
         let shuffler = snapshot
@@ -297,13 +293,11 @@ where
             dealing_hash = tracing::field::Empty
         )
     )]
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let shuffler_id = envelope.actor.shuffler_id;
         let span = tracing::Span::current();
@@ -633,13 +627,11 @@ impl<C> TransitionHandler<C> for GamePartialUnblindingShareMessage<C>
 where
     C: CurveGroup + CanonicalSerialize,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let _shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
@@ -764,13 +756,11 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<PreflopStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
@@ -880,13 +870,11 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<FlopStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
@@ -1009,13 +997,11 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<TurnStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
@@ -1138,13 +1124,11 @@ impl<C> TransitionHandler<C> for GamePlayerMessage<RiverStreet, C>
 where
     C: CurveGroup,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
@@ -1199,13 +1183,11 @@ where
     C::BaseField: PrimeField,
     C::ScalarField: PrimeField + Absorb,
 {
-    fn apply_transition<H>(
+    fn apply_transition(
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
-        hasher: &H,
+        hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>>
-    where
-        H: LedgerHasher,
     {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
