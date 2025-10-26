@@ -79,7 +79,7 @@ where
         .await
         .map_err(|err| ApiError::internal(err.to_string()))?;
     let GameSetup {
-        lobby_config,
+        lobby_config: _,
         metadata,
         player_snapshots,
         viewer_seat,
@@ -107,7 +107,7 @@ where
             "coordinator has no shufflers configured",
         ));
     }
-    let shuffler_assignments = register_shufflers(&lobby, &metadata, &descriptors)
+    let _shuffler_assignments = register_shufflers(&lobby, &metadata, &descriptors)
         .await
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
@@ -303,6 +303,7 @@ where
 }
 
 struct GameSetup<C: CurveGroup> {
+    #[allow(dead_code)]
     lobby_config: GameLobbyConfig,
     metadata: GameMetadata<C>,
     player_snapshots: Vec<PlayerSeatSnapshot<C>>,

@@ -632,7 +632,7 @@ where
     {
         let game_id = runtime.game_id;
         let hand_id = runtime.hand_id;
-        let (shuffler_id, shuffler_index, shuffler_key) = {
+        let (shuffler_id, shuffler_index, _shuffler_key) = {
             let state = runtime.state.lock();
             (
                 state.shuffler_id,

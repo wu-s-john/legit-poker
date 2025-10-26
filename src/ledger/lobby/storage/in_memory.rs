@@ -191,7 +191,7 @@ where
     }
 
     fn lookup_player_by_id(&self, id: crate::engine::nl::types::PlayerId) -> Option<StoredPlayer<C>> {
-        if let Some((_, pid, stored)) = self.players.iter().rev().find(|(_, pid, _)| *pid == id) {
+        if let Some((_, _pid, stored)) = self.players.iter().rev().find(|(_, pid, _)| *pid == id) {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
@@ -208,7 +208,7 @@ where
     }
 
     fn lookup_shuffler_by_id(&self, id: crate::ledger::types::ShufflerId) -> Option<StoredShuffler<C>> {
-        if let Some((_, sid, stored)) = self.shufflers.iter().rev().find(|(_, sid, _)| *sid == id) {
+        if let Some((_, _sid, stored)) = self.shufflers.iter().rev().find(|(_, sid, _)| *sid == id) {
             return Some(stored.clone());
         }
         let inner = self.inner.read();

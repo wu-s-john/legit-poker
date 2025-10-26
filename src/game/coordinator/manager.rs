@@ -146,6 +146,7 @@ where
     state: Arc<LedgerState<C>>,
     event_store: Arc<dyn EventStore<C>>,
     snapshot_store: Arc<dyn SnapshotStore<C>>,
+    #[allow(dead_code)]
     updates_tx: broadcast::Sender<EnvelopedMessage<C, GameShuffleMessage<C>>>,
     _event_broadcast: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,
     _snapshot_broadcast: broadcast::Sender<Shared<AnyTableSnapshot<C>>>,
