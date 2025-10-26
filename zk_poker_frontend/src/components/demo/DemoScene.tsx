@@ -80,19 +80,16 @@ export function DemoScene() {
         // Handle demo event through event handler
         if (event.type === 'game_event') {
           // Check for gaps in protocol messages
-          const result = gapDetectorRef.current.detectGaps(event.envelope);
+          const result = gapDetectorRef.current.detectGaps(event);
 
           if (result.hasGap) {
             console.warn('Gap detected, fetching missing events:', result.missingSeqIds);
             void handleGapRecovery(result.missingSeqIds);
           }
 
-          // Process all ready events
-          result.readyEvents.forEach((envelope) => {
-            eventHandlerRef.current?.handleDemoEvent({
-              ...event,
-              envelope,
-            });
+          // Process all ready events (they're already full game_event objects)
+          result.readyEvents.forEach((gameEvent) => {
+            eventHandlerRef.current?.handleDemoEvent(gameEvent);
           });
         } else {
           // Non-protocol events don't need gap detection
@@ -117,20 +114,25 @@ export function DemoScene() {
     if (!state.gameId || !state.handId) return;
 
     try {
-      const events = await fetchDemoEvents(state.gameId, state.handId, {
+      const envelopes = await fetchDemoEvents(state.gameId, state.handId, {
         seqIds: missingSeqIds,
       });
+
+      // Convert FinalizedAnyMessageEnvelope to GameEvent format
+      const events = envelopes.map(env => ({
+        type: 'game_event' as const,
+        envelope: env.envelope,
+        snapshot_status: env.snapshot_status,
+        applied_phase: env.applied_phase,
+        snapshot_sequence_id: env.snapshot_sequence_id,
+        created_timestamp: env.created_timestamp,
+      }));
 
       const readyEvents = gapDetectorRef.current.processFetchedEvents(events);
 
       // Process recovered events
-      readyEvents.forEach((envelope) => {
-        eventHandlerRef.current?.handleDemoEvent({
-          type: 'game_event',
-          game_id: state.gameId!,
-          hand_id: state.handId!,
-          envelope,
-        });
+      readyEvents.forEach((event) => {
+        eventHandlerRef.current?.handleDemoEvent(event);
       });
     } catch (error) {
       console.error('Gap recovery failed:', error);

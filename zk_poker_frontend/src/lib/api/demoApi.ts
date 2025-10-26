@@ -4,7 +4,7 @@
  * API functions for initializing and controlling the poker demo.
  */
 
-import type { FinalizedAnyMessageEnvelope } from '../finalizedEnvelopeSchema';
+import type { FinalizedAnyMessageEnvelope } from '../schemas/finalizedEnvelopeSchema';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? 'http://localhost:4000';
 
@@ -44,7 +44,7 @@ export async function createDemoGame(publicKey: string): Promise<DemoGameInfo> {
     throw new Error(`Failed to create demo game: ${response.statusText}`);
   }
 
-  return response.json();
+  return response.json() as Promise<DemoGameInfo>;
 }
 
 /**
@@ -89,6 +89,6 @@ export async function fetchDemoEvents(
     throw new Error(`Failed to fetch events: ${response.statusText}`);
   }
 
-  const { events } = await response.json();
-  return events;
+  const json = await response.json() as { events: FinalizedAnyMessageEnvelope[] };
+  return json.events;
 }

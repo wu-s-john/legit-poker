@@ -18,11 +18,13 @@
 - Rust: Edition 2021. Format with `cargo fmt --all` (check: `cargo fmt --all -- --check`). Use `snake_case` for files/functions, `CamelCase` for types. Prefer `anyhow::Result` and `?`; avoid `unwrap()` outside tests.
 - Rust: Minimize reliance on `Default`; if you think a struct or enum needs default values, stop and ask the user what those values should be instead of calling `Default::default()`.
 - Serialization: For any Rust type that must round-trip through JSON, derive or implement `serde::Serialize` and `serde::Deserialize`. Using Serde keeps our API contracts aligned with `serde_json`, avoids ad-hoc string construction, and ensures schema drift shows up as compiler errors instead of runtime bugs.
+- TypeScript Typechecking: Always run `npm run check` in the `zk_poker_frontend` folder to typecheck TypeScript and run ESLint before committing. This catches type errors and linting issues early.
+- TypeScript JSON Parsing: Always use Zod schemas to parse JSON payloads. The Zod schemas mirror the Rust Serde types and provide type-safe parsing with descriptive errors. Use `MySchema.safeParse(data)` instead of unsafe type assertions (`data as MyType`). This catches schema mismatches at runtime and prevents subtle bugs from malformed payloads.
 - Imports: Place all imports at the top of the file. Do not import within function/block scope or in the middle of a file. Use `use` statements instead of fully qualified paths. If name conflicts arise, alias with `as` to avoid collisions (e.g., `use foo::Type as FooType; use bar::Type as BarType;`). For TypeScript, use top-level `import` and alias conflicts similarly (`import { Type as FooType } from '...';`).
 - Functional Rust: favor iterator chains (`map/filter/fold`) and `std::array::from_fn` over mutable loops.
 - Tracing: use `tracing` macros with targets and spans. Example: `tracing::info!(target="shuffling", ?deck_id, "reshuffled");` and annotate hot paths with `#[tracing::instrument(skip(..), target="r1cs")]`.
 - Linting: `cargo clippy --all-targets --all-features -D warnings` before PRs.
-- Frontend: ESLint + Prettier. Run `npm run check`. Components `PascalCase.tsx`, utilities `camelCase.ts`, shared types in `zk_poker_frontend/src/types/`.
+- Frontend: ESLint + Prettier. Run `npm run check` in `zk_poker_frontend/`. Components `PascalCase.tsx`, utilities `camelCase.ts`, shared types in `zk_poker_frontend/src/types/`.
 
 ## Database Access (Rust)
 - Prefer the "seaborn" DSL libraries (SeaORM/SeaQuery) for queries rather than raw SQL strings to maintain type safety.

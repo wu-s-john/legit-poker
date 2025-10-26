@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { finalizedEnvelopeSchema, hexString } from './finalizedEnvelopeSchema';
+import {
+  anyMessageEnvelopeSchema,
+  eventPhaseSchema,
+  snapshotStatusSchema,
+  hexString,
+} from './finalizedEnvelopeSchema';
 import { tableSnapshotShufflingSchema } from './tableSnapshotSchema';
 
 const gameIdSchema = z.number().int().nonnegative();
@@ -26,8 +31,15 @@ export const demoStreamEventSchema = z.discriminatedUnion('type', [
     player_count: z.number().int().min(1),
     snapshot: tableSnapshotShufflingSchema,
   }),
-  finalizedEnvelopeSchema.extend({
+  z.object({
     type: z.literal('game_event'),
+    // Note: Rust uses #[serde(flatten)] on FinalizedAnyMessageEnvelope
+    // This flattens the finalized fields to top level while envelope stays nested
+    envelope: anyMessageEnvelopeSchema,
+    snapshot_status: snapshotStatusSchema,
+    applied_phase: eventPhaseSchema,
+    snapshot_sequence_id: z.number().int().nonnegative(),
+    created_timestamp: z.number().int().nonnegative(),
   }),
   z.object({
     type: z.literal('community_decrypted'),
@@ -36,11 +48,19 @@ export const demoStreamEventSchema = z.discriminatedUnion('type', [
     cards: z.array(cardSchema),
   }),
   z.object({
+    type: z.literal('card_decryptable'),
+    game_id: gameIdSchema,
+    hand_id: handIdSchema,
+    seat: seatIdSchema,
+    card_position: z.number().int().min(0).max(1),
+  }),
+  z.object({
     type: z.literal('hole_cards_decrypted'),
     game_id: gameIdSchema,
     hand_id: handIdSchema,
     seat: seatIdSchema,
-    cards: z.tuple([cardSchema, cardSchema]),
+    card_position: z.number().int().min(0).max(1),
+    card: cardSchema,
   }),
   z.object({
     type: z.literal('hand_completed'),

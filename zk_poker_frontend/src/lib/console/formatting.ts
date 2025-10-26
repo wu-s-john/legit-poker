@@ -4,14 +4,14 @@ import type {
   AnyActor,
   AnyGameMessage,
   EventPhase,
-} from "./schemas";
+} from "../schemas/finalizedEnvelopeSchema";
 import {
   isBlindingMessage,
   isPartialUnblindingMessage,
   isPlayerActor,
   isShufflerActor,
   isShuffleMessage,
-} from "./schemas";
+} from "../schemas/finalizedEnvelopeSchema";
 
 // Re-export type guards for convenience
 export {
@@ -27,14 +27,15 @@ export {
  */
 export function formatActor(actor: AnyActor, viewerPublicKey: string): string {
   if (isShufflerActor(actor)) {
-    return `Shuffler ${actor.Shuffler.shuffler_id + 1}`;
+    return `Shuffler ${actor.shuffler.shuffler_id + 1}`;
   }
 
   if (isPlayerActor(actor)) {
-    if (actor.Player.player_key === viewerPublicKey) {
+    // Note: player_key is not in the schema, using player_id for comparison
+    if (actor.player.player_id.toString() === viewerPublicKey) {
       return "You";
     }
-    return `Player ${actor.Player.seat_id + 1}`;
+    return `Player ${actor.player.seat_id + 1}`;
   }
 
   return "System";
@@ -47,9 +48,7 @@ export function isViewerActor(
   actor: AnyActor,
   viewerPublicKey: string,
 ): boolean {
-  return (
-    isPlayerActor(actor) && actor.Player.player_key === viewerPublicKey
-  );
+  return isPlayerActor(actor) && actor.player.player_id.toString() === viewerPublicKey;
 }
 
 /**
@@ -110,14 +109,14 @@ export function formatMessageSummary(message: AnyGameMessage): string {
  * Get message summary parts for rich formatting with actor names
  */
 export interface MessageSummaryParts {
-  prefix?: string;  // Text before actor name (e.g., "")
+  prefix?: string; // Text before actor name (e.g., "")
   hasActor: boolean;
-  suffix: string;   // Text after actor name or full message if no actor
+  suffix: string; // Text after actor name or full message if no actor
 }
 
 export function getMessageSummaryParts(
   message: AnyGameMessage,
-  playerMapping: Map<string, { seat: number; player_key: string }>
+  playerMapping: Map<string, { seat: number; player_key: string }>,
 ): MessageSummaryParts {
   if (isShuffleMessage(message)) {
     return {
@@ -128,7 +127,9 @@ export function getMessageSummaryParts(
 
   if (isBlindingMessage(message)) {
     // Look up target player's seat from playerMapping
-    const targetPlayerInfo = playerMapping.get(message.target_player_public_key);
+    const targetPlayerInfo = playerMapping.get(
+      message.target_player_public_key,
+    );
     const targetPlayerLabel = targetPlayerInfo
       ? `Player ${targetPlayerInfo.seat + 1}`
       : "unknown player";
@@ -146,8 +147,12 @@ export function getMessageSummaryParts(
     };
   }
 
-  if (message.type === "player_preflop" || message.type === "player_flop" ||
-      message.type === "player_turn" || message.type === "player_river") {
+  if (
+    message.type === "player_preflop" ||
+    message.type === "player_flop" ||
+    message.type === "player_turn" ||
+    message.type === "player_river"
+  ) {
     const action = formatPlayerAction(message.action).toLowerCase();
     return {
       hasActor: true,

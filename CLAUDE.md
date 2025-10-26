@@ -171,6 +171,38 @@ The system primarily uses CCS (Customizable Constraint Systems) which generalize
 
 - **Database Queries (Rust)**: Prefer the "seaborn" DSL libraries (SeaORM/SeaQuery) over raw SQL strings for stronger type safety. Avoid building SQL via `format!`/string concatenation; use the ORM/query builder APIs and compile-time checked macros where available.
 
+### TypeScript/Frontend Coding Guidelines
+- **Typechecking**: Always run `npm run check` in the `zk_poker_frontend` folder to typecheck TypeScript code and run ESLint. This command combines linting and typechecking to catch errors before committing. Run it frequently during development and always before creating a PR.
+  ```bash
+  cd zk_poker_frontend && npm run check
+  ```
+
+- **JSON Parsing with Zod**: Always use Zod schemas to parse JSON payloads in TypeScript code. The Zod schemas in the frontend are designed to mirror the Rust Serde types, providing type-safe parsing with descriptive error messages.
+  ```typescript
+  import { z } from 'zod';
+  import { MyPayloadSchema } from '@/schemas';
+
+  // ✅ CORRECT - Use Zod to parse untrusted JSON
+  const parsePayload = (json: unknown) => {
+    const result = MyPayloadSchema.safeParse(json);
+    if (!result.success) {
+      console.error('Parse error:', result.error.format());
+      throw new Error('Invalid payload');
+    }
+    return result.data; // Fully typed!
+  };
+
+  // ❌ INCORRECT - Unsafe type assertion
+  const payload = json as MyPayload; // No runtime validation!
+  ```
+
+  **Benefits of Zod parsing**:
+  - Runtime validation matches TypeScript types
+  - Zod schemas mirror Rust Serde types, ensuring frontend/backend compatibility
+  - Descriptive error messages for debugging malformed payloads
+  - Catches schema drift at runtime before it causes subtle bugs
+  - Provides automatic TypeScript inference from schemas
+
 ### Testing Approach
 - Unit tests throughout individual crates
 - Integration tests via smoke testing scripts

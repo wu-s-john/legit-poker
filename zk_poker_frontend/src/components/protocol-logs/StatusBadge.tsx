@@ -1,6 +1,6 @@
 // components/protocol-logs/StatusBadge.tsx
 
-import type { SnapshotStatus } from "~/lib/console/schemas";
+import type { SnapshotStatus } from "~/lib/schemas/finalizedEnvelopeSchema";
 
 interface StatusBadgeProps {
   status: SnapshotStatus;
@@ -26,7 +26,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
   if (typeof status === "object" && "failure" in status) {
     return (
       <span
-        className="font-medium cursor-help"
+        className="cursor-help font-medium"
         style={{ color: "var(--color-accent-red)" }}
         title={status.failure}
       >
@@ -37,10 +37,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
 
   // Unknown status
   return (
-    <span
-      className="font-medium"
-      style={{ color: "var(--color-accent-gold)" }}
-    >
+    <span className="font-medium" style={{ color: "var(--color-accent-gold)" }}>
       {status}
     </span>
   );

@@ -3,8 +3,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
-import { demoStreamEventSchema } from "~/lib/demoStreamEventSchema";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
+import { demoStreamEventSchema } from "~/lib/schemas/demoStreamEventSchema";
 
 const API_BASE =
   process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? "http://localhost:4000";
@@ -24,7 +24,7 @@ interface DemoStreamState {
  *
  * @param enabled - If false, no connection is made. When true, connects to SSE stream.
  */
-export function useDemoStream(enabled: boolean = true) {
+export function useDemoStream(enabled = true) {
   const [state, setState] = useState<DemoStreamState>({
     messages: [],
     gameId: null,
@@ -85,18 +85,21 @@ export function useDemoStream(enabled: boolean = true) {
       };
 
       // Listen for specific event types from the backend
-      eventSource.addEventListener("player_created", (event: MessageEvent) => {
-        console.log("[SSE] Received 'player_created' event:", event);
-        console.log("[SSE] Event data:", event.data);
+      eventSource.addEventListener("player_created", (event: Event) => {
+        const messageEvent = event as MessageEvent<string>;
+        console.log("[SSE] Received 'player_created' event:", messageEvent);
+        console.log("[SSE] Event data:", messageEvent.data);
         // Player created events are informational, no state update needed
       });
 
-      eventSource.addEventListener("hand_created", (event: MessageEvent) => {
-        console.log("[SSE] Received 'hand_created' event:", event);
-        console.log("[SSE] Event data:", event.data);
+      eventSource.addEventListener("hand_created", (event: Event) => {
+        const messageEvent = event as MessageEvent<string>;
+        console.log("[SSE] Received 'hand_created' event:", messageEvent);
+        console.log("[SSE] Event data:", messageEvent.data);
 
         try {
-          const parsed = demoStreamEventSchema.parse(JSON.parse(event.data));
+          const json: unknown = JSON.parse(messageEvent.data);
+          const parsed = demoStreamEventSchema.parse(json);
           console.log("[SSE] Validated hand_created event:", parsed);
 
           if (parsed.type === "hand_created") {
@@ -107,7 +110,7 @@ export function useDemoStream(enabled: boolean = true) {
               >();
 
               // Extract player mapping from snapshot
-              if (parsed.snapshot && parsed.snapshot.players) {
+              if (parsed.snapshot?.players) {
                 Object.values(parsed.snapshot.players).forEach((player) => {
                   mapping.set(player.player_key, {
                     seat: player.seat,
@@ -135,36 +138,15 @@ export function useDemoStream(enabled: boolean = true) {
         }
       });
 
-      eventSource.addEventListener("game_event", (event: MessageEvent) => {
-        console.log("[SSE] Received 'game_event' event:", event);
-        console.log("[SSE] Event data:", event.data);
+      eventSource.addEventListener("game_event", (event: Event) => {
+        const messageEvent = event as MessageEvent<string>;
+        console.log("[SSE] Received 'game_event' event:", messageEvent);
+        console.log("[SSE] Event data:", messageEvent.data);
 
         try {
-          const rawData = JSON.parse(event.data);
+          const json: unknown = JSON.parse(messageEvent.data);
+          const parsed = demoStreamEventSchema.parse(json);
 
-          console.log("[SSE] Full rawData:", rawData);
-          console.log("[SSE] Envelope object:", rawData.envelope);
-
-          // The finalized envelope has ALL fields from envelope plus the finalized fields
-          // at the top level (not nested under 'envelope')
-          const finalizedEnvelope = {
-            type: "game_event",
-            hand_id: rawData.envelope.hand_id,
-            game_id: rawData.envelope.game_id,
-            actor: rawData.envelope.actor,
-            nonce: rawData.envelope.nonce,
-            public_key: rawData.envelope.public_key,
-            message: rawData.envelope.message,
-            snapshot_status: rawData.snapshot_status,
-            applied_phase: rawData.applied_phase,
-            snapshot_sequence_id: rawData.snapshot_sequence_id,
-            created_timestamp: rawData.created_timestamp,
-          };
-
-          console.log("[SSE] Merged finalized envelope:", finalizedEnvelope);
-          console.log("[SSE] Attempting to parse...");
-
-          const parsed = demoStreamEventSchema.parse(finalizedEnvelope);
           console.log("[SSE] Validated game_event:", parsed);
 
           if (parsed.type === "game_event") {
@@ -176,7 +158,7 @@ export function useDemoStream(enabled: boolean = true) {
               return {
                 ...prev,
                 messages: [
-                  parsed as unknown as FinalizedAnyMessageEnvelope,
+                  parsed.envelope,
                   ...prev.messages,
                 ],
               };
@@ -190,39 +172,42 @@ export function useDemoStream(enabled: boolean = true) {
 
       eventSource.addEventListener(
         "community_decrypted",
-        (event: MessageEvent) => {
-          console.log("[SSE] Received 'community_decrypted' event:", event);
-          console.log("[SSE] Event data:", event.data);
+        (event: Event) => {
+          const messageEvent = event as MessageEvent<string>;
+          console.log("[SSE] Received 'community_decrypted' event:", messageEvent);
+          console.log("[SSE] Event data:", messageEvent.data);
           // Community cards events are informational for now
         },
       );
 
       eventSource.addEventListener(
         "hole_cards_decrypted",
-        (event: MessageEvent) => {
-          console.log("[SSE] Received 'hole_cards_decrypted' event:", event);
-          console.log("[SSE] Event data:", event.data);
+        (event: Event) => {
+          const messageEvent = event as MessageEvent<string>;
+          console.log("[SSE] Received 'hole_cards_decrypted' event:", messageEvent);
+          console.log("[SSE] Event data:", messageEvent.data);
           // Hole cards events are informational for now
         },
       );
 
-      eventSource.addEventListener("hand_completed", (event: MessageEvent) => {
-        console.log("[SSE] Received 'hand_completed' event:", event);
-        console.log("[SSE] Event data:", event.data);
+      eventSource.addEventListener("hand_completed", (event: Event) => {
+        const messageEvent = event as MessageEvent<string>;
+        console.log("[SSE] Received 'hand_completed' event:", messageEvent);
+        console.log("[SSE] Event data:", messageEvent.data);
 
         setState((prev) => ({ ...prev, status: "completed" }));
       });
 
       // Generic message handler (parses all event types)
-      eventSource.onmessage = (event) => {
+      eventSource.onmessage = (event: MessageEvent<string>) => {
         console.log("[SSE] Raw event received:", event);
         console.log("[SSE] Event data:", event.data);
 
         try {
-          const rawData = JSON.parse(event.data);
-          console.log("[SSE] Parsed JSON:", rawData);
+          const json: unknown = JSON.parse(event.data);
+          console.log("[SSE] Parsed JSON:", json);
 
-          const parsed = demoStreamEventSchema.parse(rawData);
+          const parsed = demoStreamEventSchema.parse(json);
           console.log("[SSE] Validated event:", parsed);
 
           // Handle hand_created event - extract player mapping
@@ -240,7 +225,7 @@ export function useDemoStream(enabled: boolean = true) {
               >();
 
               // Extract player mapping from snapshot
-              if (parsed.snapshot && parsed.snapshot.players) {
+              if (parsed.snapshot?.players) {
                 Object.values(parsed.snapshot.players).forEach((player) => {
                   mapping.set(player.player_key, {
                     seat: player.seat,
@@ -262,17 +247,19 @@ export function useDemoStream(enabled: boolean = true) {
 
           // Handle game_event - add to messages list (prepend for reverse chronological)
           if (parsed.type === "game_event") {
-            console.log(
-              "[SSE] game_event - Adding message to list. Current count:",
-              state.messages.length,
-            );
-            setState((prev) => ({
-              ...prev,
-              messages: [
-                parsed as unknown as FinalizedAnyMessageEnvelope,
-                ...prev.messages,
-              ],
-            }));
+            setState((prev) => {
+              console.log(
+                "[SSE] game_event - Adding message to list. Current count:",
+                prev.messages.length,
+              );
+              return {
+                ...prev,
+                messages: [
+                  parsed.envelope,
+                  ...prev.messages,
+                ],
+              };
+            });
           }
 
           // Handle hand_completed - mark as completed but keep connection open

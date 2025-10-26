@@ -26,7 +26,7 @@ export interface PlayerPosition {
 export function calculatePlayerPositions(
   playerCount: number,
   tableCenter: { x: number; y: number } = { x: 960, y: 400 },
-  baseDistance: number = 420
+  baseDistance = 420
 ): PlayerPosition[] {
   const positions: PlayerPosition[] = [];
   const angleIncrement = (2 * Math.PI) / playerCount;

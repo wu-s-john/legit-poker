@@ -67,7 +67,7 @@ export function paginateItems<T>(
 export function generatePageNumbers(
   currentPage: number,
   totalPages: number,
-  maxVisible: number = 7,
+  maxVisible = 7,
 ): (number | "ellipsis")[] {
   if (totalPages <= maxVisible) {
     return Array.from({ length: totalPages }, (_, i) => i + 1);

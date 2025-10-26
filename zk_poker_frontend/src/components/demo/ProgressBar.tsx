@@ -28,7 +28,7 @@ export function ProgressBar({
   return (
     <div className="progress-bar-container">
       {/* Label row */}
-      {(label || showPercentage) && (
+      {(Boolean(label) || showPercentage) && (
         <div className="progress-label-row">
           {label && <span className="progress-label">{label}</span>}
           {showPercentage && (

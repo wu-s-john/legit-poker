@@ -3,7 +3,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/console/schemas";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
 import { CompactMessageRow } from "./CompactMessageRow";
 
 interface CompactLogsPanelProps {
@@ -20,7 +20,7 @@ interface CompactLogsPanelProps {
 export function CompactLogsPanel({
   messages,
   playerMapping,
-  isOpen,
+  isOpen: _isOpen,
   onClose,
 }: CompactLogsPanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -34,9 +34,7 @@ export function CompactLogsPanel({
 
   return (
     <div
-      className="fixed right-0 top-0 h-screen
-                 lg:w-[425px] md:w-[250px] w-full
-                 flex flex-col z-[999]"
+      className="fixed top-0 right-0 z-[999] flex h-screen w-full flex-col md:w-[250px] lg:w-[425px]"
       style={{
         backgroundColor: "var(--color-bg-card)",
         borderLeft: "1px solid var(--color-border-primary)",
@@ -46,7 +44,7 @@ export function CompactLogsPanel({
     >
       {/* Header */}
       <header
-        className="px-4 py-3 flex items-center justify-between shrink-0"
+        className="flex shrink-0 items-center justify-between px-4 py-3"
         style={{
           backgroundColor: "var(--color-bg-card-header)",
           borderBottom: "1px solid var(--color-border-primary)",
@@ -57,21 +55,19 @@ export function CompactLogsPanel({
           style={{ color: "var(--color-text-primary)" }}
         >
           Protocol Logs
-          <span
-            className="ml-2"
-            style={{ color: "var(--color-accent-cyan)" }}
-          >
+          <span className="ml-2" style={{ color: "var(--color-accent-cyan)" }}>
             ({messages.length})
           </span>
         </h2>
         <button
           onClick={onClose}
-          className="p-1 rounded-lg transition-colors hover:bg-opacity-80"
+          className="hover:bg-opacity-80 rounded-lg p-1 transition-colors"
           style={{
             color: "var(--color-text-secondary)",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "var(--color-bg-button-hover)";
+            e.currentTarget.style.backgroundColor =
+              "var(--color-bg-button-hover)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.backgroundColor = "transparent";
@@ -110,7 +106,7 @@ export function CompactLogsPanel({
             <div className="mb-2">⏳</div>
             <div>Waiting for protocol messages...</div>
             <div
-              className="text-xs mt-2"
+              className="mt-2 text-xs"
               style={{ color: "var(--color-text-muted)" }}
             >
               Messages will appear here as they stream in
@@ -119,7 +115,7 @@ export function CompactLogsPanel({
         ) : (
           messages.map((msg) => (
             <CompactMessageRow
-              key={`${msg.hand_id}-${msg.snapshot_sequence_id}`}
+              key={`${msg.envelope.hand_id}-${msg.snapshot_sequence_id}`}
               message={msg}
               viewerPublicKey="placeholder_viewer_key"
               playerMapping={playerMapping}

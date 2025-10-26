@@ -3,7 +3,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
 import { CompactTableRow } from "./CompactTableRow";
 
 interface CompactTableLogsPanelProps {
@@ -29,7 +29,7 @@ interface CompactTableLogsPanelProps {
 export function CompactTableLogsPanel({
   messages,
   playerMapping,
-  isOpen,
+  isOpen: _isOpen,
   onClose,
   variant = "overlay",
 }: CompactTableLogsPanelProps) {
@@ -151,7 +151,7 @@ export function CompactTableLogsPanel({
         ) : (
           messages.map((msg, idx) => (
             <CompactTableRow
-              key={`${msg.hand_id}-${msg.snapshot_sequence_id ?? idx}`}
+              key={`${msg.envelope.hand_id}-${msg.snapshot_sequence_id ?? idx}`}
               message={msg}
               sequenceNumber={idx}
               viewerPublicKey="placeholder_viewer_key"

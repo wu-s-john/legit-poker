@@ -17,7 +17,7 @@ function getPhaseEmoji(label: string): string {
     "Bet": "🟡",
     "Showdown": "🔴",
   };
-  return emojiMap[label] || "⚪";
+  return emojiMap[label] ?? "⚪";
 }
 
 /**

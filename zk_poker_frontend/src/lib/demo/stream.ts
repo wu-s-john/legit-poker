@@ -2,8 +2,8 @@
  * Demo SSE stream connection
  */
 
-import type { DemoStreamEvent, SSEMessage } from './events';
-import { parseDemoEvent } from './events';
+import type { DemoStreamEvent } from './events';
+import { demoStreamEventSchema } from '~/lib/schemas/demoStreamEventSchema';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? 'http://localhost:4000';
 
@@ -34,17 +34,15 @@ export function connectDemoStream(options: DemoStreamOptions): () => void {
   ];
 
   eventTypes.forEach((eventType) => {
-    eventSource.addEventListener(eventType, (e) => {
-      const message: SSEMessage = {
-        event: eventType,
-        data: e.data,
-      };
-
+    eventSource.addEventListener(eventType, (e: Event) => {
+      const messageEvent = e as MessageEvent<string>;
       console.log('[Demo Stream] Received event:', eventType);
-      console.log('[Demo Stream] Raw data:', e.data);
+      console.log('[Demo Stream] Raw data:', messageEvent.data);
 
-      const event = parseDemoEvent(message);
-      if (event) {
+      try {
+        const json: unknown = JSON.parse(messageEvent.data);
+        const event = demoStreamEventSchema.parse(json);
+
         console.log('[Demo Stream] Parsed event:', event);
         onEvent(event);
 
@@ -57,8 +55,9 @@ export function connectDemoStream(options: DemoStreamOptions): () => void {
             onComplete();
           }
         }
-      } else {
-        console.warn('[Demo Stream] Failed to parse event:', eventType, e.data);
+      } catch (error) {
+        console.error('[Demo Stream] Failed to parse event:', eventType, error);
+        console.error('[Demo Stream] Problem data:', messageEvent.data);
       }
     });
   });
@@ -78,11 +77,10 @@ export function connectDemoStream(options: DemoStreamOptions): () => void {
     console.log('[Demo Stream] Connection established successfully');
   });
 
-  // Cleanup function
+  // Cleanup function - only closes connection, doesn't call onComplete
+  // onComplete should only fire when the stream naturally ends (hand_completed)
   return () => {
+    console.log('[Demo Stream] Cleanup: closing connection');
     eventSource.close();
-    if (onComplete && !isCompleted) {
-      onComplete();
-    }
   };
 }

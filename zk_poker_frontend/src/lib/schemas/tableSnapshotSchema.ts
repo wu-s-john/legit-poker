@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { hexString, playerBetActionSchema, snapshotStatusSchema } from './finalizedEnvelopeSchema';
+import {
+  hexString,
+  playerBetActionSchema,
+  snapshotStatusSchema,
+  finalizedEnvelopeSchema,
+} from './finalizedEnvelopeSchema';
 
 const seatIdSchema = z.number().int().min(0).max(255);
 const cardIndexSchema = z.number().int().min(0).max(51);
@@ -399,6 +404,7 @@ export type AnyTableSnapshot = z.infer<typeof anyTableSnapshotSchema>;
 
 export const latestSnapshotResponseSchema = z.object({
   snapshot: anyTableSnapshotSchema,
+  messages: z.array(finalizedEnvelopeSchema).optional(),
 });
 
 export type LatestSnapshotResponse = z.infer<typeof latestSnapshotResponseSchema>;

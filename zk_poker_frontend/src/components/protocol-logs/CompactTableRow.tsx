@@ -7,7 +7,7 @@ import { ChevronRight } from "lucide-react";
 import type {
   FinalizedAnyMessageEnvelope,
   SnapshotStatus,
-} from "~/lib/finalizedEnvelopeSchema";
+} from "~/lib/schemas/finalizedEnvelopeSchema";
 import {
   getMessageSummaryParts,
   getPhaseConfig,
@@ -72,7 +72,7 @@ function getPhaseStyle(label: string): {
       background: "rgba(239, 68, 68, 0.05)"
     },
   };
-  return styles[label] || {
+  return styles[label] ?? {
     emoji: "⚪",
     color: "#94a3b8",
     background: "rgba(148, 163, 184, 0.05)"
@@ -112,19 +112,19 @@ function getStatusDisplay(status: SnapshotStatus): {
  */
 export function CompactTableRow({
   message,
-  sequenceNumber,
+  sequenceNumber: _sequenceNumber,
   viewerPublicKey,
   playerMapping,
 }: CompactTableRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   const summaryParts = getMessageSummaryParts(
-    message.message.value,
+    message.envelope.message.value,
     playerMapping
   );
   const phaseConfig = getPhaseConfig(
     message.applied_phase,
-    message.message.value
+    message.envelope.message.value
   );
   const phaseStyle = getPhaseStyle(phaseConfig.label);
   const statusDisplay = getStatusDisplay(message.snapshot_status);
@@ -194,7 +194,7 @@ export function CompactTableRow({
         <div className="text-sm" style={{ color: "#e2e8f0" }}>
           {summaryParts.hasActor && (
             <ActorName
-              actor={message.actor}
+              actor={message.envelope.actor}
               viewerPublicKey={viewerPublicKey}
             />
           )}

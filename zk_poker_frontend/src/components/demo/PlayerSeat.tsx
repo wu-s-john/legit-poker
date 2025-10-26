@@ -13,7 +13,7 @@ interface PlayerSeatProps {
   isActive?: boolean;
 }
 
-export function PlayerSeat({ seat, position, isViewer, name, isActive }: PlayerSeatProps) {
+export function PlayerSeat({ seat: _seat, position, isViewer, name, isActive }: PlayerSeatProps) {
   const avatarSize = isViewer ? 100 : 80;
 
   return (

@@ -3,7 +3,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AnyActor } from "~/lib/console/schemas";
+import type { AnyActor } from "~/lib/schemas/finalizedEnvelopeSchema";
 import { formatActor } from "~/lib/console/formatting";
 
 interface ActorNameProps {
@@ -19,11 +19,11 @@ export function ActorName({ actor, viewerPublicKey }: ActorNameProps) {
 
   // Get the public key/address for this actor
   const getActorAddress = (): string | null => {
-    if ("Player" in actor) {
-      return actor.Player.player_key;
+    if (typeof actor === "object" && "player" in actor) {
+      return actor.player.player_id.toString(); // Use player_id as identifier
     }
-    if ("Shuffler" in actor) {
-      return actor.Shuffler.shuffler_key;
+    if (typeof actor === "object" && "shuffler" in actor) {
+      return actor.shuffler.shuffler_key;
     }
     return null;
   };
@@ -57,7 +57,7 @@ export function ActorName({ actor, viewerPublicKey }: ActorNameProps) {
   return (
     <>
       <span
-        className="relative inline-flex items-center gap-1 font-semibold cursor-pointer transition-colors"
+        className="relative inline-flex cursor-pointer items-center gap-1 font-semibold transition-colors"
         style={{
           color: "var(--color-text-primary)",
           textDecoration: "underline dotted 1px",
@@ -72,7 +72,7 @@ export function ActorName({ actor, viewerPublicKey }: ActorNameProps) {
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            handleClick();
+            void handleClick();
           }
         }}
       >
@@ -94,7 +94,7 @@ export function ActorName({ actor, viewerPublicKey }: ActorNameProps) {
       {/* Toast notification */}
       {showToast && (
         <div
-          className="fixed bottom-4 right-4 px-4 py-2 rounded-lg text-sm font-medium shadow-lg z-50 animate-in fade-in slide-in-from-bottom-2"
+          className="animate-in fade-in slide-in-from-bottom-2 fixed right-4 bottom-4 z-50 rounded-lg px-4 py-2 text-sm font-medium shadow-lg"
           style={{
             backgroundColor: "var(--color-bg-card)",
             color: "var(--color-accent-green)",

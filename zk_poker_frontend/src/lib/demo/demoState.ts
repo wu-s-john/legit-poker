@@ -5,7 +5,7 @@
 import type { Card } from '~/types/poker';
 import type { PlayerPosition } from './positioning';
 import type { CardDecryptionState } from './cardState';
-import type { FinalizedAnyMessageEnvelope } from '../finalizedEnvelopeSchema';
+import type { FinalizedAnyMessageEnvelope } from '../schemas/finalizedEnvelopeSchema';
 
 export interface DemoState {
   // Connection

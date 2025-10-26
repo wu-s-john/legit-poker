@@ -1,10 +1,12 @@
-import { z } from 'zod';
+import { z } from "zod";
 
 /**
  * Helpers
  */
 const HEX_STRING = /^(?:0x|\\x)?[0-9a-fA-F]+$/;
-export const hexString = z.string().regex(HEX_STRING, 'expected hex-encoded string');
+export const hexString = z
+  .string()
+  .regex(HEX_STRING, "expected hex-encoded string");
 const byteVector = z
   .array(z.number().int().min(0).max(255))
   .optional()
@@ -19,14 +21,14 @@ const chips = z.union([
  * Rust serializes these as snake_case variants.
  */
 export const eventPhaseSchema = z.enum([
-  'pending',
-  'shuffling',
-  'dealing',
-  'betting',
-  'reveals',
-  'showdown',
-  'complete',
-  'cancelled',
+  "pending",
+  "shuffling",
+  "dealing",
+  "betting",
+  "reveals",
+  "showdown",
+  "complete",
+  "cancelled",
 ]);
 export type EventPhase = z.infer<typeof eventPhaseSchema>;
 
@@ -35,7 +37,7 @@ export type EventPhase = z.infer<typeof eventPhaseSchema>;
  * Rust serializes as: "success" or {"failure": "reason"}
  */
 export const snapshotStatusSchema = z.union([
-  z.literal('success'),
+  z.literal("success"),
   z.object({
     failure: z.string().min(1),
   }),
@@ -46,10 +48,10 @@ export type SnapshotStatus = z.infer<typeof snapshotStatusSchema>;
  * Player betting actions (`PlayerBetAction`).
  */
 export const playerBetActionSchema = z.union([
-  z.literal('fold'),
-  z.literal('check'),
-  z.literal('call'),
-  z.literal('all_in'),
+  z.literal("fold"),
+  z.literal("check"),
+  z.literal("call"),
+  z.literal("all_in"),
   z.object({
     bet_to: z.object({
       to: chips,
@@ -68,11 +70,12 @@ export type PlayerBetAction = z.infer<typeof playerBetActionSchema>;
  * Backend uses tagged enum format: {"player": {...}}, {"shuffler": {...}}, or "none"
  */
 export const anyActorSchema = z.union([
-  z.literal('none'),
+  z.literal("none"),
   z.object({
     player: z.object({
       seat_id: z.number().int().min(0).max(255),
       player_id: z.number().int().nonnegative(),
+      player_key: hexString,
     }),
   }),
   z.object({
@@ -89,6 +92,19 @@ export type AnyActor = z.infer<typeof anyActorSchema>;
  * Hex-encoded fields correspond to serialized curve points/ciphertexts/proofs.
  */
 const DECK_SIZE = 52 as const;
+
+const chaumPedersenProofSchema = z.object({
+  t_g: hexString,
+  t_h: hexString,
+  z: hexString,
+});
+
+const playerAccessibleCiphertextSchema = z.object({
+  blinded_base: hexString,
+  blinded_message_with_player_key: hexString,
+  player_unblinding_helper: hexString,
+  shuffler_proofs: z.array(chaumPedersenProofSchema),
+});
 
 const elGamalCiphertextSchema = z.object({
   c1: hexString,
@@ -107,7 +123,7 @@ const shuffleProofSchema = z.object({
 });
 
 const shuffleMessageSchema = z.object({
-  type: z.literal('shuffle'),
+  type: z.literal("shuffle"),
   turn_index: z.number().int().min(0).max(0xffff),
   deck_in: z.array(elGamalCiphertextSchema).length(DECK_SIZE),
   deck_out: z.array(elGamalCiphertextSchema).length(DECK_SIZE),
@@ -116,7 +132,7 @@ const shuffleMessageSchema = z.object({
 });
 
 const blindingMessageSchema = z.object({
-  type: z.literal('blinding'),
+  type: z.literal("blinding"),
   card_in_deck_position: z.number().int().min(0).max(255),
   share: z.object({
     blinding_base_contribution: hexString,
@@ -132,40 +148,45 @@ const blindingMessageSchema = z.object({
 });
 
 const partialUnblindingMessageSchema = z.object({
-  type: z.literal('partial_unblinding'),
+  type: z.literal("partial_unblinding"),
   card_in_deck_position: z.number().int().min(0).max(255),
-  share: hexString,
+  share: z.object({
+    share: hexString,
+    member_key: hexString,
+  }),
   target_player_public_key: hexString,
+  _curve: z.null().optional(),
 });
 
 const playerPreflopMessageSchema = z.object({
-  type: z.literal('player_preflop'),
+  type: z.literal("player_preflop"),
   action: playerBetActionSchema,
 });
 
 const playerFlopMessageSchema = z.object({
-  type: z.literal('player_flop'),
+  type: z.literal("player_flop"),
   action: playerBetActionSchema,
 });
 
 const playerTurnMessageSchema = z.object({
-  type: z.literal('player_turn'),
+  type: z.literal("player_turn"),
   action: playerBetActionSchema,
 });
 
 const playerRiverMessageSchema = z.object({
-  type: z.literal('player_river'),
+  type: z.literal("player_river"),
   action: playerBetActionSchema,
 });
 
 const showdownMessageSchema = z.object({
-  type: z.literal('showdown'),
-  chaum_pedersen_proofs: z.array(hexString).length(2),
+  type: z.literal("showdown"),
+  chaum_pedersen_proofs: z.array(chaumPedersenProofSchema).length(2),
   card_in_deck_position: z.array(z.number().int().min(0).max(255)).length(2),
-  hole_ciphertexts: z.array(hexString).length(2),
+  hole_ciphertexts: z.array(playerAccessibleCiphertextSchema).length(2),
+  _curve: z.null().optional(),
 });
 
-export const anyGameMessageSchema = z.discriminatedUnion('type', [
+export const anyGameMessageSchema = z.discriminatedUnion("type", [
   shuffleMessageSchema,
   blindingMessageSchema,
   partialUnblindingMessageSchema,
@@ -202,17 +223,64 @@ export type AnyMessageEnvelope = z.infer<typeof anyMessageEnvelopeSchema>;
 
 /**
  * Finalized envelope – mirrors `FinalizedAnyMessageEnvelope<C>` in Rust.
+ * The envelope field is nested (not flattened).
  */
 export const finalizedEnvelopeSchema = z.object({
-  hand_id: z.number().int().nonnegative(),
-  game_id: z.number().int().nonnegative(),
-  actor: anyActorSchema,
-  nonce: z.number().int().nonnegative(),
-  public_key: hexString,
-  message: withSignatureSchema,
+  envelope: anyMessageEnvelopeSchema,
   snapshot_status: snapshotStatusSchema,
   applied_phase: eventPhaseSchema,
   snapshot_sequence_id: z.number().int().nonnegative(),
   created_timestamp: z.number().int().nonnegative(),
 });
-export type FinalizedAnyMessageEnvelope = z.infer<typeof finalizedEnvelopeSchema>;
+export type FinalizedAnyMessageEnvelope = z.infer<
+  typeof finalizedEnvelopeSchema
+>;
+
+// ============================================================================
+// Type Guards
+// ============================================================================
+
+/**
+ * Type guard to check if actor is a Player
+ */
+export function isPlayerActor(
+  actor: AnyActor,
+): actor is Extract<AnyActor, { player: unknown }> {
+  return typeof actor === "object" && actor !== null && "player" in actor;
+}
+
+/**
+ * Type guard to check if actor is a Shuffler
+ */
+export function isShufflerActor(
+  actor: AnyActor,
+): actor is Extract<AnyActor, { shuffler: unknown }> {
+  return typeof actor === "object" && actor !== null && "shuffler" in actor;
+}
+
+/**
+ * Type guard to check if message is a Shuffle message
+ */
+export function isShuffleMessage(
+  message: AnyGameMessage,
+): message is Extract<AnyGameMessage, { type: "shuffle" }> {
+  return message.type === "shuffle";
+}
+
+/**
+ * Type guard to check if message is a Blinding message
+ */
+export function isBlindingMessage(
+  message: AnyGameMessage,
+): message is Extract<AnyGameMessage, { type: "blinding" }> {
+  return message.type === "blinding";
+}
+
+/**
+ * Type guard to check if message is a PartialUnblinding message
+ */
+export function isPartialUnblindingMessage(
+  message: AnyGameMessage,
+): message is Extract<AnyGameMessage, { type: "partial_unblinding" }> {
+  return message.type === "partial_unblinding";
+}

@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import type { Card as CardType, Suit, Rank } from '~/types/poker';
+import type { Card as CardType, Suit } from '~/types/poker';
 
 interface CardProps {
   card?: CardType;

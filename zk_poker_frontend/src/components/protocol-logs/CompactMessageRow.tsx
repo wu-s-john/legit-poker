@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/console/schemas";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
 import {
   getMessageSummaryParts,
   getPhaseConfig,
@@ -62,16 +62,16 @@ export function CompactMessageRow({
 
   const summaryParts = getMessageSummaryParts(
     message.envelope.message.value,
-    playerMapping
+    playerMapping,
   );
   const phaseConfig = getPhaseConfig(
     message.applied_phase,
-    message.envelope.message.value
+    message.envelope.message.value,
   );
 
   return (
     <div
-      className="border-b transition-colors cursor-pointer"
+      className="cursor-pointer border-b transition-colors"
       style={{
         borderColor: "var(--color-border-subtle)",
         backgroundColor: isExpanded
@@ -92,20 +92,20 @@ export function CompactMessageRow({
       {/* Collapsed Card - 3 Lines */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 text-left space-y-1"
+        className="w-full space-y-1 px-4 py-3 text-left"
       >
         {/* Line 1: Timestamp (left) + Phase Badge + Chevron (right) */}
         <div className="flex items-center justify-between">
           {/* Desktop: Full timestamp */}
           <span
-            className="hidden sm:block text-xs font-mono"
+            className="hidden font-mono text-xs sm:block"
             style={{ color: "var(--color-text-secondary)" }}
           >
             {formatTimestampFull(message.created_timestamp)}
           </span>
           {/* Mobile: Short timestamp */}
           <span
-            className="sm:hidden text-xs font-mono"
+            className="font-mono text-xs sm:hidden"
             style={{ color: "var(--color-text-secondary)" }}
           >
             {formatTimestampShort(message.created_timestamp)}

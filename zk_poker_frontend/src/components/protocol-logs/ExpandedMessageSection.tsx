@@ -3,12 +3,7 @@
 "use client";
 
 import { useState } from "react";
-import type { FinalizedAnyMessageEnvelope, AnyGameMessage } from "~/lib/console/schemas";
-import {
-  isShuffleMessage,
-  isBlindingMessage,
-  isPartialUnblindingMessage,
-} from "~/lib/console/formatting";
+import type { FinalizedAnyMessageEnvelope, AnyGameMessage } from "~/lib/schemas/finalizedEnvelopeSchema";
 import { CopyButton } from "~/components/console/CopyButton";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
@@ -27,6 +22,19 @@ type VerificationState =
 type VerificationResult =
   | { success: true; duration: number }
   | { success: false; duration: number; error: string };
+
+// Type guards for message types
+function isShuffleMessage(message: AnyGameMessage): boolean {
+  return message.type === "shuffle";
+}
+
+function isBlindingMessage(message: AnyGameMessage): boolean {
+  return message.type === "blinding";
+}
+
+function isPartialUnblindingMessage(message: AnyGameMessage): boolean {
+  return message.type === "partial_unblinding";
+}
 
 // Helper: Check if message has verifiable proof
 function hasVerifiableProof(message: AnyGameMessage): boolean {
@@ -51,7 +59,7 @@ function formatDuration(ms: number): string {
 }
 
 // Stub verification function (0-150ms random delay)
-async function verifyProof(message: AnyGameMessage): Promise<VerificationResult> {
+async function verifyProof(_message: AnyGameMessage): Promise<VerificationResult> {
   const delay = Math.floor(Math.random() * 151);
   const startTime = performance.now();
 
@@ -207,7 +215,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
               className="font-mono"
               style={{ color: "var(--color-text-secondary)" }}
             >
-              {message.nonce}
+              {message.envelope.nonce}
             </span>
           </div>
           <span style={{ color: "var(--color-text-muted)" }}>•</span>
@@ -219,11 +227,11 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
 
         {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {hasVerifiableProof(message.message.value) && (
-            <VerifyProofButton message={message.message.value} />
+          {hasVerifiableProof(message.envelope.message.value) && (
+            <VerifyProofButton message={message.envelope.message.value} />
           )}
           <CopyButton
-            text={JSON.stringify(message.message, null, 2)}
+            text={JSON.stringify(message.envelope.message, null, 2)}
             label="Copy Payload"
           />
         </div>
@@ -241,7 +249,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
         onClick={(e) => e.stopPropagation()}
       >
         <JsonView
-          src={message.message.value as any}
+          src={message.envelope.message.value as object}
           dark={true}
           collapsed={2}
           enableClipboard={true}
@@ -272,7 +280,7 @@ export function ExpandedMessageSection({ message }: ExpandedMessageSectionProps)
         className="pt-3"
         style={{ borderTop: "1px solid var(--color-border-subtle)" }}
       >
-        <SignatureDisplay signature={message.message.signature} />
+        <SignatureDisplay signature={message.envelope.message.signature} />
       </div>
     </div>
   );

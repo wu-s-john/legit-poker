@@ -2,20 +2,23 @@
  * Gap Recovery - Handles detection and recovery from missing/out-of-order events
  */
 
-import type { FinalizedAnyMessageEnvelope } from '../finalizedEnvelopeSchema';
+import type { DemoStreamEvent } from './events';
+
+// Type alias for game_event variant
+type GameEvent = Extract<DemoStreamEvent, { type: 'game_event' }>;
 
 export interface GapDetectionResult {
   hasGap: boolean;
   missingSeqIds: number[];
-  readyEvents: FinalizedAnyMessageEnvelope[];
+  readyEvents: GameEvent[];
 }
 
 /**
  * Detects gaps in event sequence and manages out-of-order events
  */
 export class GapDetector {
-  private expectedSeqId: number = 0;
-  private pendingEvents: Map<number, FinalizedAnyMessageEnvelope> = new Map();
+  private expectedSeqId = 0;
+  private pendingEvents = new Map<number, GameEvent>();
 
   /**
    * Process incoming event and detect gaps
@@ -24,9 +27,10 @@ export class GapDetector {
    * - missingSeqIds: array of missing sequence IDs to fetch
    * - readyEvents: array of events that can be processed in order
    */
-  detectGaps(event: FinalizedAnyMessageEnvelope): GapDetectionResult {
+  detectGaps(event: GameEvent): GapDetectionResult {
     const seqId = event.snapshot_sequence_id;
 
+    // Note: snapshot_sequence_id is now at event top-level (flattened from Rust)
     // Store event in pending buffer
     this.pendingEvents.set(seqId, event);
 
@@ -49,7 +53,7 @@ export class GapDetector {
     }
 
     // No gap detected - collect all consecutive ready events
-    const readyEvents: FinalizedAnyMessageEnvelope[] = [];
+    const readyEvents: GameEvent[] = [];
 
     while (this.pendingEvents.has(this.expectedSeqId)) {
       const readyEvent = this.pendingEvents.get(this.expectedSeqId)!;
@@ -69,14 +73,14 @@ export class GapDetector {
    * Process fetched events to fill gaps
    * Returns events that are now ready to process in order
    */
-  processFetchedEvents(events: FinalizedAnyMessageEnvelope[]): FinalizedAnyMessageEnvelope[] {
+  processFetchedEvents(events: GameEvent[]): GameEvent[] {
     // Add all fetched events to pending buffer
     for (const event of events) {
       this.pendingEvents.set(event.snapshot_sequence_id, event);
     }
 
     // Collect all consecutive ready events
-    const readyEvents: FinalizedAnyMessageEnvelope[] = [];
+    const readyEvents: GameEvent[] = [];
 
     while (this.pendingEvents.has(this.expectedSeqId)) {
       const readyEvent = this.pendingEvents.get(this.expectedSeqId)!;
@@ -119,7 +123,7 @@ export class GapDetector {
   /**
    * Reset detector state (useful for new hand or reconnection)
    */
-  reset(startingSeqId: number = 0): void {
+  reset(startingSeqId = 0): void {
     this.expectedSeqId = startingSeqId;
     this.pendingEvents.clear();
   }

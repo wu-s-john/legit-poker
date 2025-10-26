@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CompactTableLogsPanel } from "~/components/protocol-logs/CompactTableLogsPanel";
 import { PokerTableSection } from "./PokerTableSection";
 import type { DemoStreamEvent } from "~/lib/demo/events";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
 
 interface DemoSectionProps {
   isVisible: boolean;
@@ -33,15 +33,21 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
   };
 
   const handleDemoEvent = useCallback((event: DemoStreamEvent) => {
-    console.log('[DemoSection] Received demo event:', event.type, event);
+    console.log("[DemoSection] Received demo event:", event.type, event);
     setDemoEvents((prev) => [...prev, event]);
   }, []);
 
   // Convert demo events to format expected by CompactTableLogsPanel
   const messages: FinalizedAnyMessageEnvelope[] = useMemo(() => {
     return demoEvents
-      .filter((e) => e.type === 'game_event')
-      .map((e) => e.envelope);
+      .filter((e): e is Extract<DemoStreamEvent, { type: "game_event" }> => e.type === "game_event")
+      .map((e) => ({
+        envelope: e.envelope,
+        snapshot_status: e.snapshot_status,
+        applied_phase: e.applied_phase,
+        snapshot_sequence_id: e.snapshot_sequence_id,
+        created_timestamp: e.created_timestamp,
+      }));
   }, [demoEvents]);
 
   // Extract player mapping from player_created events
@@ -49,7 +55,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
   const playerMapping = useMemo(() => {
     const map = new Map<string, { seat: number; player_key: string }>();
     demoEvents
-      .filter((e) => e.type === 'player_created')
+      .filter((e): e is Extract<DemoStreamEvent, { type: "player_created" }> => e.type === "player_created")
       .forEach((e) => {
         map.set(e.public_key, {
           seat: e.seat,
@@ -60,12 +66,12 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
   }, [demoEvents]);
 
   // Track SSE status based on demo state
-  const status = isDemoActive ? 'connected' : 'idle';
+  const status = isDemoActive ? "connected" : "idle";
   const error = null; // EmbeddedDemoScene handles errors internally
 
   return (
     <div
-      className={`mx-auto max-w-6xl px-4 sm:px-6 transition-all duration-1000 ${
+      className={`mx-auto max-w-6xl px-4 transition-all duration-1000 sm:px-6 ${
         isVisible ? "translate-y-0 opacity-100" : "translate-y-10 opacity-0"
       }`}
     >
@@ -74,7 +80,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
       </h2>
 
       {/* Desktop/Tablet: Side-by-side layout */}
-      <div className="flex flex-col lg:flex-row gap-6">
+      <div className="flex flex-col gap-6 lg:flex-row">
         {/* Left: Poker Table - 1600px desktop, 67% tablet */}
         <div className="flex-1 lg:max-w-[1600px]">
           <PokerTableSection
@@ -87,7 +93,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
 
         {/* Right: Protocol Logs - 340px desktop (26%), 33% tablet */}
         {/* Hidden on mobile */}
-        <div className="hidden md:block lg:w-[340px] md:w-1/3">
+        <div className="hidden md:block md:w-1/3 lg:w-[340px]">
           {isDemoActive ? (
             <CompactTableLogsPanel
               variant="embedded"
@@ -99,7 +105,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
           ) : (
             /* Placeholder when demo not active */
             <div
-              className="h-[600px] flex items-center justify-center rounded-xl border-2 p-8"
+              className="flex h-[600px] items-center justify-center rounded-xl border-2 p-8"
               style={{
                 backgroundColor: "#0a0e14",
                 borderColor: "#2d3748",
@@ -110,7 +116,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
                   Protocol logs will appear here
                 </p>
                 <p className="mt-2 text-xs" style={{ color: "#64748b" }}>
-                  Click "Start Demo" to begin
+                  Click &quot;Start Demo&quot; to begin
                 </p>
               </div>
             </div>
@@ -122,7 +128,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
       {isDemoActive && (
         <button
           onClick={() => setShowLogModal(true)}
-          className="md:hidden fixed bottom-6 right-6 z-50 px-4 py-2 rounded-lg shadow-lg font-medium text-sm text-white flex items-center gap-2"
+          className="fixed right-6 bottom-6 z-50 flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg md:hidden"
           style={{
             backgroundColor: "#3b82f6",
           }}
@@ -150,7 +156,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
               damping: 30,
               stiffness: 300,
             }}
-            className="md:hidden fixed inset-0 z-[999]"
+            className="fixed inset-0 z-[999] md:hidden"
           >
             <CompactTableLogsPanel
               variant="overlay"
@@ -170,10 +176,13 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
 
       {/* Error Display */}
       {error && (
-        <div className="mt-4 rounded-lg border p-4 text-center" style={{
-          backgroundColor: "rgba(239, 68, 68, 0.1)",
-          borderColor: "#ef4444",
-        }}>
+        <div
+          className="mt-4 rounded-lg border p-4 text-center"
+          style={{
+            backgroundColor: "rgba(239, 68, 68, 0.1)",
+            borderColor: "#ef4444",
+          }}
+        >
           <p className="text-sm" style={{ color: "#ef4444" }}>
             {error}
           </p>

@@ -3,13 +3,13 @@
 "use client";
 
 import { useState } from "react";
-import type { FinalizedAnyMessageEnvelope, AnyGameMessage } from "~/lib/console/schemas";
+import type {
+  FinalizedAnyMessageEnvelope,
+  AnyGameMessage,
+} from "~/lib/schemas/finalizedEnvelopeSchema";
 import {
-  formatActor,
-  formatMessageSummary,
   getMessageSummaryParts,
   getPhaseConfig,
-  isViewerActor,
   isShuffleMessage,
   isBlindingMessage,
   isPartialUnblindingMessage,
@@ -60,7 +60,9 @@ function formatDuration(ms: number): string {
 }
 
 // Stub verification function (0-150ms random delay)
-async function verifyProof(message: AnyGameMessage): Promise<VerificationResult> {
+async function verifyProof(
+  _message: AnyGameMessage,
+): Promise<VerificationResult> {
   const delay = Math.floor(Math.random() * 151);
   const startTime = performance.now();
 
@@ -101,7 +103,10 @@ function VerifyProofButton({ message }: { message: AnyGameMessage }) {
         });
       }
     } catch (error) {
-      const duration = Math.round(performance.now() - (state.status === "verifying" ? state.startTime : 0));
+      const duration = Math.round(
+        performance.now() -
+          (state.status === "verifying" ? state.startTime : 0),
+      );
       setState({
         status: "failed",
         duration,
@@ -115,7 +120,7 @@ function VerifyProofButton({ message }: { message: AnyGameMessage }) {
     return (
       <button
         onClick={handleVerify}
-        className="px-3 py-1 text-xs rounded-md transition-colors hover:bg-opacity-80"
+        className="hover:bg-opacity-80 rounded-md px-3 py-1 text-xs transition-colors"
         style={{
           backgroundColor: "var(--color-bg-button)",
           color: "var(--color-text-secondary)",
@@ -131,7 +136,7 @@ function VerifyProofButton({ message }: { message: AnyGameMessage }) {
   if (state.status === "verifying") {
     return (
       <div
-        className="px-3 py-1 text-xs rounded-md flex items-center gap-1.5"
+        className="flex items-center gap-1.5 rounded-md px-3 py-1 text-xs"
         style={{
           backgroundColor: "oklch(from cyan l c h / 0.15)",
           color: "var(--color-accent-cyan)",
@@ -148,7 +153,7 @@ function VerifyProofButton({ message }: { message: AnyGameMessage }) {
   if (state.status === "success") {
     return (
       <div
-        className="px-3 py-1 text-xs rounded-md font-medium"
+        className="rounded-md px-3 py-1 text-xs font-medium"
         style={{
           backgroundColor: "oklch(from green l c h / 0.15)",
           color: "var(--color-accent-green)",
@@ -163,7 +168,7 @@ function VerifyProofButton({ message }: { message: AnyGameMessage }) {
   // Failed state - badge with hover tooltip
   return (
     <div
-      className="px-3 py-1 text-xs rounded-md font-medium cursor-help"
+      className="cursor-help rounded-md px-3 py-1 text-xs font-medium"
       style={{
         backgroundColor: "oklch(from red l c h / 0.15)",
         color: "var(--color-accent-red)",
@@ -180,21 +185,19 @@ function SignatureDisplay({ signature }: { signature: string }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Truncate: show first 10 chars (including 0x) and last 6 chars
-  const truncated = signature.length > 18
-    ? `${signature.slice(0, 10)}...${signature.slice(-6)}`
-    : signature;
+  const truncated =
+    signature.length > 18
+      ? `${signature.slice(0, 10)}...${signature.slice(-6)}`
+      : signature;
 
   return (
     <div className="flex items-center gap-2">
-      <span
-        className="text-xs"
-        style={{ color: "var(--color-text-muted)" }}
-      >
+      <span className="text-xs" style={{ color: "var(--color-text-muted)" }}>
         Signature:{" "}
       </span>
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="text-xs font-mono hover:underline transition-colors"
+        className="font-mono text-xs transition-colors hover:underline"
         style={{ color: "var(--color-text-secondary)" }}
       >
         {isExpanded ? signature : truncated}
@@ -212,7 +215,10 @@ export function MessageRow({
 }: MessageRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const summaryParts = getMessageSummaryParts(message.envelope.message.value, playerMapping);
+  const summaryParts = getMessageSummaryParts(
+    message.envelope.message.value,
+    playerMapping,
+  );
   const phaseConfig = getPhaseConfig(
     message.applied_phase,
     message.envelope.message.value,
@@ -254,7 +260,7 @@ export function MessageRow({
       {/* Main row */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-6 py-3 text-left grid grid-cols-[24px_60px_180px_200px_1fr] gap-4 items-center"
+        className="grid w-full grid-cols-[24px_60px_180px_200px_1fr] items-center gap-4 px-6 py-3 text-left"
       >
         {/* Expand indicator */}
         <div
@@ -269,7 +275,7 @@ export function MessageRow({
 
         {/* Sequence ID */}
         <div
-          className="text-sm font-mono"
+          className="font-mono text-sm"
           style={{ color: "var(--color-text-muted)" }}
         >
           #{sequenceNumber}
@@ -277,7 +283,7 @@ export function MessageRow({
 
         {/* Timestamp */}
         <div
-          className="text-xs font-mono"
+          className="font-mono text-xs"
           style={{ color: "var(--color-text-secondary)" }}
         >
           {timestampWithMs}
@@ -289,10 +295,7 @@ export function MessageRow({
         </div>
 
         {/* Message */}
-        <div
-          className="text-sm"
-          style={{ color: "var(--color-text-primary)" }}
-        >
+        <div className="text-sm" style={{ color: "var(--color-text-primary)" }}>
           {summaryParts.prefix && <span>{summaryParts.prefix}</span>}
           {summaryParts.hasActor && (
             <ActorName
@@ -307,17 +310,17 @@ export function MessageRow({
       {/* Expanded payload section */}
       {isExpanded && (
         <div
-          className="px-6 pb-4 border-t"
+          className="border-t px-6 pb-4"
           style={{
             borderColor: "var(--color-border-payload)",
             backgroundColor: "var(--color-bg-expanded)",
             boxShadow: "var(--shadow-inset-payload)",
           }}
         >
-          <div className="pt-4 space-y-4">
+          <div className="space-y-4 pt-4">
             {/* Row 1: Metadata + Actions */}
             <div
-              className="flex items-center justify-between text-xs pb-3"
+              className="flex items-center justify-between pb-3 text-xs"
               style={{ borderBottom: "1px solid var(--color-border-subtle)" }}
             >
               {/* Left: Metadata */}
@@ -374,7 +377,7 @@ export function MessageRow({
 
             {/* Row 2: Payload (dominant) */}
             <div
-              className="rounded-lg overflow-auto"
+              className="overflow-auto rounded-lg"
               style={{
                 backgroundColor: "#0a0e14",
                 border: "1px solid var(--color-border-payload)",
@@ -392,21 +395,23 @@ export function MessageRow({
                 displayArrayIndex={false}
                 collapseStringsAfterLength={60}
                 matchesURL={true}
-                style={{
-                  padding: "16px",
-                  fontSize: "12px",
-                  fontFamily: "ui-monospace, monospace",
-                  backgroundColor: "transparent",
-                  lineHeight: "1.6",
-                  color: "#FFD700",  // Gold for brackets/punctuation
-                  "--json-property": "#9CDCFE",  // Cyan for keys
-                  "--json-string": "#CE9178",    // Peach for strings
-                  "--json-number": "#B5CEA8",    // Green for numbers
-                  "--json-boolean": "#569CD6",   // Blue for booleans
-                  "--json-null": "#808080",      // Gray for null
-                  "--json-index": "#FFD700",     // Gold for array indices
-                  "--json-ellipsis": "#94a3b8",  // Gray for collapsed ellipsis {...}
-                } as React.CSSProperties}
+                style={
+                  {
+                    padding: "16px",
+                    fontSize: "12px",
+                    fontFamily: "ui-monospace, monospace",
+                    backgroundColor: "transparent",
+                    lineHeight: "1.6",
+                    color: "#FFD700", // Gold for brackets/punctuation
+                    "--json-property": "#9CDCFE", // Cyan for keys
+                    "--json-string": "#CE9178", // Peach for strings
+                    "--json-number": "#B5CEA8", // Green for numbers
+                    "--json-boolean": "#569CD6", // Blue for booleans
+                    "--json-null": "#808080", // Gray for null
+                    "--json-index": "#FFD700", // Gold for array indices
+                    "--json-ellipsis": "#94a3b8", // Gray for collapsed ellipsis {...}
+                  } as React.CSSProperties
+                }
               />
             </div>
 
@@ -415,7 +420,9 @@ export function MessageRow({
               className="pt-3"
               style={{ borderTop: "1px solid var(--color-border-subtle)" }}
             >
-              <SignatureDisplay signature={message.envelope.message.signature} />
+              <SignatureDisplay
+                signature={message.envelope.message.signature}
+              />
             </div>
           </div>
         </div>
@@ -423,4 +430,3 @@ export function MessageRow({
     </div>
   );
 }
-

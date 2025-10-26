@@ -54,7 +54,7 @@ export default function LandingPage() {
       subtitle: "End-to-end encryption. Only you see your cards.",
       content: (
         <p>
-          Players' hole cards remain encrypted end-to-end using ElGamal
+          Players&apos; hole cards remain encrypted end-to-end using ElGamal
           encryption on the BN254 curve. Only you can decrypt your own cards—no
           central server, no other players, not even our operators can see your
           hand until showdown. Unlike private blockchains (which sacrifice
@@ -239,8 +239,8 @@ export default function LandingPage() {
           <p className="text-primary-200 mx-auto mt-6 max-w-3xl text-center text-sm leading-relaxed sm:text-base md:mt-8">
             Every year, millions of players abandon online poker due to opaque
             dealing, 2+ week withdrawal delays, and bot/collusion concerns.
-            After "gambling" and "poker", the most common word in player reviews
-            is "rigged". Zero-knowledge proofs solve this—finally.
+            After &quot;gambling&quot; and &quot;poker&quot;, the most common word in player reviews
+            is &quot;rigged&quot;. Zero-knowledge proofs solve this—finally.
           </p>
         </div>
       </section>
@@ -453,7 +453,7 @@ export default function LandingPage() {
           </div>
 
           <p className="text-primary-200 mx-auto mt-6 max-w-3xl text-center text-sm sm:text-base md:mt-8">
-            We're the only platform that combines cryptographic fairness with
+            We&apos;re the only platform that combines cryptographic fairness with
             consumer-grade UX and economics that benefit players.
           </p>
         </div>

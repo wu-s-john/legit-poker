@@ -3,7 +3,7 @@
 "use client";
 
 import { useState } from "react";
-import type { FinalizedAnyMessageEnvelope } from "~/lib/console/schemas";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/schemas/finalizedEnvelopeSchema";
 import { calculatePagination, paginateItems } from "~/lib/console/pagination";
 import { MessageRow } from "./MessageRow";
 import { Pagination } from "./Pagination";
@@ -33,7 +33,7 @@ export function LogsTableContainer({
 
   return (
     <div
-      className="rounded-xl border backdrop-blur-md overflow-hidden"
+      className="overflow-hidden rounded-xl border backdrop-blur-md"
       style={{
         backgroundColor: "var(--color-bg-card)",
         borderColor: "var(--color-border-primary)",
@@ -42,7 +42,7 @@ export function LogsTableContainer({
     >
       {/* Table Header */}
       <div
-        className="px-6 py-4 border-b"
+        className="border-b px-6 py-4"
         style={{
           backgroundColor: "var(--color-bg-card-header)",
           borderColor: "var(--color-border-primary)",
@@ -52,25 +52,25 @@ export function LogsTableContainer({
           {/* Empty space for chevron column */}
           <div></div>
           <div
-            className="text-xs font-semibold uppercase tracking-wider"
+            className="text-xs font-semibold tracking-wider uppercase"
             style={{ color: "var(--color-text-muted)" }}
           >
             Seq
           </div>
           <div
-            className="text-xs font-semibold uppercase tracking-wider"
+            className="text-xs font-semibold tracking-wider uppercase"
             style={{ color: "var(--color-text-muted)" }}
           >
             Timestamp
           </div>
           <div
-            className="text-xs font-semibold uppercase tracking-wider"
+            className="text-xs font-semibold tracking-wider uppercase"
             style={{ color: "var(--color-text-muted)" }}
           >
             Type
           </div>
           <div
-            className="text-xs font-semibold uppercase tracking-wider"
+            className="text-xs font-semibold tracking-wider uppercase"
             style={{ color: "var(--color-text-muted)" }}
           >
             Message
