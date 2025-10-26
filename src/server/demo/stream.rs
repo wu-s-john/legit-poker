@@ -163,7 +163,8 @@ where
 
     tokio::spawn(async move {
         let mut community_emitted = false;
-        let mut hole_emitted = false;
+        let mut card_decryptable_emitted = [false; 2];
+        let mut hole_cards_decrypted = [false; 2];
 
         loop {
             let update = match staging_rx.recv().await {
@@ -216,33 +217,58 @@ where
                 }
             }
 
-            if !hole_emitted {
-                if let Some(card_indices) = try_decrypt_viewer_cards(
-                    snapshot,
-                    viewer_seat,
-                    expected_shufflers,
-                    &viewer_secret_loop,
-                ) {
-                    let cards = [decode_card(card_indices[0]), decode_card(card_indices[1])];
-                    if event_tx_loop
-                        .send(DemoStreamEvent::HoleCardsDecrypted {
-                            game_id,
-                            hand_id,
-                            seat: viewer_seat,
-                            cards,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        break;
+            // Check each hole card position individually
+            for card_position in 0..2 {
+                // Emit CardDecryptable when player can decrypt
+                if !card_decryptable_emitted[card_position] {
+                    if can_decrypt_card(snapshot, viewer_seat, card_position as u8, expected_shufflers) {
+                        if event_tx_loop
+                            .send(DemoStreamEvent::CardDecryptable {
+                                game_id,
+                                hand_id,
+                                seat: viewer_seat,
+                                card_position,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        card_decryptable_emitted[card_position] = true;
                     }
+                }
 
-                    hole_emitted = true;
+                // Emit HoleCardsDecrypted when we can actually decrypt
+                if !hole_cards_decrypted[card_position] && card_decryptable_emitted[card_position] {
+                    if let Some(card_index) = try_decrypt_single_card(
+                        snapshot,
+                        viewer_seat,
+                        card_position as u8,
+                        expected_shufflers,
+                        &viewer_secret_loop,
+                    ) {
+                        let card = decode_card(card_index);
+                        if event_tx_loop
+                            .send(DemoStreamEvent::HoleCardsDecrypted {
+                                game_id,
+                                hand_id,
+                                seat: viewer_seat,
+                                card_position,
+                                card,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        hole_cards_decrypted[card_position] = true;
+                    }
                 }
             }
 
             let status = snapshot_hand_status(snapshot);
-            if hole_emitted && is_status_at_least(status, HandStatus::Betting) {
+            let both_cards_decrypted = hole_cards_decrypted[0] && hole_cards_decrypted[1];
+            if both_cards_decrypted && is_status_at_least(status, HandStatus::Betting) {
                 if event_tx_loop
                     .send(DemoStreamEvent::HandCompleted { game_id, hand_id })
                     .await
@@ -396,6 +422,61 @@ where
             .map(|(_, card)| decode_card(card))
             .collect(),
     )
+}
+
+/// Check if a player can decrypt a specific card (has all unblinding shares).
+fn can_decrypt_card<C>(
+    snapshot: &AnyTableSnapshot<C>,
+    seat: SeatId,
+    card_position: u8,
+    expected_shares: usize,
+) -> bool
+where
+    C: CurveGroup,
+{
+    let Some(dealing) = dealing_from_snapshot(snapshot) else {
+        return false;
+    };
+
+    let key = (seat, card_position);
+
+    // Check if player ciphertext exists
+    if !dealing.player_ciphertexts.contains_key(&key) {
+        return false;
+    }
+
+    // Check if all unblinding shares are available
+    let Some(shares_map) = dealing.player_unblinding_shares.get(&key) else {
+        return false;
+    };
+
+    shares_map.len() >= expected_shares
+}
+
+/// Try to decrypt a single card for the viewer.
+fn try_decrypt_single_card<C>(
+    snapshot: &AnyTableSnapshot<C>,
+    seat: SeatId,
+    card_position: u8,
+    expected_shares: usize,
+    secret: &C::ScalarField,
+) -> Option<CardIndex>
+where
+    C: CurveGroup,
+    C::ScalarField: PrimeField,
+{
+    let dealing = dealing_from_snapshot(snapshot)?;
+    let key = (seat, card_position);
+
+    let shares_map = dealing.player_unblinding_shares.get(&key)?;
+    if shares_map.len() < expected_shares {
+        return None;
+    }
+
+    let shares: Vec<PartialUnblindingShare<C>> = shares_map.values().cloned().collect();
+    let ciphertext = dealing.player_ciphertexts.get(&key)?;
+
+    recover_card_value(ciphertext, secret.clone(), shares, expected_shares).ok()
 }
 
 fn try_decrypt_viewer_cards<C>(

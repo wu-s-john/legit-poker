@@ -3,11 +3,14 @@
 "use client";
 
 import { Spade, Play } from "lucide-react";
+import { EmbeddedDemoScene } from "~/components/demo/EmbeddedDemoScene";
+import type { DemoStreamEvent } from "~/lib/demo/events";
 
 interface PokerTableSectionProps {
   isDemoActive: boolean;
   onStartDemo: () => void;
   sseStatus: "idle" | "connecting" | "connected" | "error" | "completed";
+  onEvent?: (event: DemoStreamEvent) => void;
 }
 
 /**
@@ -21,6 +24,7 @@ export function PokerTableSection({
   isDemoActive,
   onStartDemo,
   sseStatus,
+  onEvent,
 }: PokerTableSectionProps) {
   // Determine button state based on SSE status
   const isConnecting = sseStatus === "connecting";
@@ -30,10 +34,9 @@ export function PokerTableSection({
 
   return (
     <div
-      className="rounded-xl md:rounded-2xl border-2 md:border-4 p-8 min-h-[400px] md:min-h-[600px] flex items-center justify-center"
+      className="rounded-xl md:rounded-2xl border-2 md:border-4 p-8 min-h-[400px] md:min-h-[600px] flex items-center justify-center overflow-hidden"
       style={{
-        background:
-          "linear-gradient(135deg, #0a4d3c 0%, #084a38 50%, #063d2f 100%)",
+        background: "linear-gradient(135deg, #0a4d3c 0%, #084a38 50%, #063d2f 100%)",
         borderColor: "var(--color-table-border)", // #1e3a5f
       }}
     >
@@ -88,18 +91,17 @@ export function PokerTableSection({
           )}
         </div>
       ) : (
-        /* Active State: Poker Table Visualization Placeholder */
-        <div className="text-center">
-          <Spade className="mx-auto mb-4 h-12 w-12 animate-pulse text-white/80" />
-          <p className="text-lg font-semibold text-white">
-            Poker Table Visualization
-          </p>
-          <p className="mt-2 text-sm text-white/70">
-            Coming soon - 3D table with cards and players
-          </p>
-          <p className="mt-4 text-xs text-white/50">
-            Demo active • SSE status: {sseStatus}
-          </p>
+        /* Active State: Live Demo Scene */
+        <div className="h-full">
+          <EmbeddedDemoScene
+            isActive={isDemoActive}
+            onEvent={onEvent}
+            showBackground={false}
+            autoScale={true}
+            containerStyle={{
+              height: '100%'
+            }}
+          />
         </div>
       )}
     </div>

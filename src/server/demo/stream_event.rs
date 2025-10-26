@@ -50,12 +50,22 @@ where
         cards: Vec<Card>,
     },
 
-    /// Viewer hole cards decrypted (revealed cards).
+    /// A player can now decrypt their card (has all unblinding shares).
+    CardDecryptable {
+        game_id: GameId,
+        hand_id: HandId,
+        seat: SeatId,
+        card_position: usize,
+    },
+
+    /// Single hole card decrypted (revealed card value).
+    /// Emitted once per card for real-time reveals.
     HoleCardsDecrypted {
         game_id: GameId,
         hand_id: HandId,
         seat: SeatId,
-        cards: [Card; 2],
+        card_position: usize,
+        card: Card,
     },
 
     /// Hand considered complete for demo purposes.
@@ -72,6 +82,7 @@ where
             DemoStreamEvent::HandCreated { .. } => "hand_created",
             DemoStreamEvent::GameEvent { .. } => "game_event",
             DemoStreamEvent::CommunityDecrypted { .. } => "community_decrypted",
+            DemoStreamEvent::CardDecryptable { .. } => "card_decryptable",
             DemoStreamEvent::HoleCardsDecrypted { .. } => "hole_cards_decrypted",
             DemoStreamEvent::HandCompleted { .. } => "hand_completed",
         }

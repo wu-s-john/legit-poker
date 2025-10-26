@@ -2,11 +2,12 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useDemoStream } from "~/hooks/useDemoStream";
 import { CompactTableLogsPanel } from "~/components/protocol-logs/CompactTableLogsPanel";
 import { PokerTableSection } from "./PokerTableSection";
+import type { DemoStreamEvent } from "~/lib/demo/events";
+import type { FinalizedAnyMessageEnvelope } from "~/lib/finalizedEnvelopeSchema";
 
 interface DemoSectionProps {
   isVisible: boolean;
@@ -24,13 +25,37 @@ interface DemoSectionProps {
 export function DemoSection({ isVisible }: DemoSectionProps) {
   const [isDemoActive, setIsDemoActive] = useState(false);
   const [showLogModal, setShowLogModal] = useState(false);
-
-  // ONLY connect to SSE when demo is active
-  const { messages, playerMapping, status, error } = useDemoStream(isDemoActive);
+  const [demoEvents, setDemoEvents] = useState<DemoStreamEvent[]>([]);
 
   const handleStartDemo = () => {
-    setIsDemoActive(true); // This triggers SSE connection
+    setDemoEvents([]); // Clear previous events
+    setIsDemoActive(true);
   };
+
+  const handleDemoEvent = (event: DemoStreamEvent) => {
+    setDemoEvents((prev) => [...prev, event]);
+  };
+
+  // Convert demo events to format expected by CompactTableLogsPanel
+  const messages: FinalizedAnyMessageEnvelope[] = useMemo(() => {
+    return demoEvents
+      .filter((e) => e.type === 'game_event')
+      .map((e) => e.envelope);
+  }, [demoEvents]);
+
+  // Extract player mapping from player_created events
+  const playerMapping: Record<number, string> = useMemo(() => {
+    return demoEvents
+      .filter((e) => e.type === 'player_created')
+      .reduce((acc, e) => {
+        acc[e.seat] = e.display_name;
+        return acc;
+      }, {} as Record<number, string>);
+  }, [demoEvents]);
+
+  // Track SSE status based on demo state
+  const status = isDemoActive ? 'connected' : 'idle';
+  const error = null; // EmbeddedDemoScene handles errors internally
 
   return (
     <div
@@ -44,12 +69,13 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
 
       {/* Desktop/Tablet: Side-by-side layout */}
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Left: Poker Table - 920px desktop (72%), 67% tablet */}
-        <div className="flex-1 lg:max-w-[920px]">
+        {/* Left: Poker Table - 1600px desktop, 67% tablet */}
+        <div className="flex-1 lg:max-w-[1600px]">
           <PokerTableSection
             isDemoActive={isDemoActive}
             onStartDemo={handleStartDemo}
             sseStatus={status}
+            onEvent={handleDemoEvent}
           />
         </div>
 

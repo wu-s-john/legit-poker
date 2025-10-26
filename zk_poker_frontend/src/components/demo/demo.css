@@ -1,0 +1,723 @@
+/**
+ * LegitPoker Demo - Styles and Animations
+ * Based on DESIGN_SYSTEM.md tokens
+ */
+
+/* ============================================
+   CSS Variables
+   ============================================ */
+:root {
+  /* Colors */
+  --color-deep-bg: #0a0e14;
+  --color-surface: #1a1f2e;
+  --color-surface-elevated: #242938;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-emphasis: rgba(255, 255, 255, 0.12);
+
+  /* Accents */
+  --color-teal: #00d9ff;
+  --color-gold: #fbbf24;
+  --color-emerald: #10b981;
+  --color-rose: #ef4444;
+
+  /* Phase Colors */
+  --phase-shuffling: #3b82f6;
+  --phase-dealing: #10b981;
+  --phase-betting: #8b5cf6;
+  --phase-showdown: #f59e0b;
+
+  /* Text */
+  --text-primary: rgba(255, 255, 255, 0.95);
+  --text-secondary: rgba(255, 255, 255, 0.7);
+  --text-tertiary: rgba(255, 255, 255, 0.5);
+
+  /* Poker Table */
+  --poker-felt-base: #0f3d24;
+  --poker-felt-mid: #1a5234;
+  --poker-felt-highlight: #256d45;
+  --poker-felt-overlay: rgba(16, 185, 129, 0.08);
+  --poker-rail-dark: #2d1810;
+  --poker-rail-mid: #4a2818;
+  --poker-rail-light: #6b3d2a;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Border Radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* Shadows */
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+    0 4px 6px -2px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+  /* Glows */
+  --glow-teal: 0 0 20px rgba(0, 217, 255, 0.3);
+  --glow-gold: 0 0 20px rgba(251, 191, 36, 0.3);
+  --glow-emerald: 0 0 20px rgba(16, 185, 129, 0.3);
+
+  /* Glassmorphism */
+  --glass-standard: rgba(26, 31, 46, 0.6);
+  --glass-strong: rgba(26, 31, 46, 0.8);
+
+  /* Durations */
+  --duration-fast: 200ms;
+  --duration-base: 300ms;
+  --duration-slow: 500ms;
+
+  /* Easing */
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Poker Table Container
+   ============================================ */
+.poker-table-container {
+  position: relative;
+  width: 1920px;
+  height: 800px;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+/* Scale-aware wrapper - constrains layout space to scaled dimensions */
+.poker-table-scale-wrapper {
+  position: relative;
+  margin: 0 auto;
+  max-width: 100%; /* Never exceed parent container width */
+  /* Dimensions set per breakpoint below */
+}
+
+/* Position the container absolutely within wrapper to prevent offset */
+.demo-scene.embedded .poker-table-scale-wrapper .poker-table-container {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center center;
+}
+
+.table-felt {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 1200px;
+  height: 600px;
+  background: radial-gradient(
+    ellipse at center,
+    var(--poker-felt-highlight) 0%,
+    var(--poker-felt-mid) 40%,
+    var(--poker-felt-base) 100%
+  );
+  border-radius: 300px;
+  box-shadow:
+    inset 0 0 80px rgba(0, 0, 0, 0.5),
+    inset 0 0 160px rgba(0, 0, 0, 0.2),
+    0 8px 32px rgba(0, 0, 0, 0.4);
+  position: relative;
+}
+
+/* Inner felt texture overlay */
+.table-felt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 30% 40%,
+      var(--poker-felt-overlay) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 70% 60%,
+      rgba(255, 255, 255, 0.02) 0%,
+      transparent 40%
+    );
+  border-radius: 300px;
+  pointer-events: none;
+}
+
+/* ============================================
+   Player Seat
+   ============================================ */
+.player-seat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.player-avatar {
+  position: relative;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, var(--color-surface-elevated) 0%, var(--color-surface) 100%);
+  border: 6px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-base) var(--ease-out);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.player-avatar.you {
+  border-color: var(--color-gold);
+  box-shadow:
+    var(--glow-gold),
+    0 6px 16px rgba(251, 191, 36, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  background: linear-gradient(135deg, #3d2f1f 0%, #2d1f0f 100%);
+}
+
+.player-avatar.active {
+  border-color: var(--color-teal);
+  animation: avatarPulse 2s ease-in-out infinite;
+}
+
+.avatar-placeholder {
+  font-size: 40px;
+  opacity: 0.7;
+}
+
+.player-name-badge {
+  padding: 6px 12px;
+  background: var(--glass-strong);
+  backdrop-filter: blur(16px) saturate(130%);
+  border: 2px solid var(--color-border-emphasis);
+  border-radius: var(--radius-md);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  box-shadow:
+    0 3px 12px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  letter-spacing: 0.01em;
+}
+
+.viewer-badge {
+  border-color: var(--color-gold);
+  color: var(--color-gold);
+  background: rgba(251, 191, 36, 0.1);
+  box-shadow:
+    0 3px 15px rgba(251, 191, 36, 0.3),
+    inset 0 1px 0 rgba(251, 191, 36, 0.2);
+}
+
+.viewer-star {
+  font-size: 18px;
+}
+
+.card-slots {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.card-placeholder {
+  width: 60px;
+  height: 84px;
+  background: linear-gradient(135deg, var(--glass-standard) 0%, rgba(26, 31, 46, 0.4) 100%);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
+  opacity: 0.4;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================
+   Progress Bar
+   ============================================ */
+.progress-bar-container {
+  width: 100%;
+}
+
+.progress-label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+  font-size: 12px;
+}
+
+.progress-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.progress-percentage {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-track {
+  position: relative;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: relative;
+  height: 100%;
+  border-radius: var(--radius-full);
+  transition: width var(--duration-slow) var(--ease-out);
+}
+
+.progress-fill.bg-blue-500 {
+  background: var(--phase-shuffling);
+}
+
+.progress-fill.bg-green-500 {
+  background: var(--phase-dealing);
+}
+
+.progress-fill.bg-yellow-500 {
+  background: var(--phase-showdown);
+}
+
+.progress-glow {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.3)
+  );
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
+
+/* ============================================
+   Phase Overlay
+   ============================================ */
+.phase-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 14, 20, 0.4);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  animation: fadeIn var(--duration-slow) var(--ease-out);
+}
+
+.shuffle-overlay .phase-card {
+  animation: slideInFromTop var(--duration-slow) var(--ease-out);
+}
+
+.phase-card {
+  max-width: 600px;
+  padding: var(--space-8);
+  background: linear-gradient(135deg, var(--glass-strong) 0%, rgba(26, 31, 46, 0.95) 100%);
+  backdrop-filter: blur(24px) saturate(140%);
+  border: 2px solid var(--color-border-emphasis);
+  border-radius: var(--radius-xl);
+  box-shadow:
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 8px 24px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  text-align: center;
+}
+
+.chapter-badge {
+  display: inline-flex;
+  padding: 2px 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
+}
+
+.chapter-number {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--phase-shuffling);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.phase-title {
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+  letter-spacing: -0.02em;
+}
+
+.phase-subtitle {
+  font-size: 20px;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-8);
+  line-height: 1.5;
+}
+
+.phase-progress {
+  margin-bottom: var(--space-8);
+}
+
+.deck-animation-container {
+  margin-bottom: var(--space-6);
+  display: flex;
+  justify-content: center;
+}
+
+.deck-stack {
+  position: relative;
+  width: 120px;
+  height: 168px;
+}
+
+.deck-card-layer {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #2563eb 0%, #1e40af 50%, #1e3a8a 100%);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  animation: deckShuffle 2s ease-in-out infinite;
+}
+
+.deck-card-layer:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.deck-card-layer:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+.deck-card-layer:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+.phase-detail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: rgba(0, 217, 255, 0.05);
+  border: 1px solid rgba(0, 217, 255, 0.1);
+  border-radius: var(--radius-md);
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.detail-icon {
+  font-size: 20px;
+}
+
+.detail-text {
+  font-weight: 500;
+}
+
+/* ============================================
+   Corner Progress
+   ============================================ */
+.corner-progress {
+  position: fixed;
+  top: var(--space-6);
+  right: var(--space-6);
+  z-index: 50;
+  animation: fadeIn var(--duration-base) var(--ease-out);
+}
+
+.corner-progress-card {
+  padding: var(--space-4);
+  background: var(--glass-strong);
+  backdrop-filter: blur(16px) saturate(130%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 200px;
+}
+
+.corner-progress-icon {
+  text-align: center;
+  font-size: 32px;
+  margin-bottom: var(--space-3);
+}
+
+.corner-progress-stats {
+  text-align: center;
+  margin-bottom: var(--space-3);
+}
+
+.corner-progress-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-1);
+}
+
+.corner-progress-count {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.corner-progress-bar {
+  margin-top: var(--space-2);
+}
+
+.corner-progress-track {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.corner-progress-fill {
+  height: 100%;
+  background: var(--phase-dealing);
+  border-radius: var(--radius-full);
+  transition: width var(--duration-base) var(--ease-out);
+  box-shadow: var(--glow-emerald);
+}
+
+/* ============================================
+   Keyframe Animations
+   ============================================ */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInFromTop {
+  from {
+    opacity: 0;
+    transform: translateY(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes avatarPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px var(--color-teal);
+  }
+  50% {
+    box-shadow: 0 0 25px var(--color-teal);
+  }
+}
+
+@keyframes progressPulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes deckShuffle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-8px) rotate(-2deg);
+  }
+  75% {
+    transform: translateY(-8px) rotate(2deg);
+  }
+}
+
+/* Card flight animation (for dealing phase) */
+@keyframes cardFlight {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.5) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(var(--flight-mid-x), var(--flight-mid-y)) scale(0.8)
+      rotate(10deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(var(--flight-end-x), var(--flight-end-y)) scale(1)
+      rotate(0deg);
+  }
+}
+
+/* Card flip (3D) */
+@keyframes cardFlip {
+  0% {
+    transform: rotateY(0deg);
+  }
+  50% {
+    transform: rotateY(90deg);
+  }
+  100% {
+    transform: rotateY(180deg);
+  }
+}
+
+/* Glow pulse for decryptable cards */
+@keyframes glowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px var(--color-emerald);
+  }
+  50% {
+    box-shadow: 0 0 25px var(--color-emerald), 0 0 40px var(--color-emerald);
+  }
+}
+
+/* ============================================
+   Reduced Motion
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================
+   Reduced Transparency (Performance)
+   ============================================ */
+@media (prefers-reduced-transparency) {
+  .phase-card,
+  .corner-progress-card,
+  .player-name-badge {
+    background: rgba(26, 31, 46, 1);
+    backdrop-filter: none;
+  }
+}
+
+/* ============================================
+   Embedded Mode (Landing Page Integration)
+   ============================================ */
+.demo-scene.embedded {
+  min-height: 400px;
+  height: 100%;
+  background: transparent; /* Use parent's green felt */
+  transform-origin: top center;
+}
+
+/* Ensure overlays fit embedded container */
+.demo-scene.embedded .phase-overlay,
+.demo-scene.embedded .corner-progress {
+  position: absolute; /* Instead of fixed */
+}
+
+/* Responsive scaling for embedded poker table (1920px base → fit container) */
+
+/* Desktop: Scale 0.8 for medium-large screens */
+/* Parent: 1600px max-width - 64px padding = 1536px available */
+/* Scale: 1536 ÷ 1920 = 0.8 → wrapper: 1536px × 640px */
+@media (min-width: 1281px) and (max-width: 1535px) {
+  .demo-scene.embedded .poker-table-scale-wrapper {
+    width: 100%;
+    max-width: 1536px;
+    height: 640px;
+  }
+
+  .demo-scene.embedded .poker-table-container {
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+}
+
+/* XL Desktop: Scale 0.4 for fullscreen to fit viewport height */
+/* Scale: 1920 × 0.4 = 768px, 800 × 0.4 = 320px */
+@media (min-width: 1536px) {
+  .demo-scene.embedded .poker-table-scale-wrapper {
+    width: 100%;
+    max-width: 768px;
+    height: 320px;
+  }
+
+  .demo-scene.embedded .poker-table-container {
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+}
+
+/* Tablet: 1920 × 800 scaled to 0.4 = 768 × 320 */
+@media (max-width: 1280px) {
+  .demo-scene.embedded .poker-table-scale-wrapper {
+    width: 100%;
+    max-width: 768px;
+    height: 320px;
+  }
+
+  .demo-scene.embedded .poker-table-container {
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+}
+
+/* Mobile landscape: 1920 × 800 scaled to 0.35 = 672 × 280 */
+@media (max-width: 920px) {
+  .demo-scene.embedded .poker-table-scale-wrapper {
+    width: 100%;
+    max-width: 672px;
+    height: 280px;
+  }
+
+  .demo-scene.embedded .poker-table-container {
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+}
+
+/* Mobile portrait: 1920 × 800 scaled to 0.3 = 576 × 240 */
+@media (max-width: 640px) {
+  .demo-scene.embedded .poker-table-scale-wrapper {
+    width: 100%;
+    max-width: 576px;
+    height: 240px;
+  }
+
+  .demo-scene.embedded .poker-table-container {
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
