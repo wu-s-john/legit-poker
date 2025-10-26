@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use ark_crypto_primitives::signature::SignatureScheme;
 use ark_crypto_primitives::sponge::Absorb;
-use ark_ec::{CurveConfig, CurveGroup};
+use ark_ec::{AffineRepr, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
@@ -46,6 +46,36 @@ where
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
 {
+    /// Generate a new ShufflerEngine with random keys and signature parameters.
+    ///
+    /// # Arguments
+    /// * `rng` - Random number generator for key generation
+    ///
+    /// # Returns
+    /// A fully initialized ShufflerEngine with generated keys and parameters
+    pub fn generate<R: Rng>(rng: &mut R) -> Result<Self>
+    where
+        S::Parameters: Clone,
+    {
+        // Setup signature scheme parameters
+        let signing_params = Arc::new(
+            S::setup(rng).map_err(|e| anyhow!("failed to setup signature scheme: {}", e))?,
+        );
+
+        // Generate keypair
+        let (public_key_affine, secret_key) = S::keygen(&signing_params, rng)
+            .map_err(|e| anyhow!("failed to generate keypair: {}", e))?;
+
+        // Convert affine public key to projective
+        let public_key = public_key_affine.into_group();
+
+        Ok(Self {
+            secret_key: Arc::new(secret_key),
+            public_key,
+            signing_params,
+        })
+    }
+
     pub(crate) fn new(
         secret_key: Arc<S::SecretKey>,
         public_key: C,

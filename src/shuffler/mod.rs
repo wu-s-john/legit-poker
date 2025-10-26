@@ -3,15 +3,14 @@ use ark_crypto_primitives::signature::schnorr::{Schnorr, SecretKey as SchnorrSec
 use sha2::Sha256;
 
 mod api;
-mod dealing;
-mod hand_runtime;
+mod state;
 mod service;
 
-pub use dealing::{
+pub use state::{
     BoardCardShufflerRequest, BoardCardSlot, DealShufflerRequest, DealingHandState,
-    PlayerBlindingRequest, PlayerUnblindingRequest,
+    HandResources, HandSubscription, PlayerBlindingRequest, PlayerUnblindingRequest,
+    ShufflerHandState, ShufflingHandState,
 };
-pub use hand_runtime::{HandRuntime, HandSubscription, ShufflingHandState};
 pub use service::{ShufflerRunConfig, ShufflerService};
 
 use crate::shuffling::ElGamalCiphertext;
@@ -21,6 +20,21 @@ pub use api::{ShufflerApi, ShufflerEngine};
 pub type Deck<C, const N: usize> = [ElGamalCiphertext<C>; N];
 
 pub type ShufflerScheme<C> = Schnorr<C, Sha256>;
+
+/// Aggregate multiple shuffler public keys into a single aggregated key.
+///
+/// # Arguments
+/// * `keys` - Iterator over shuffler public keys
+///
+/// # Returns
+/// The sum of all public keys (the aggregated public key used for encryption)
+pub fn aggregate_shuffler_keys<C, I>(keys: I) -> C
+where
+    C: ark_ec::CurveGroup,
+    I: IntoIterator<Item = C>,
+{
+    keys.into_iter().fold(C::zero(), |acc, key| acc + key)
+}
 
 impl<C> api::ShufflerSigningSecret<C> for SchnorrSecretKey<C>
 where
@@ -247,25 +261,26 @@ mod tests {
         let deck: [ElGamalCiphertext<Curve>; DECK_SIZE] =
             core::array::from_fn(|_| zero_cipher.clone());
         let runtime_key = crate::ledger::CanonicalKey::new(Curve::zero());
-        let runtime = Arc::new(HandRuntime::new(
-            key.0,
-            key.1,
-            0,
-            0,
-            runtime_key.clone(),
-            ShufflingHandState {
+        let state = ShufflerHandState {
+            game_id: key.0,
+            hand_id: key.1,
+            shuffler_id: 0,
+            shuffler_index: 0,
+            shuffler_key: runtime_key.clone(),
+            next_nonce: 0,
+            aggregated_public_key: public_key.clone(),
+            shuffling_rng: StdRng::seed_from_u64(0xABCDu64),
+            dealing_rng: StdRng::seed_from_u64(0xABCDu64),
+            shuffling: ShufflingHandState {
                 expected_order: vec![runtime_key.clone()],
                 buffered: Vec::new(),
-                next_nonce: 0,
-                turn_index: 0,
                 initial_deck: deck.clone(),
                 latest_deck: deck,
                 acted: false,
-                aggregated_public_key: public_key.clone(),
-                rng: StdRng::seed_from_u64(0xABCDu64),
             },
-            Weak::new(),
-        ));
+            dealing: DealingHandState::new(),
+        };
+        let runtime = Arc::new(HandResources::new(state, Weak::new()));
 
         let (deal_tx, deal_rx) = broadcast::channel(8);
         let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key().clone());
@@ -365,25 +380,26 @@ mod tests {
         let zero_cipher = ElGamalCiphertext::new(Curve::zero(), Curve::zero());
         let deck = core::array::from_fn(|_| zero_cipher.clone());
         let runtime_key = crate::ledger::CanonicalKey::new(Curve::zero());
-        let runtime = Arc::new(HandRuntime::new(
-            key.0,
-            key.1,
-            0,
-            0,
-            runtime_key.clone(),
-            ShufflingHandState {
+        let state = ShufflerHandState {
+            game_id: key.0,
+            hand_id: key.1,
+            shuffler_id: 0,
+            shuffler_index: 0,
+            shuffler_key: runtime_key.clone(),
+            next_nonce: 0,
+            aggregated_public_key: public_key.clone(),
+            shuffling_rng: StdRng::seed_from_u64(0xEEEEu64),
+            dealing_rng: StdRng::seed_from_u64(0xEEEEu64),
+            shuffling: ShufflingHandState {
                 expected_order: vec![runtime_key.clone()],
                 buffered: Vec::new(),
-                next_nonce: 0,
-                turn_index: 0,
                 initial_deck: deck.clone(),
                 latest_deck: deck,
                 acted: false,
-                aggregated_public_key: public_key.clone(),
-                rng: StdRng::seed_from_u64(0xEEEEu64),
             },
-            Weak::new(),
-        ));
+            dealing: DealingHandState::new(),
+        };
+        let runtime = Arc::new(HandResources::new(state, Weak::new()));
 
         let (deal_tx, deal_rx) = broadcast::channel(4);
         let shuffler_key = crate::ledger::CanonicalKey::new(shuffler.public_key().clone());
@@ -429,17 +445,32 @@ mod tests {
 
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0]);
         let mut table = fixture_dealing_snapshot(&ctx);
-        let mut state = DealingHandState::<Curve>::new();
+
+        // Create a minimal ShufflerHandState for testing
+        let shuffler_key = crate::ledger::CanonicalKey::new(Curve::zero());
+        let mut state = crate::shuffler::state::ShufflerHandState::new(
+            table.game_id,
+            table.hand_id.unwrap(),
+            0,
+            0,
+            shuffler_key,
+            crate::shuffler::state::ShufflingHandState {
+                expected_order: Vec::new(),
+                buffered: Vec::new(),
+                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                acted: false,
+            },
+            0,
+            Curve::zero(),
+            [0u8; 32],
+        );
 
         // Simulate initial dealing snapshot before ciphertexts exist.
         table.dealing.player_ciphertexts.clear();
 
         let requests = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         let mut blinding_requests: Vec<_> = requests
             .into_iter()
@@ -468,11 +499,7 @@ mod tests {
             .insert((seat, hole_index), cipher);
 
         let requests = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         let unblinding_requests: Vec<_> = requests
             .into_iter()
@@ -493,7 +520,6 @@ mod tests {
 
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0]);
         let mut table = fixture_dealing_snapshot(&ctx);
-        let mut state = DealingHandState::<Curve>::new();
 
         let (deal_index, seat, hole_index) = table
             .dealing
@@ -507,6 +533,25 @@ mod tests {
 
         let shuffler_id = 42;
         let test_key = crate::ledger::CanonicalKey::new(Curve::generator());
+
+        // Create a minimal ShufflerHandState for testing
+        let mut state = crate::shuffler::state::ShufflerHandState::new(
+            table.game_id,
+            table.hand_id.unwrap(),
+            shuffler_id,
+            0,
+            test_key.clone(),
+            crate::shuffler::state::ShufflingHandState {
+                expected_order: Vec::new(),
+                buffered: Vec::new(),
+                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                acted: false,
+            },
+            0,
+            Curve::zero(),
+            [0u8; 32],
+        );
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -534,7 +579,7 @@ mod tests {
             .insert(test_key.clone(), faux_share);
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
 
         assert!(
@@ -555,7 +600,27 @@ mod tests {
 
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0]);
         let mut table = fixture_preflop_snapshot(&ctx);
-        let mut state = DealingHandState::<Curve>::new();
+
+        let shuffler_id = 17;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::generator() + Curve::generator());
+
+        let mut state = crate::shuffler::state::ShufflerHandState::new(
+            table.game_id,
+            table.hand_id.unwrap(),
+            shuffler_id,
+            0,
+            test_key.clone(),
+            crate::shuffler::state::ShufflingHandState {
+                expected_order: Vec::new(),
+                buffered: Vec::new(),
+                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                acted: false,
+            },
+            0,
+            Curve::zero(),
+            [0u8; 32],
+        );
 
         let (seat, hole_index) = table
             .dealing
@@ -566,9 +631,6 @@ mod tests {
                 _ => None,
             })
             .expect("preflop hole card");
-
-        let shuffler_id = 17;
-        let test_key = crate::ledger::CanonicalKey::new(Curve::generator() + Curve::generator());
 
         let faux_contribution = PlayerTargetedBlindingContribution {
             blinding_base_contribution: Curve::zero(),
@@ -595,7 +657,7 @@ mod tests {
         );
 
         let requests = state
-            .process_snapshot_and_make_responses(&table, shuffler_id, &test_key)
+            .process_snapshot_and_make_responses(&table)
             .expect("process preflop snapshot");
 
         assert!(
@@ -614,18 +676,34 @@ mod tests {
 
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2, 3], &[0, 1]);
         let mut table = fixture_dealing_snapshot(&ctx);
-        let mut state = DealingHandState::<Curve>::new();
+
+        let shuffler_id = 0;
+        let test_key = crate::ledger::CanonicalKey::new(Curve::zero());
+
+        let mut state = crate::shuffler::state::ShufflerHandState::new(
+            table.game_id,
+            table.hand_id.unwrap(),
+            shuffler_id,
+            0,
+            test_key.clone(),
+            crate::shuffler::state::ShufflingHandState {
+                expected_order: Vec::new(),
+                buffered: Vec::new(),
+                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                acted: false,
+            },
+            0,
+            Curve::zero(),
+            [0u8; 32],
+        );
 
         table.dealing.player_ciphertexts.clear();
         table.dealing.community_cards.clear();
 
         // Initial snapshot should only request player shares.
         let initial = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         assert!(initial
             .iter()
@@ -650,11 +728,7 @@ mod tests {
 
         // Flop requests should be emitted together once hole cards are ready.
         let second = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         let mut flop_slots: Vec<u8> = second
             .iter()
@@ -683,11 +757,7 @@ mod tests {
         }
 
         let third = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         let turn_count = third
             .iter()
@@ -720,11 +790,7 @@ mod tests {
         }
 
         let fourth = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         let river_count = fourth
             .iter()
@@ -739,11 +805,7 @@ mod tests {
 
         // Further snapshots should not emit additional board requests.
         let fifth = state
-            .process_snapshot_and_make_responses(
-                &table,
-                0,
-                &crate::ledger::CanonicalKey::new(Curve::zero()),
-            )
+            .process_snapshot_and_make_responses(&table)
             .expect("process snapshot");
         assert!(fifth.iter().all(|req| matches!(
             req,
