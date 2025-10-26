@@ -133,8 +133,6 @@ impl<C: CurveGroup> ShuffleProof<C> {
     }
 }
 
-
-
 impl<C> DomainSeparated for ElGamalCiphertext<C>
 where
     C: CurveGroup,

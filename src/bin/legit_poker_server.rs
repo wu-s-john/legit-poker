@@ -135,10 +135,7 @@ fn derive_realtime_url(rest_base: &str) -> Result<Url> {
     Ok(base)
 }
 
-fn load_or_sample_shufflers(
-    source: &str,
-    rng: &mut StdRng,
-) -> Result<Vec<ShufflerSecret<Curve>>> {
+fn load_or_sample_shufflers(source: &str, rng: &mut StdRng) -> Result<Vec<ShufflerSecret<Curve>>> {
     if let Ok(raw) = env::var(source) {
         parse_shuffler_env(source, &raw)
     } else if let Ok(json_like) = serde_json::from_str::<JsonValue>(source) {

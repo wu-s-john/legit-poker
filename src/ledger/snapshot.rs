@@ -62,7 +62,6 @@ pub struct PlayerIdentity<C: CurveGroup> {
     pub seat: SeatId,
 }
 
-
 #[derive(Clone, Debug, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
 #[serde(bound(
     serialize = "C: CanonicalSerialize",
@@ -152,7 +151,6 @@ pub struct PlayerStackInfo<C: CurveGroup> {
     pub committed_blind: u64,
     pub status: PlayerStatus,
 }
-
 
 impl<C: CurveGroup> DomainSeparated for PlayerStackInfo<C> {
     fn domain_string() -> &'static str {

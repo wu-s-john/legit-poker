@@ -15,9 +15,7 @@ use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SI
 use crate::shuffling::player_decryption::{
     PartialUnblindingShare, PlayerAccessibleCiphertext, PlayerTargetedBlindingContribution,
 };
-use crate::signing::{
-    DomainSeparated, SignatureBytes as SignatureBytesT, WithSignature,
-};
+use crate::signing::{DomainSeparated, SignatureBytes as SignatureBytesT, WithSignature};
 use rand::Rng;
 
 use super::snapshot::phases::{
@@ -569,10 +567,18 @@ where
                 GameShuffleMessage::deserialize_with_mode(&mut reader, compress, validate)?,
             )),
             1 => Ok(AnyGameMessage::Blinding(
-                GameBlindingDecryptionMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+                GameBlindingDecryptionMessage::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
             )),
             2 => Ok(AnyGameMessage::PartialUnblinding(
-                GamePartialUnblindingShareMessage::deserialize_with_mode(&mut reader, compress, validate)?,
+                GamePartialUnblindingShareMessage::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                )?,
             )),
             3 => Ok(AnyGameMessage::PlayerPreflop(
                 GamePlayerMessage::deserialize_with_mode(&mut reader, compress, validate)?,
@@ -740,7 +746,6 @@ where
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct MetadataEnvelope<C, A>
 where
@@ -769,10 +774,7 @@ where
     R: Rng,
 {
     let signed = WithSignature::<S::Signature, M>::new::<S, _>(message, params, secret, rng)?;
-    let WithSignature {
-        value,
-        signature,
-    } = signed;
+    let WithSignature { value, signature } = signed;
     let signature_bytes = SignatureBytesT::to_bytes(&signature);
 
     Ok(EnvelopedMessage {

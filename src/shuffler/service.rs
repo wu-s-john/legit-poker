@@ -634,7 +634,11 @@ where
         let hand_id = runtime.hand_id;
         let (shuffler_id, shuffler_index, shuffler_key) = {
             let state = runtime.state.lock();
-            (state.shuffler_id, state.shuffler_index, state.shuffler_key.clone())
+            (
+                state.shuffler_id,
+                state.shuffler_index,
+                state.shuffler_key.clone(),
+            )
         };
         let task_name =
             format!("dealing-producer-shuffler-{shuffler_id}-game-{game_id}-hand-{hand_id}");

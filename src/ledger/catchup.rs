@@ -50,7 +50,10 @@ pub enum CatchupError {
 
     /// No snapshot found for the hand, and messages exist without a starting point.
     #[error("no snapshot found for hand {hand_id}, cannot replay {message_count} messages")]
-    NoSnapshotAvailable { hand_id: HandId, message_count: usize },
+    NoSnapshotAvailable {
+        hand_id: HandId,
+        message_count: usize,
+    },
 
     /// Failed to send result through channel (receiver dropped).
     #[error("failed to send catchup result: receiver dropped")]
@@ -142,7 +145,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("shuffle message can only be applied during shuffling phase"),
+                        anyhow::anyhow!(
+                            "shuffle message can only be applied during shuffling phase"
+                        ),
                     ))
                 }
             };
@@ -180,7 +185,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("blinding decryption message can only be applied during dealing phase"),
+                        anyhow::anyhow!(
+                            "blinding decryption message can only be applied during dealing phase"
+                        ),
                     ))
                 }
             };
@@ -196,7 +203,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("blinding decryption message must originate from a shuffler"),
+                        anyhow::anyhow!(
+                            "blinding decryption message must originate from a shuffler"
+                        ),
                     ))
                 }
             };
@@ -218,7 +227,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("partial unblinding message can only be applied during dealing phase"),
+                        anyhow::anyhow!(
+                            "partial unblinding message can only be applied during dealing phase"
+                        ),
                     ))
                 }
             };
@@ -234,7 +245,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("partial unblinding message must originate from a shuffler"),
+                        anyhow::anyhow!(
+                            "partial unblinding message must originate from a shuffler"
+                        ),
                     ))
                 }
             };
@@ -256,7 +269,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("preflop player message can only be applied during preflop phase"),
+                        anyhow::anyhow!(
+                            "preflop player message can only be applied during preflop phase"
+                        ),
                     ))
                 }
             };
@@ -296,7 +311,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("flop player message can only be applied during flop phase"),
+                        anyhow::anyhow!(
+                            "flop player message can only be applied during flop phase"
+                        ),
                     ))
                 }
             };
@@ -336,7 +353,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("turn player message can only be applied during turn phase"),
+                        anyhow::anyhow!(
+                            "turn player message can only be applied during turn phase"
+                        ),
                     ))
                 }
             };
@@ -376,7 +395,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("river player message can only be applied during river phase"),
+                        anyhow::anyhow!(
+                            "river player message can only be applied during river phase"
+                        ),
                     ))
                 }
             };
@@ -416,7 +437,9 @@ where
                 _ => {
                     return Err(CatchupError::transition_failed(
                         sequence,
-                        anyhow::anyhow!("showdown message can only be applied during showdown phase"),
+                        anyhow::anyhow!(
+                            "showdown message can only be applied during showdown phase"
+                        ),
                     ))
                 }
             };
@@ -508,9 +531,7 @@ where
         // the failure. During catchup we must do the same, otherwise we'll try to
         // re-run the failed transition and hit the same validation error.
         snapshot = match &message.snapshot_status {
-            SnapshotStatus::Success => {
-                apply_message_dispatch(snapshot, &message, hasher)?
-            }
+            SnapshotStatus::Success => apply_message_dispatch(snapshot, &message, hasher)?,
             SnapshotStatus::Failure(reason) => {
                 clone_snapshot_for_failure(&snapshot, hasher, reason.clone())
             }
@@ -670,10 +691,7 @@ where
     // Convert database rows to finalized envelopes
     let finalized_envelopes: Vec<FinalizedAnyMessageEnvelope<C>> = event_rows
         .into_iter()
-        .map(|row| {
-            model_to_envelope(row)
-                .map_err(|e| CatchupError::MessageDeserialization(e))
-        })
+        .map(|row| model_to_envelope(row).map_err(|e| CatchupError::MessageDeserialization(e)))
         .collect::<CatchupResult<Vec<_>>>()?;
 
     // Validate that the first event matches our expected starting sequence.
@@ -736,7 +754,10 @@ mod tests {
 
         let result = replay_messages(starting_snapshot.clone(), messages, hasher.as_ref());
 
-        assert!(result.is_ok(), "replay_messages should succeed with empty message list");
+        assert!(
+            result.is_ok(),
+            "replay_messages should succeed with empty message list"
+        );
         let final_snapshot = result.unwrap();
 
         // With no messages, snapshot should be unchanged

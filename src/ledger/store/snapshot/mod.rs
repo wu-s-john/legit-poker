@@ -7,7 +7,10 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField;
 use async_trait::async_trait;
-use sea_orm::{ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, TransactionTrait};
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
+    TransactionTrait,
+};
 use tracing::info;
 
 use crate::curve_absorb::CurveAbsorb;
@@ -16,7 +19,9 @@ use crate::ledger::hash::LedgerHasher;
 use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::types::HandId;
 
-use self::serialization::{prepare_snapshot_data, reconstruct_snapshot_from_db, SNAPSHOT_LOG_TARGET};
+use self::serialization::{
+    prepare_snapshot_data, reconstruct_snapshot_from_db, SNAPSHOT_LOG_TARGET,
+};
 
 pub use self::serialization::{compute_dealing_hash, persist_prepared_snapshot, PreparedSnapshot};
 

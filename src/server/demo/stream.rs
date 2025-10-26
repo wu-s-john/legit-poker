@@ -268,11 +268,8 @@ where
         Ok::<Event, Infallible>(Event::default().event(event_name).data(data))
     });
 
-    Ok(Sse::new(sse_stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text(":"),
-    ))
+    Ok(Sse::new(sse_stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text(":")))
 }
 
 struct GameSetup<C: CurveGroup> {
