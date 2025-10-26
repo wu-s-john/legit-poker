@@ -330,6 +330,39 @@ where
             .map_err(|err| GameSetupError::Database(DbErr::Custom(err.to_string())))
     }
 
+    // Query methods for game state recovery
+    async fn load_game(
+        &mut self,
+        _game_id: crate::ledger::types::GameId,
+    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<crate::ledger::types::GameId>>, GameSetupError> {
+        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
+        Err(GameSetupError::validation("SeaORM load_game not yet implemented"))
+    }
+
+    async fn load_game_config(
+        &mut self,
+        _game_id: crate::ledger::types::GameId,
+    ) -> Result<crate::ledger::lobby::types::GameLobbyConfig, GameSetupError> {
+        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
+        Err(GameSetupError::validation("SeaORM load_game_config not yet implemented"))
+    }
+
+    async fn load_game_players(
+        &mut self,
+        _game_id: crate::ledger::types::GameId,
+    ) -> Result<Vec<(crate::engine::nl::types::PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
+        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
+        Err(GameSetupError::validation("SeaORM load_game_players not yet implemented"))
+    }
+
+    async fn load_game_shufflers(
+        &mut self,
+        _game_id: crate::ledger::types::GameId,
+    ) -> Result<Vec<(crate::ledger::types::ShufflerId, u16, C)>, GameSetupError> {
+        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
+        Err(GameSetupError::validation("SeaORM load_game_shufflers not yet implemented"))
+    }
+
     async fn commit(mut self: Box<Self>) -> Result<(), GameSetupError> {
         self.txn.commit().await?;
         Ok(())

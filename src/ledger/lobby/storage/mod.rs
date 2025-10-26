@@ -75,6 +75,27 @@ where
 
     async fn persist_snapshot(&mut self, prepared: PreparedSnapshot) -> Result<(), GameSetupError>;
 
+    // Query methods for game state recovery
+    async fn load_game(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<GameId>>, GameSetupError>;
+
+    async fn load_game_config(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<GameLobbyConfig, GameSetupError>;
+
+    async fn load_game_players(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<Vec<(PlayerId, Option<SeatId>, C)>, GameSetupError>;
+
+    async fn load_game_shufflers(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<Vec<(ShufflerId, u16, C)>, GameSetupError>;
+
     async fn commit(self: Box<Self>) -> Result<(), GameSetupError>;
     async fn rollback(self: Box<Self>);
 }

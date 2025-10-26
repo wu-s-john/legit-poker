@@ -284,8 +284,7 @@ mod tests {
     use crate::engine::nl::types::{HandConfig, TableStakes};
     use crate::ledger::actor::AnyActor;
     use crate::ledger::lobby::types::{
-        CommenceGameParams, GameLobbyConfig, PlayerRecord, PlayerSeatSnapshot, ShufflerAssignment,
-        ShufflerRecord, ShufflerRegistrationConfig,
+        CommenceGameParams, GameLobbyConfig, PlayerRecord, ShufflerRecord, ShufflerRegistrationConfig,
     };
     use crate::ledger::messages::{
         AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
@@ -526,44 +525,12 @@ mod tests {
             .expect("register_shuffler should succeed in prepare_environment");
 
         let params = CommenceGameParams {
-            game: metadata.record.clone(),
+            game_id: metadata.record.state.id,
             hand_no: 0,
-            hand_config: HandConfig {
-                stakes: lobby_cfg.stakes,
-                button: 0,
-                small_blind_seat: 0,
-                big_blind_seat: 1,
-                check_raise_allowed: lobby_cfg.check_raise_allowed,
-            },
-            players: vec![
-                PlayerSeatSnapshot::new(
-                    host_registered,
-                    0,
-                    lobby_cfg.buy_in,
-                    host_keys.host.point,
-                ),
-                PlayerSeatSnapshot::new(
-                    guest_saved.clone(),
-                    1,
-                    lobby_cfg.buy_in,
-                    guest_keys.player.point,
-                ),
-                PlayerSeatSnapshot::new(
-                    third_saved.clone(),
-                    2,
-                    lobby_cfg.buy_in,
-                    third_keys.player.point,
-                ),
-            ],
-            shufflers: vec![ShufflerAssignment::new(
-                shuffler_output.shuffler,
-                shuffler_output.assigned_sequence,
-                host_keys.shuffler.point,
-                host_keys.shuffler.point,
-            )],
+            button_seat: 0,
+            small_blind_seat: 0,
+            big_blind_seat: 1,
             deck_commitment: None,
-            buy_in: lobby_cfg.buy_in,
-            min_players: lobby_cfg.min_players_to_start,
         };
 
         let hand = lobby

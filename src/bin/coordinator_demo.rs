@@ -21,7 +21,7 @@ use zk_poker::game::coordinator::{
 };
 use zk_poker::ledger::lobby::types::{
     CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot,
-    RegisterShufflerOutput, ShufflerAssignment, ShufflerRecord, ShufflerRegistrationConfig,
+    RegisterShufflerOutput, ShufflerRecord, ShufflerRegistrationConfig,
 };
 use zk_poker::ledger::snapshot::AnyTableSnapshot;
 use zk_poker::ledger::state::LedgerState;
@@ -217,28 +217,14 @@ async fn run_demo(config: Config) -> Result<()> {
     let operator = coordinator.operator();
 
     let hand_config = build_hand_config(&player_specs);
-    let shuffler_assignments = registered_shufflers
-        .iter()
-        .zip(shuffler_materials.iter())
-        .map(|(registration, material)| {
-            ShufflerAssignment::new(
-                registration.shuffler.clone(),
-                registration.assigned_sequence,
-                material.public_key,
-                aggregated_public_key,
-            )
-        })
-        .collect::<Vec<_>>();
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config,
-        players: seated_players.drain(..).collect(),
-        shufflers: shuffler_assignments,
+        button_seat: hand_config.button,
+        small_blind_seat: hand_config.small_blind_seat,
+        big_blind_seat: hand_config.big_blind_seat,
         deck_commitment: None,
-        buy_in: lobby_config.buy_in,
-        min_players: lobby_config.min_players_to_start,
     };
 
     info!(target = LOG_TARGET, "commencing hand");

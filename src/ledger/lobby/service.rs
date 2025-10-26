@@ -71,7 +71,7 @@ where
     async fn commence_game(
         &self,
         hasher: &dyn LedgerHasher,
-        params: CommenceGameParams<C>,
+        params: CommenceGameParams,
     ) -> Result<CommenceGameOutcome<C>, GameSetupError>;
 }
 
@@ -346,54 +346,114 @@ where
     async fn commence_game(
         &self,
         hasher: &dyn LedgerHasher,
-        params: CommenceGameParams<C>,
+        params: CommenceGameParams,
     ) -> Result<CommenceGameOutcome<C>, GameSetupError> {
-        ensure_unique_seats(&params.players)?;
-        ensure_min_players(params.min_players, &params.players)?;
-        ensure_shuffler_sequence(&params.shufflers)?;
-        ensure_buy_in(params.buy_in, &params.players)?;
-
-        let prepared_players = prepare_players::<C>(&params.players)?;
-        let prepared_shufflers = prepare_shufflers::<C>(&params.shufflers)?;
-
         let mut txn = self.storage.begin().await?;
+
+        // Query game state from storage
+        let game = txn.load_game(params.game_id).await?;
+        let game_config = txn.load_game_config(params.game_id).await?;
+        let joined_players = txn.load_game_players(params.game_id).await?;
+        let registered_shufflers = txn.load_game_shufflers(params.game_id).await?;
+
+        // Reconstruct HandConfig from stored game config + hand-specific seat positions
+        let hand_config = HandConfig {
+            stakes: game.stakes.clone(),
+            button: params.button_seat,
+            small_blind_seat: params.small_blind_seat,
+            big_blind_seat: params.big_blind_seat,
+            check_raise_allowed: game_config.check_raise_allowed,
+        };
+
+        // Reconstruct PlayerSeatSnapshot from queried data
+        let player_snapshots: Vec<PlayerSeatSnapshot<C>> = joined_players
+            .iter()
+            .map(|(player_id, seat_preference, public_key)| {
+                let seat_id = seat_preference.ok_or_else(|| {
+                    GameSetupError::validation("player must have seat assignment")
+                })?;
+
+                Ok(PlayerSeatSnapshot {
+                    player: PlayerRecord {
+                        display_name: String::new(), // Not needed for commence
+                        public_key: public_key.clone(),
+                        seat_preference: *seat_preference,
+                        state: Saved { id: *player_id },
+                    },
+                    seat_id,
+                    starting_stack: game_config.buy_in,
+                    public_key: public_key.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, GameSetupError>>()?;
+
+        // Compute aggregated public key
+        let aggregated_public_key = registered_shufflers
+            .iter()
+            .fold(C::zero(), |acc, (_, _, public_key)| acc + public_key);
+
+        // Reconstruct ShufflerAssignment from queried data
+        let shuffler_assignments: Vec<ShufflerAssignment<C>> = registered_shufflers
+            .iter()
+            .map(|(shuffler_id, sequence, public_key)| ShufflerAssignment {
+                shuffler: ShufflerRecord {
+                    display_name: String::new(), // Not needed for commence
+                    public_key: public_key.clone(),
+                    state: Saved { id: *shuffler_id },
+                },
+                sequence: *sequence,
+                public_key: public_key.clone(),
+                aggregated_public_key: aggregated_public_key.clone(),
+            })
+            .collect();
+
+        // Validation
+        ensure_unique_seats(&player_snapshots)?;
+        ensure_min_players(game_config.min_players_to_start, &player_snapshots)?;
+        ensure_shuffler_sequence(&shuffler_assignments)?;
+        ensure_buy_in(game_config.buy_in, &player_snapshots)?;
+
+        let prepared_players = prepare_players::<C>(&player_snapshots)?;
+        let prepared_shufflers = prepare_shufflers::<C>(&shuffler_assignments)?;
+
         let result = async {
             let hand_config_id = txn
-                .insert_hand_config(params.game.state.id, &params.hand_config)
+                .insert_hand_config(params.game_id, &hand_config)
                 .await?;
 
             let hand_id = txn
                 .insert_hand(NewHand {
-                    game_id: params.game.state.id,
+                    game_id: params.game_id,
                     hand_no: params.hand_no,
                     config_id: hand_config_id,
-                    config: params.hand_config.clone(),
+                    config: hand_config.clone(),
                     deck_commitment: params.deck_commitment.clone(),
                 })
                 .await?;
 
-            for seat in &params.players {
+            for seat in &player_snapshots {
                 txn.insert_hand_player(NewHandPlayer {
-                    game_id: params.game.state.id,
+                    game_id: params.game_id,
                     hand_id,
-                    player_id: seat.player.state.id.clone(),
+                    player_id: seat.player.state.id,
                     seat: seat.seat_id,
                 })
                 .await?;
             }
 
-            for assignment in &params.shufflers {
+            for assignment in &shuffler_assignments {
                 txn.insert_hand_shuffler(NewHandShuffler {
                     hand_id,
-                    shuffler_id: assignment.shuffler.state.id.clone(),
+                    shuffler_id: assignment.shuffler.state.id,
                     sequence: assignment.sequence,
                 })
                 .await?;
             }
 
             let snapshot = build_initial_snapshot::<C>(
+                params.game_id,
                 hand_id,
-                &params,
+                &hand_config,
                 &prepared_players,
                 &prepared_shufflers,
                 hasher,
@@ -414,7 +474,7 @@ where
 
                 Ok(CommenceGameOutcome {
                     hand: HandRecord {
-                        game_id: params.game.state.id,
+                        game_id: params.game_id,
                         hand_no: params.hand_no,
                         status: crate::db::entity::sea_orm_active_enums::HandStatus::Pending,
                         state: Saved { id: hand_id },
@@ -486,8 +546,9 @@ where
 }
 
 fn build_initial_snapshot<C>(
+    game_id: GameId,
     hand_id: HandId,
-    params: &CommenceGameParams<C>,
+    hand_config: &HandConfig,
     players: &[PreparedPlayer<C>],
     shufflers: &[PreparedShuffler<C>],
     hasher: &dyn LedgerHasher,
@@ -516,7 +577,7 @@ where
         );
         seating.insert(player.seat, Some(player_key.clone()));
         let committed =
-            compute_initial_commitment(&params.hand_config, player.seat).min(player.starting_stack);
+            compute_initial_commitment(hand_config, player.seat).min(player.starting_stack);
         stacks.insert(
             player.seat,
             PlayerStackInfo {
@@ -567,10 +628,10 @@ where
     let final_deck = initial_deck.clone();
 
     let mut snapshot: TableSnapshot<PhaseShuffling, C> = TableSnapshot {
-        game_id: params.game.state.id,
+        game_id,
         hand_id: Some(hand_id),
         sequence: 0,
-        cfg: Arc::new(params.hand_config.clone()),
+        cfg: Arc::new(hand_config.clone()),
         shufflers: Arc::new(shuffler_roster),
         players: Arc::new(player_roster),
         seating: Arc::new(seating),

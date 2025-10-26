@@ -115,14 +115,12 @@ where
     let operator = coordinator.operator();
     let hasher = operator.state().hasher();
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config,
-        players: player_snapshots.clone(),
-        shufflers: shuffler_assignments,
+        button_seat: hand_config.button,
+        small_blind_seat: hand_config.small_blind_seat,
+        big_blind_seat: hand_config.big_blind_seat,
         deck_commitment: None,
-        buy_in: lobby_config.buy_in,
-        min_players: lobby_config.min_players_to_start,
     };
 
     let outcome = lobby

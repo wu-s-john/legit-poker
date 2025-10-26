@@ -1,4 +1,4 @@
-use crate::engine::nl::types::{Chips, HandConfig, PlayerId, SeatId, TableStakes};
+use crate::engine::nl::types::{Chips, PlayerId, SeatId, TableStakes};
 use crate::ledger::snapshot::TableAtShuffling;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{DbRowStatus, MaybeSaved, NotSaved, Saved};
@@ -225,18 +225,13 @@ pub struct RegisterShufflerOutput<C: CurveGroup> {
 }
 
 #[derive(Clone)]
-pub struct CommenceGameParams<C>
-where
-    C: CurveGroup,
-{
-    pub game: GameRecord<Saved<GameId>>,
+pub struct CommenceGameParams {
+    pub game_id: GameId,
     pub hand_no: i64,
-    pub hand_config: HandConfig,
-    pub players: Vec<PlayerSeatSnapshot<C>>,
-    pub shufflers: Vec<ShufflerAssignment<C>>,
+    pub button_seat: SeatId,
+    pub small_blind_seat: SeatId,
+    pub big_blind_seat: SeatId,
     pub deck_commitment: Option<DeckCommitmentBytes>,
-    pub buy_in: Chips,
-    pub min_players: i16,
 }
 
 #[derive(Debug)]
