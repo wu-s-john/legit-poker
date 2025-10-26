@@ -37,7 +37,7 @@ use super::types::{
 };
 use super::validation::{
     ensure_buy_in, ensure_min_players, ensure_shuffler_sequence, ensure_unique_seats,
-    validate_lobby_config,
+    validate_blind_positions, validate_lobby_config,
 };
 
 #[async_trait]
@@ -365,6 +365,13 @@ where
             check_raise_allowed: game_config.check_raise_allowed,
         };
 
+        // Build stack map from params if provided
+        let stack_map: std::collections::HashMap<PlayerId, Chips> = params
+            .player_stacks
+            .as_ref()
+            .map(|stacks| stacks.iter().copied().collect())
+            .unwrap_or_default();
+
         // Reconstruct PlayerSeatSnapshot from queried data
         let player_snapshots: Vec<PlayerSeatSnapshot<C>> = joined_players
             .iter()
@@ -372,6 +379,12 @@ where
                 let seat_id = seat_preference.ok_or_else(|| {
                     GameSetupError::validation("player must have seat assignment")
                 })?;
+
+                // Use provided stack if available, otherwise fall back to buy-in
+                let starting_stack = stack_map
+                    .get(player_id)
+                    .copied()
+                    .unwrap_or(game_config.buy_in);
 
                 Ok(PlayerSeatSnapshot {
                     player: PlayerRecord {
@@ -381,7 +394,7 @@ where
                         state: Saved { id: *player_id },
                     },
                     seat_id,
-                    starting_stack: game_config.buy_in,
+                    starting_stack,
                     public_key: public_key.clone(),
                 })
             })
@@ -408,10 +421,20 @@ where
             .collect();
 
         // Validation
+        validate_blind_positions(
+            params.button_seat,
+            params.small_blind_seat,
+            params.big_blind_seat,
+        )?;
         ensure_unique_seats(&player_snapshots)?;
         ensure_min_players(game_config.min_players_to_start, &player_snapshots)?;
         ensure_shuffler_sequence(&shuffler_assignments)?;
-        ensure_buy_in(game_config.buy_in, &player_snapshots)?;
+
+        // Only enforce buy-in minimum for first hand (when player_stacks is None)
+        // For subsequent hands, players may have less than buy-in due to chip losses
+        if params.player_stacks.is_none() {
+            ensure_buy_in(game_config.buy_in, &player_snapshots)?;
+        }
 
         let prepared_players = prepare_players::<C>(&player_snapshots)?;
         let prepared_shufflers = prepare_shufflers::<C>(&shuffler_assignments)?;
@@ -437,6 +460,7 @@ where
                     hand_id,
                     player_id: seat.player.state.id,
                     seat: seat.seat_id,
+                    starting_stack: seat.starting_stack,
                 })
                 .await?;
             }

@@ -225,6 +225,7 @@ async fn run_demo(config: Config) -> Result<()> {
         small_blind_seat: hand_config.small_blind_seat,
         big_blind_seat: hand_config.big_blind_seat,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
 
     info!(target = LOG_TARGET, "commencing hand");

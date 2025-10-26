@@ -3,7 +3,7 @@ use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
-    PaginatorTrait, QueryFilter, Set, TransactionTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 
 use crate::db::entity::sea_orm_active_enums::{
@@ -204,6 +204,9 @@ where
         let host_player_id = i64::try_from(game.host_player_id)
             .map_err(|_| GameSetupError::validation(format!("host player id {} out of range", game.host_player_id)))?;
 
+        let buy_in = chips_to_i64(game.config.buy_in)?;
+        let action_time_limit_secs = game.config.action_time_limit.as_secs() as i32;
+
         let active = games::ActiveModel {
             host_player_id: Set(host_player_id),
             name: Set(game.config.name.clone()),
@@ -214,6 +217,10 @@ where
             ante: Set(ante),
             rake_bps: Set(game.config.rake_bps),
             status: Set(DbGameStatus::Onboarding),
+            buy_in: Set(buy_in),
+            min_players_to_start: Set(game.config.min_players_to_start),
+            check_raise_allowed: Set(game.config.check_raise_allowed),
+            action_time_limit_secs: Set(action_time_limit_secs),
             ..Default::default()
         };
         let inserted = active.insert(&self.txn).await?;
@@ -302,12 +309,14 @@ where
     async fn insert_hand_player(&mut self, row: NewHandPlayer) -> Result<(), GameSetupError> {
         let player_id = i64::try_from(row.player_id)
             .map_err(|_| GameSetupError::validation(format!("player id {} out of range", row.player_id)))?;
+        let starting_stack = chips_to_i64(row.starting_stack)?;
         let model = hand_player::ActiveModel {
             game_id: Set(row.game_id),
             hand_id: Set(row.hand_id),
             player_id: Set(player_id),
             seat: Set(row.seat as i16),
             nonce: Set(0),
+            starting_stack: Set(starting_stack),
             ..Default::default()
         };
         model.insert(&self.txn).await?;
@@ -333,34 +342,130 @@ where
     // Query methods for game state recovery
     async fn load_game(
         &mut self,
-        _game_id: crate::ledger::types::GameId,
+        game_id: crate::ledger::types::GameId,
     ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<crate::ledger::types::GameId>>, GameSetupError> {
-        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
-        Err(GameSetupError::validation("SeaORM load_game not yet implemented"))
+        use crate::engine::nl::types::TableStakes;
+        use crate::ledger::lobby::types::GameRecord;
+        use crate::ledger::typestate::Saved;
+
+        let game_model = games::Entity::find_by_id(game_id)
+            .one(&self.txn)
+            .await?
+            .ok_or_else(|| GameSetupError::validation(format!("game {} not found", game_id)))?;
+
+        let small_blind = i64_to_chips(game_model.small_blind)?;
+        let big_blind = i64_to_chips(game_model.big_blind)?;
+        let ante = i64_to_chips(game_model.ante)?;
+
+        let host_player_id = u64::try_from(game_model.host_player_id)
+            .map_err(|_| GameSetupError::validation("host_player_id out of range"))?;
+
+        Ok(GameRecord {
+            name: game_model.name,
+            currency: game_model.currency,
+            stakes: TableStakes {
+                small_blind,
+                big_blind,
+                ante,
+            },
+            max_players: game_model.max_players,
+            rake_bps: game_model.rake_bps,
+            host: host_player_id,
+            state: Saved { id: game_id },
+        })
     }
 
     async fn load_game_config(
         &mut self,
-        _game_id: crate::ledger::types::GameId,
+        game_id: crate::ledger::types::GameId,
     ) -> Result<crate::ledger::lobby::types::GameLobbyConfig, GameSetupError> {
-        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
-        Err(GameSetupError::validation("SeaORM load_game_config not yet implemented"))
+        use crate::engine::nl::types::TableStakes;
+        use crate::ledger::lobby::types::GameLobbyConfig;
+        use std::time::Duration;
+
+        let game_model = games::Entity::find_by_id(game_id)
+            .one(&self.txn)
+            .await?
+            .ok_or_else(|| GameSetupError::validation(format!("game {} not found", game_id)))?;
+
+        let small_blind = i64_to_chips(game_model.small_blind)?;
+        let big_blind = i64_to_chips(game_model.big_blind)?;
+        let ante = i64_to_chips(game_model.ante)?;
+        let buy_in = i64_to_chips(game_model.buy_in)?;
+
+        let action_time_limit_secs = u64::try_from(game_model.action_time_limit_secs)
+            .map_err(|_| GameSetupError::validation("action_time_limit_secs out of range"))?;
+
+        Ok(GameLobbyConfig {
+            stakes: TableStakes {
+                small_blind,
+                big_blind,
+                ante,
+            },
+            max_players: game_model.max_players,
+            rake_bps: game_model.rake_bps,
+            name: game_model.name,
+            currency: game_model.currency,
+            buy_in,
+            min_players_to_start: game_model.min_players_to_start,
+            check_raise_allowed: game_model.check_raise_allowed,
+            action_time_limit: Duration::from_secs(action_time_limit_secs),
+        })
     }
 
     async fn load_game_players(
         &mut self,
-        _game_id: crate::ledger::types::GameId,
+        game_id: crate::ledger::types::GameId,
     ) -> Result<Vec<(crate::engine::nl::types::PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
-        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
-        Err(GameSetupError::validation("SeaORM load_game_players not yet implemented"))
+        let records = game_players::Entity::find()
+            .filter(game_players::Column::GameId.eq(game_id))
+            .find_also_related(players::Entity)
+            .all(&self.txn)
+            .await?;
+
+        records
+            .into_iter()
+            .map(|(game_player, player_opt)| {
+                let player = player_opt.ok_or_else(|| {
+                    GameSetupError::validation("game_player references non-existent player")
+                })?;
+
+                let player_id = u64::try_from(player.id)
+                    .map_err(|_| GameSetupError::validation("player_id out of range"))?;
+
+                let seat_preference = game_player.seat_preference.map(|s| s as u8);
+
+                let public_key = deserialize_curve_bytes::<C>(&player.public_key)
+                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize player public key: {}", e)))?;
+
+                Ok((player_id, seat_preference, public_key))
+            })
+            .collect()
     }
 
     async fn load_game_shufflers(
         &mut self,
-        _game_id: crate::ledger::types::GameId,
+        game_id: crate::ledger::types::GameId,
     ) -> Result<Vec<(crate::ledger::types::ShufflerId, u16, C)>, GameSetupError> {
-        // TODO: Implement as part of LEG-165 (Database Schema Migration and SeaORM Recovery)
-        Err(GameSetupError::validation("SeaORM load_game_shufflers not yet implemented"))
+        let records = game_shufflers::Entity::find()
+            .filter(game_shufflers::Column::GameId.eq(game_id))
+            .order_by_asc(game_shufflers::Column::Sequence)
+            .all(&self.txn)
+            .await?;
+
+        records
+            .into_iter()
+            .map(|gs| {
+                let shuffler_id = gs.shuffler_id;
+                let sequence = u16::try_from(gs.sequence)
+                    .map_err(|_| GameSetupError::validation("shuffler sequence out of range"))?;
+
+                let public_key = deserialize_curve_bytes::<C>(&gs.public_key)
+                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize shuffler public key: {}", e)))?;
+
+                Ok((shuffler_id, sequence, public_key))
+            })
+            .collect()
     }
 
     async fn commit(mut self: Box<Self>) -> Result<(), GameSetupError> {
@@ -377,4 +482,9 @@ fn chips_to_i64(value: Chips) -> Result<i64, GameSetupError> {
     value
         .try_into()
         .map_err(|_| GameSetupError::validation("chip count exceeds database range"))
+}
+
+fn i64_to_chips(value: i64) -> Result<Chips, GameSetupError> {
+    u64::try_from(value)
+        .map_err(|_| GameSetupError::validation(format!("invalid chip amount: {}", value)))
 }

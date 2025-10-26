@@ -23,6 +23,7 @@ pub struct Model {
     pub player_id: i64,
     pub seat: i16,
     pub nonce: i64,
+    pub starting_stack: i64,
     pub joined_at: TimeDateTimeWithTimeZone,
 }
 
@@ -34,6 +35,7 @@ pub enum Column {
     PlayerId,
     Seat,
     Nonce,
+    StartingStack,
     JoinedAt,
 }
 
@@ -67,6 +69,7 @@ impl ColumnTrait for Column {
             Self::PlayerId => ColumnType::BigInteger.def(),
             Self::Seat => ColumnType::SmallInteger.def(),
             Self::Nonce => ColumnType::BigInteger.def(),
+            Self::StartingStack => ColumnType::BigInteger.def(),
             Self::JoinedAt => ColumnType::TimestampWithTimeZone.def(),
         }
     }

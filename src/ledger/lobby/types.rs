@@ -232,6 +232,9 @@ pub struct CommenceGameParams {
     pub small_blind_seat: SeatId,
     pub big_blind_seat: SeatId,
     pub deck_commitment: Option<DeckCommitmentBytes>,
+    /// Player stacks for this hand. If None, uses buy-in amount (for first hand).
+    /// For subsequent hands, caller must provide each player's current stack.
+    pub player_stacks: Option<Vec<(PlayerId, Chips)>>,
 }
 
 #[derive(Debug)]

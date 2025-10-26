@@ -308,6 +308,10 @@ impl From<games::Model> for GameRecord {
             ante,
             rake_bps,
             status,
+            buy_in: _,
+            min_players_to_start: _,
+            check_raise_allowed: _,
+            action_time_limit_secs: _,
             current_hand_id,
             current_state_hash,
             current_phase,
@@ -409,6 +413,7 @@ impl From<hand_player::Model> for HandPlayerSeat {
             player_id,
             seat,
             nonce,
+            starting_stack: _,
             joined_at,
         } = model;
 

@@ -406,13 +406,21 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         dealing_seed[0] = dealing_seed[0].wrapping_add(1); // Perturb seed for isolation
         let dealing_rng = StdRng::from_seed(dealing_seed);
 
+        // Check if this shuffler has already acted by looking at completed steps
+        // A shuffler has acted if their key appears in any of the completed steps
+        let acted = snapshot.shuffling.steps.iter().any(|step| {
+            let step_key = CanonicalKey::new(step.shuffler_public_key.clone());
+            step_key == shuffler_key
+        });
+
         // Create shuffling state (fields moved to parent)
+        // buffered starts empty when reconstructing from snapshot
         let shuffling = ShufflingHandState {
             expected_order,
             buffered: Vec::new(),
             initial_deck,
             latest_deck,
-            acted: false,
+            acted,
         };
 
         Ok(Self {
