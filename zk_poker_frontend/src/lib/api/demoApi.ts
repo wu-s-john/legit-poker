@@ -29,7 +29,11 @@ export function generateViewerPublicKey(): string {
 }
 
 /**
+ * @deprecated DO NOT USE - Use /games/demo/stream instead
  * Create demo game (viewer is always seat 0)
+ *
+ * This endpoint should not be called directly.
+ * The streaming endpoint /games/demo/stream handles game creation automatically.
  */
 export async function createDemoGame(publicKey: string): Promise<DemoGameInfo> {
   const response = await fetch(`${API_BASE}/game/demo/?public_key=${publicKey}`, {
@@ -44,7 +48,11 @@ export async function createDemoGame(publicKey: string): Promise<DemoGameInfo> {
 }
 
 /**
+ * @deprecated DO NOT USE - Use /games/demo/stream instead
  * Start demo protocol execution
+ *
+ * This endpoint should not be called directly.
+ * The streaming endpoint /games/demo/stream handles game initialization automatically.
  */
 export async function startDemo(gameId: number, handId: number): Promise<void> {
   const response = await fetch(`${API_BASE}/game/demo/${gameId}/hand/${handId}`, {

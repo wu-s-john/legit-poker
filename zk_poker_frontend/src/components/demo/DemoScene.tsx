@@ -10,7 +10,7 @@ import { calculatePlayerPositions, getDeckPosition } from '~/lib/demo/positionin
 import { demoReducer, initialDemoState, getCardsForSeat, getShuffleProgress } from '~/lib/demo/demoState';
 import { DemoEventHandler } from '~/lib/demo/eventHandlers';
 import { GapDetector } from '~/lib/demo/gapRecovery';
-import { generateViewerPublicKey, createDemoGame, startDemo, fetchDemoEvents } from '~/lib/api/demoApi';
+import { fetchDemoEvents } from '~/lib/api/demoApi';
 import { PokerTable } from './PokerTable';
 import { PlayerSeat } from './PlayerSeat';
 import { ShuffleOverlay } from './ShuffleOverlay';
@@ -62,42 +62,13 @@ export function DemoScene() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize demo game on mount
+  // Initialize demo - stream will handle game creation automatically
   useEffect(() => {
-    async function initializeDemo() {
-      try {
-        // Generate viewer key
-        const publicKey = generateViewerPublicKey();
-
-        // Create game with 7 players (default)
-        const gameInfo = await createDemoGame(publicKey);
-
-        // Initialize state
-        dispatch({
-          type: 'INIT_GAME',
-          gameId: gameInfo.game_id,
-          handId: gameInfo.hand_id,
-          publicKey,
-          playerCount: gameInfo.player_count,
-        });
-
-        // Start demo protocol
-        await startDemo(gameInfo.game_id, gameInfo.hand_id);
-
-        dispatch({
-          type: 'UPDATE_STATUS',
-          message: 'Demo started! Waiting for events...',
-        });
-      } catch (error) {
-        console.error('Failed to initialize demo:', error);
-        dispatch({
-          type: 'SET_ERROR',
-          error: 'Failed to initialize demo game',
-        });
-      }
-    }
-
-    void initializeDemo();
+    // Stream connection will handle everything
+    dispatch({
+      type: 'UPDATE_STATUS',
+      message: 'Connecting to demo stream...',
+    });
   }, []);
 
   // Connect to SSE stream
@@ -192,26 +163,15 @@ export function DemoScene() {
 
   // Handle new hand request
   async function handleNewHand(): Promise<void> {
-    if (!state.viewerPublicKey) return;
-
     try {
       // Reset gap detector
       gapDetectorRef.current.reset();
 
-      // Create new game
-      const gameInfo = await createDemoGame(state.viewerPublicKey);
-
-      dispatch({
-        type: 'INIT_GAME',
-        gameId: gameInfo.game_id,
-        handId: gameInfo.hand_id,
-        publicKey: state.viewerPublicKey,
-        playerCount: gameInfo.player_count,
-      });
-
-      await startDemo(gameInfo.game_id, gameInfo.hand_id);
-
+      // Reset event handler
       eventHandlerRef.current?.reset();
+
+      // Reload page to restart stream
+      window.location.reload();
     } catch (error) {
       console.error('Failed to start new hand:', error);
     }

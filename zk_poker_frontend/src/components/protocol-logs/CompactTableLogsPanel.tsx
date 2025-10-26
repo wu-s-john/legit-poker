@@ -151,7 +151,7 @@ export function CompactTableLogsPanel({
         ) : (
           messages.map((msg, idx) => (
             <CompactTableRow
-              key={`${msg.hand_id}-${msg.snapshot_sequence_id}`}
+              key={`${msg.hand_id}-${msg.snapshot_sequence_id ?? idx}`}
               message={msg}
               sequenceNumber={idx}
               viewerPublicKey="placeholder_viewer_key"

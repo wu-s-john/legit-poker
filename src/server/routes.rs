@@ -85,11 +85,6 @@ where
             .allow_headers(Any);
 
         let router = Router::new()
-            .route("/games/demo", post(create_demo_game::<C>))
-            .route(
-                "/games/demo/:game_id/hands/:hand_id",
-                post(start_demo_hand::<C>),
-            )
             .route("/games/demo/stream", get(stream_demo::<C>))
             .route(
                 "/games/:game_id/hands/:hand_id/snapshot",
@@ -244,74 +239,6 @@ where
     C::Affine: Absorb,
 {
     stream_demo_game(ctx, query).await
-}
-
-async fn create_demo_game<C>(
-    Extension(ctx): Extension<Arc<ServerContext<C>>>,
-    Json(payload): Json<DemoCreateRequest>,
-) -> Result<Json<DemoCreateResponse>, ApiError>
-where
-    C: CurveGroup
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + CurveAbsorb<C::BaseField>
-        + Send
-        + Sync
-        + 'static,
-    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
-    C::BaseField: PrimeField + Send + Sync,
-    C::Affine: Absorb,
-{
-    let viewer_key = parse_viewer_public_key::<C>(&payload.public_key)
-        .map_err(|err| ApiError::bad_request(err.to_string()))?;
-
-    let result = seed_demo_hand(Arc::clone(&ctx.lobby), &ctx.coordinator, viewer_key)
-        .await
-        .map_err(|err| ApiError::internal(err.to_string()))?;
-
-    Ok(Json(DemoCreateResponse {
-        game_id: result.game_id,
-        hand_id: result.hand_id,
-        player_count: result.player_count,
-    }))
-}
-
-async fn start_demo_hand<C>(
-    Extension(ctx): Extension<Arc<ServerContext<C>>>,
-    Path(path): Path<HandPath>,
-) -> Result<Json<DemoStartResponse>, ApiError>
-where
-    C: CurveGroup
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + CurveAbsorb<C::BaseField>
-        + Send
-        + Sync
-        + 'static,
-    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
-    C::BaseField: PrimeField + Send + Sync,
-    C::Affine: Absorb,
-{
-    let outcome =
-        match rehydrate_commence_outcome(&ctx.coordinator, path.game_id, path.hand_id).await {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                let message = err.to_string();
-                if message.contains("hand not found") || message.contains("belongs to game") {
-                    return Err(ApiError::NotFound);
-                }
-                return Err(ApiError::internal(message));
-            }
-        };
-
-    let coordinator = Arc::clone(&ctx.coordinator);
-    tokio::spawn(async move {
-        if let Err(err) = coordinator.attach_hand(outcome).await {
-            tracing::error!(target = "server::demo", %err, "failed to start demo hand");
-        }
-    });
-
-    Ok(Json(DemoStartResponse { status: "started" }))
 }
 
 #[inline]

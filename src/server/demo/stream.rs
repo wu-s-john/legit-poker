@@ -147,16 +147,20 @@ where
         .await
         .map_err(|_| ApiError::internal("hand event channel closed"))?;
 
+    let expected_shufflers = descriptors.len();
+
+    // IMPORTANT: Get staging receiver BEFORE attaching hand to avoid missing updates
+    // Broadcast channels drop messages if there are no active receivers
+    let mut staging_rx = coordinator.operator().staging_updates();
+
     // Attach hand to the coordinator (launch shufflers)
+    // This will start producing staging updates immediately
     coordinator
         .attach_hand(outcome)
         .await
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
-    let expected_shufflers = descriptors.len();
-
     // Spawn producer task to relay staging updates
-    let mut staging_rx = coordinator.operator().staging_updates();
     let event_tx_loop = event_tx.clone();
     let coordinator_loop = Arc::clone(&coordinator);
     let viewer_secret_loop = viewer_secret.clone();

@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CompactTableLogsPanel } from "~/components/protocol-logs/CompactTableLogsPanel";
 import { PokerTableSection } from "./PokerTableSection";
@@ -32,9 +32,10 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
     setIsDemoActive(true);
   };
 
-  const handleDemoEvent = (event: DemoStreamEvent) => {
+  const handleDemoEvent = useCallback((event: DemoStreamEvent) => {
+    console.log('[DemoSection] Received demo event:', event.type, event);
     setDemoEvents((prev) => [...prev, event]);
-  };
+  }, []);
 
   // Convert demo events to format expected by CompactTableLogsPanel
   const messages: FinalizedAnyMessageEnvelope[] = useMemo(() => {
@@ -44,13 +45,18 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
   }, [demoEvents]);
 
   // Extract player mapping from player_created events
-  const playerMapping: Record<number, string> = useMemo(() => {
-    return demoEvents
+  // Map: public_key -> { seat, player_key }
+  const playerMapping = useMemo(() => {
+    const map = new Map<string, { seat: number; player_key: string }>();
+    demoEvents
       .filter((e) => e.type === 'player_created')
-      .reduce((acc, e) => {
-        acc[e.seat] = e.display_name;
-        return acc;
-      }, {} as Record<number, string>);
+      .forEach((e) => {
+        map.set(e.public_key, {
+          seat: e.seat,
+          player_key: e.public_key,
+        });
+      });
+    return map;
   }, [demoEvents]);
 
   // Track SSE status based on demo state
