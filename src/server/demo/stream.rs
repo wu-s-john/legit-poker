@@ -20,7 +20,6 @@ use crate::engine::nl::types::{PlayerId, SeatId};
 use crate::ledger::lobby::types::{
     CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot,
 };
-use crate::ledger::serialization::serialize_curve_bytes;
 use crate::ledger::snapshot::{AnyTableSnapshot, DealingSnapshot};
 use crate::ledger::types::{GameId, HandId, HandStatus};
 use crate::ledger::typestate::{MaybeSaved, Saved};
@@ -76,10 +75,7 @@ where
     let lobby = Arc::clone(&ctx.lobby);
     let coordinator = Arc::clone(&ctx.coordinator);
 
-    let viewer_bytes =
-        serialize_curve_bytes(&viewer_public).map_err(|err| ApiError::internal(err.to_string()))?;
-
-    let game_setup = host_and_seed_players(&lobby, viewer_public.clone(), viewer_bytes)
+    let game_setup = host_and_seed_players(&lobby, viewer_public.clone())
         .await
         .map_err(|err| ApiError::internal(err.to_string()))?;
     let GameSetup {
@@ -117,6 +113,7 @@ where
 
     let hand_config = build_hand_config();
     let operator = coordinator.operator();
+    let hasher = operator.state().hasher();
     let params = CommenceGameParams {
         game: metadata.record.clone(),
         hand_no: 1,
@@ -129,13 +126,17 @@ where
     };
 
     let outcome = lobby
-        .commence_game(operator.as_ref(), params)
+        .commence_game(hasher.as_ref(), params)
         .await
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
     let initial_snapshot = outcome.initial_snapshot.clone();
     let hand_id: HandId = outcome.hand.state.id;
     let player_count = player_snapshots.len();
+
+    coordinator
+        .state()
+        .upsert_snapshot(hand_id, AnyTableSnapshot::Shuffling(initial_snapshot.clone()), true);
 
     event_tx
         .send(DemoStreamEvent::HandCreated {
@@ -304,16 +305,15 @@ where
 
 struct GameSetup<C: CurveGroup> {
     lobby_config: GameLobbyConfig,
-    metadata: GameMetadata,
+    metadata: GameMetadata<C>,
     player_snapshots: Vec<PlayerSeatSnapshot<C>>,
     viewer_seat: SeatId,
-    viewer_player: PlayerRecord<Saved<PlayerId>>,
+    viewer_player: PlayerRecord<C, Saved<PlayerId>>,
 }
 
 async fn host_and_seed_players<C>(
     lobby: &Arc<dyn LobbyService<C>>,
     viewer_public: C,
-    viewer_public_bytes: Vec<u8>,
 ) -> Result<GameSetup<C>>
 where
     C: CurveGroup
@@ -332,7 +332,7 @@ where
 
     let host_registration = PlayerRecord {
         display_name: VIEWER_NAME.into(),
-        public_key: viewer_public_bytes.clone(),
+        public_key: viewer_public.clone(),
         seat_preference: Some(0),
         state: MaybeSaved { id: None },
     };
@@ -369,14 +369,12 @@ where
 
     for (idx, spec) in generate_npc_specs::<C>(&mut rng)?.into_iter().enumerate() {
         let seat = (idx + 1) as SeatId;
-        let public_key_bytes = serialize_curve_bytes(&spec.public_key)
-            .map_err(|err| anyhow!("failed to serialize NPC public key: {err}"))?;
         let join = lobby
             .join_game(
                 &metadata.record,
                 PlayerRecord {
                     display_name: spec.display_name,
-                    public_key: public_key_bytes,
+                    public_key: spec.public_key.clone(),
                     seat_preference: Some(seat),
                     state: MaybeSaved { id: None },
                 },

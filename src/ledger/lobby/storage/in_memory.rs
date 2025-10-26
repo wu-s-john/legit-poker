@@ -2,11 +2,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use ark_ec::CurveGroup;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use parking_lot::RwLock;
 
-use crate::engine::nl::types::{HandConfig, PlayerId};
+use crate::engine::nl::types::HandConfig;
+use crate::ledger::serialization::serialize_curve_bytes;
 use crate::ledger::store::snapshot::PreparedSnapshot;
-use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::types::{GameId, HandId};
+use crate::ledger::CanonicalKey;
 
 use crate::ledger::lobby::error::GameSetupError;
 
@@ -15,29 +19,55 @@ use super::{
     NewHandShuffler, NewPlayer, NewShuffler, StoredPlayer, StoredShuffler,
 };
 
-#[derive(Default)]
-struct Inner {
-    players: HashMap<PlayerId, StoredPlayer>,
-    shufflers: HashMap<ShufflerId, StoredShuffler>,
+struct Inner<C: CurveGroup> {
+    // Use serialized public key bytes as HashMap keys for lookup
+    players: HashMap<Vec<u8>, crate::engine::nl::types::PlayerId>,
+    players_by_id: HashMap<crate::engine::nl::types::PlayerId, StoredPlayer<C>>,
+    shufflers: HashMap<Vec<u8>, crate::ledger::types::ShufflerId>,
+    shufflers_by_id: HashMap<crate::ledger::types::ShufflerId, StoredShuffler<C>>,
     games: HashMap<GameId, StoredGame>,
     game_players: Vec<NewGamePlayer>,
-    game_shufflers: Vec<NewGameShuffler>,
+    game_shufflers: Vec<NewGameShuffler<C>>,
     hand_configs: HashMap<i64, HandConfig>,
     hands: HashMap<HandId, StoredHand>,
     hand_players: Vec<NewHandPlayer>,
     hand_shufflers: Vec<NewHandShuffler>,
     snapshots: Vec<PreparedSnapshot>,
-    next_player_id: PlayerId,
-    next_shuffler_id: ShufflerId,
+    next_player_id: crate::engine::nl::types::PlayerId,
+    next_shuffler_id: crate::ledger::types::ShufflerId,
     next_game_id: GameId,
     next_hand_id: HandId,
     next_hand_config_id: i64,
 }
 
+impl<C: CurveGroup> Default for Inner<C> {
+    fn default() -> Self {
+        Self {
+            players: HashMap::new(),
+            players_by_id: HashMap::new(),
+            shufflers: HashMap::new(),
+            shufflers_by_id: HashMap::new(),
+            games: HashMap::new(),
+            game_players: Vec::new(),
+            game_shufflers: Vec::new(),
+            hand_configs: HashMap::new(),
+            hands: HashMap::new(),
+            hand_players: Vec::new(),
+            hand_shufflers: Vec::new(),
+            snapshots: Vec::new(),
+            next_player_id: 1,
+            next_shuffler_id: 1,
+            next_game_id: 1,
+            next_hand_id: 1,
+            next_hand_config_id: 1,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 struct StoredGame {
-    host_player_id: PlayerId,
+    host_player_id: crate::engine::nl::types::PlayerId,
     config: crate::ledger::lobby::types::GameLobbyConfig,
 }
 
@@ -47,37 +77,39 @@ struct StoredHand {
     record: NewHand,
 }
 
-pub struct InMemoryLobbyStorage {
-    inner: Arc<RwLock<Inner>>,
+pub struct InMemoryLobbyStorage<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
+    inner: Arc<RwLock<Inner<C>>>,
 }
 
-impl InMemoryLobbyStorage {
+impl<C> InMemoryLobbyStorage<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(Inner {
-                next_player_id: 1,
-                next_shuffler_id: 1,
-                next_game_id: 1,
-                next_hand_id: 1,
-                next_hand_config_id: 1,
-                ..Inner::default()
-            })),
+            inner: Arc::new(RwLock::new(Inner::default())),
         }
     }
 }
 
-pub struct InMemoryLobbyTxn {
-    inner: Arc<RwLock<Inner>>,
-    next_player_id: PlayerId,
-    next_shuffler_id: ShufflerId,
+pub struct InMemoryLobbyTxn<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
+    inner: Arc<RwLock<Inner<C>>>,
+    next_player_id: crate::engine::nl::types::PlayerId,
+    next_shuffler_id: crate::ledger::types::ShufflerId,
     next_game_id: GameId,
     next_hand_id: HandId,
     next_hand_config_id: i64,
-    players: Vec<(PlayerId, StoredPlayer)>,
-    shufflers: Vec<(ShufflerId, StoredShuffler)>,
+    players: Vec<(Vec<u8>, crate::engine::nl::types::PlayerId, StoredPlayer<C>)>,
+    shufflers: Vec<(Vec<u8>, crate::ledger::types::ShufflerId, StoredShuffler<C>)>,
     games: Vec<(GameId, StoredGame)>,
     game_players: Vec<NewGamePlayer>,
-    game_shufflers: Vec<NewGameShuffler>,
+    game_shufflers: Vec<NewGameShuffler<C>>,
     hand_configs: Vec<(i64, HandConfig)>,
     hands: Vec<(HandId, StoredHand)>,
     hand_players: Vec<NewHandPlayer>,
@@ -87,8 +119,11 @@ pub struct InMemoryLobbyTxn {
 }
 
 #[async_trait]
-impl LobbyStorage for InMemoryLobbyStorage {
-    async fn begin(&self) -> Result<Box<dyn LobbyStorageTxn>, GameSetupError> {
+impl<C> LobbyStorage<C> for InMemoryLobbyStorage<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
+    async fn begin(&self) -> Result<Box<dyn LobbyStorageTxn<C> + Send>, GameSetupError> {
         let inner = self.inner.read();
         Ok(Box::new(InMemoryLobbyTxn {
             inner: Arc::clone(&self.inner),
@@ -112,14 +147,17 @@ impl LobbyStorage for InMemoryLobbyStorage {
     }
 }
 
-impl InMemoryLobbyTxn {
-    fn next_player_id(&mut self) -> PlayerId {
+impl<C> InMemoryLobbyTxn<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
+    fn next_player_id(&mut self) -> crate::engine::nl::types::PlayerId {
         let id = self.next_player_id;
         self.next_player_id += 1;
         id
     }
 
-    fn next_shuffler_id(&mut self) -> ShufflerId {
+    fn next_shuffler_id(&mut self) -> crate::ledger::types::ShufflerId {
         let id = self.next_shuffler_id;
         self.next_shuffler_id += 1;
         id
@@ -143,61 +181,111 @@ impl InMemoryLobbyTxn {
         id
     }
 
-    fn lookup_player(&self, id: PlayerId) -> Option<StoredPlayer> {
-        if let Some((_, stored)) = self.players.iter().rev().find(|(pid, _)| *pid == id) {
+    fn lookup_player(&self, key_bytes: &[u8]) -> Option<StoredPlayer<C>> {
+        if let Some((_, _, stored)) = self.players.iter().rev().find(|(k, _, _)| k.as_slice() == key_bytes) {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
-        inner.players.get(&id).cloned()
+        let player_id = inner.players.get(key_bytes)?;
+        inner.players_by_id.get(player_id).cloned()
     }
 
-    fn lookup_shuffler(&self, id: ShufflerId) -> Option<StoredShuffler> {
-        if let Some((_, stored)) = self.shufflers.iter().rev().find(|(sid, _)| *sid == id) {
+    fn lookup_player_by_id(&self, id: crate::engine::nl::types::PlayerId) -> Option<StoredPlayer<C>> {
+        if let Some((_, pid, stored)) = self.players.iter().rev().find(|(_, pid, _)| *pid == id) {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
-        inner.shufflers.get(&id).cloned()
+        inner.players_by_id.get(&id).cloned()
+    }
+
+    fn lookup_shuffler(&self, key_bytes: &[u8]) -> Option<StoredShuffler<C>> {
+        if let Some((_, _, stored)) = self.shufflers.iter().rev().find(|(k, _, _)| k.as_slice() == key_bytes) {
+            return Some(stored.clone());
+        }
+        let inner = self.inner.read();
+        let shuffler_id = inner.shufflers.get(key_bytes)?;
+        inner.shufflers_by_id.get(shuffler_id).cloned()
+    }
+
+    fn lookup_shuffler_by_id(&self, id: crate::ledger::types::ShufflerId) -> Option<StoredShuffler<C>> {
+        if let Some((_, sid, stored)) = self.shufflers.iter().rev().find(|(_, sid, _)| *sid == id) {
+            return Some(stored.clone());
+        }
+        let inner = self.inner.read();
+        inner.shufflers_by_id.get(&id).cloned()
     }
 }
 
 #[async_trait]
-impl LobbyStorageTxn for InMemoryLobbyTxn {
-    async fn load_player(&mut self, id: PlayerId) -> Result<Option<StoredPlayer>, GameSetupError> {
-        Ok(self.lookup_player(id))
+impl<C> LobbyStorageTxn<C> for InMemoryLobbyTxn<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
+    async fn load_player(
+        &mut self,
+        key: &CanonicalKey<C>,
+    ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
+        let key_bytes = serialize_curve_bytes(key.value())
+            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        Ok(self.lookup_player(&key_bytes))
     }
 
-    async fn insert_player(&mut self, player: NewPlayer) -> Result<PlayerId, GameSetupError> {
+    async fn load_player_by_id(
+        &mut self,
+        id: crate::engine::nl::types::PlayerId,
+    ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
+        Ok(self.lookup_player_by_id(id))
+    }
+
+    async fn insert_player(&mut self, player: NewPlayer<C>) -> Result<(crate::engine::nl::types::PlayerId, CanonicalKey<C>), GameSetupError> {
+        let key_bytes = serialize_curve_bytes(&player.public_key)
+            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+
         let id = self.next_player_id();
         self.players.push((
+            key_bytes,
             id,
             StoredPlayer {
                 display_name: player.display_name,
-                public_key: player.public_key,
+                public_key: player.public_key.clone(),
             },
         ));
-        Ok(id)
+        Ok((id, CanonicalKey::new(player.public_key)))
     }
 
     async fn load_shuffler(
         &mut self,
-        id: ShufflerId,
-    ) -> Result<Option<StoredShuffler>, GameSetupError> {
-        Ok(self.lookup_shuffler(id))
+        key: &CanonicalKey<C>,
+    ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
+        let key_bytes = serialize_curve_bytes(key.value())
+            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        Ok(self.lookup_shuffler(&key_bytes))
+    }
+
+    async fn load_shuffler_by_id(
+        &mut self,
+        id: crate::ledger::types::ShufflerId,
+    ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
+        Ok(self.lookup_shuffler_by_id(id))
     }
 
     async fn insert_shuffler(
         &mut self,
-        shuffler: NewShuffler,
-    ) -> Result<ShufflerId, GameSetupError> {
+        shuffler: NewShuffler<C>,
+    ) -> Result<(crate::ledger::types::ShufflerId, CanonicalKey<C>), GameSetupError> {
+        let key_bytes = serialize_curve_bytes(&shuffler.public_key)
+            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+
         let id = self.next_shuffler_id();
         self.shufflers.push((
+            key_bytes,
             id,
             StoredShuffler {
                 display_name: shuffler.display_name,
-                public_key: shuffler.public_key,
+                public_key: shuffler.public_key.clone(),
             },
         ));
-        Ok(id)
+        Ok((id, CanonicalKey::new(shuffler.public_key)))
     }
 
     async fn insert_game(&mut self, game: NewGame) -> Result<GameId, GameSetupError> {
@@ -234,7 +322,7 @@ impl LobbyStorageTxn for InMemoryLobbyTxn {
             .map_err(|_| GameSetupError::validation("shuffler sequence exceeds supported range"))
     }
 
-    async fn insert_game_shuffler(&mut self, row: NewGameShuffler) -> Result<(), GameSetupError> {
+    async fn insert_game_shuffler(&mut self, row: NewGameShuffler<C>) -> Result<(), GameSetupError> {
         self.game_shufflers.push(row);
         Ok(())
     }
@@ -280,11 +368,13 @@ impl LobbyStorageTxn for InMemoryLobbyTxn {
         inner.next_hand_id = self.next_hand_id;
         inner.next_hand_config_id = self.next_hand_config_id;
 
-        for (id, player) in self.players {
-            inner.players.insert(id, player);
+        for (key_bytes, id, player) in self.players {
+            inner.players.insert(key_bytes, id);
+            inner.players_by_id.insert(id, player);
         }
-        for (id, shuffler) in self.shufflers {
-            inner.shufflers.insert(id, shuffler);
+        for (key_bytes, id, shuffler) in self.shufflers {
+            inner.shufflers.insert(key_bytes, id);
+            inner.shufflers_by_id.insert(id, shuffler);
         }
         for (id, game) in self.games {
             inner.games.insert(id, game);
@@ -309,7 +399,10 @@ impl LobbyStorageTxn for InMemoryLobbyTxn {
     }
 }
 
-impl Default for InMemoryLobbyStorage {
+impl<C> Default for InMemoryLobbyStorage<C>
+where
+    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
+{
     fn default() -> Self {
         Self::new()
     }

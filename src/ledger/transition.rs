@@ -220,11 +220,11 @@ where
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>> {
-        let shuffler_id = envelope.actor.shuffler_id;
+        let shuffler_key = envelope.actor.shuffler_key.clone();
         let shuffler = snapshot
-            .shuffler_identity_by_id(shuffler_id)
+            .shufflers
+            .get(&shuffler_key)
             .context("unknown shuffler for shuffle message")?;
-        let shuffler_key = shuffler.shuffler_key.clone();
         let shuffler_public_key = shuffler.public_key.clone();
 
         let expected_index = snapshot.shuffling.steps.len();
@@ -297,30 +297,29 @@ where
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>> {
-        let shuffler_id = envelope.actor.shuffler_id;
+        let shuffler_key = envelope.actor.shuffler_key.clone();
         let span = tracing::Span::current();
         span.record("game_id", &display(snapshot.game_id));
         span.record("hand_id", &debug(snapshot.hand_id));
         span.record("sequence", &display(snapshot.sequence));
-        span.record("shuffler_id", &display(shuffler_id));
+        span.record("shuffler_id", &debug(&shuffler_key));
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos;
 
-        let shuffler = match snapshot.shuffler_identity_by_id(shuffler_id) {
+        let shuffler = match snapshot.shufflers.get(&shuffler_key) {
             Some(identity) => identity,
             None => {
                 warn!(
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     card_pos,
                     "received blinding share from unknown shuffler"
                 );
                 return Err(anyhow!("unknown shuffler for blinding message"));
             }
         };
-        let shuffler_key = shuffler.shuffler_key.clone();
 
         let destination = match snapshot.dealing.card_plan.get(&card_ref) {
             Some(dest) => dest,
@@ -329,7 +328,7 @@ where
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     card_pos,
                     "blinding contribution referenced unknown dealing card"
                 );
@@ -344,7 +343,7 @@ where
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     card_pos,
                     ?other,
                     "blinding contribution targeted non-hole destination"
@@ -360,7 +359,7 @@ where
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     seat,
                     hole_index,
                     "blinding contribution received for empty seat"
@@ -376,7 +375,7 @@ where
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     seat,
                     hole_index,
                     "blinding contribution referenced missing player identity"
@@ -395,7 +394,7 @@ where
                 target = "ledger::transition",
                 game_id = snapshot.game_id,
                 hand_id = snapshot.hand_id,
-                shuffler_id,
+                ?shuffler_key,
                 seat,
                 hole_index,
                 expected = %expected_hex,
@@ -420,7 +419,7 @@ where
                 target = LOG_TARGET,
                 game_id = snapshot.game_id,
                 hand_id = snapshot.hand_id,
-                shuffler_id,
+                ?shuffler_key,
                 seat,
                 hole_index,
                 "invalid blinding contribution proof"
@@ -434,12 +433,12 @@ where
                 target = LOG_TARGET,
                 game_id = snapshot.game_id,
                 hand_id = snapshot.hand_id,
-                shuffler_id,
+                ?shuffler_key,
                 seat,
                 hole_index,
                 "duplicate blinding contribution detected"
             );
-            bail!("duplicate blinding contribution for shuffler {shuffler_id} seat {seat} hole {hole_index}");
+            bail!("duplicate blinding contribution for shuffler {shuffler_key:?} seat {seat} hole {hole_index}");
         }
 
         snapshot
@@ -462,7 +461,7 @@ where
                     target = LOG_TARGET,
                     game_id = snapshot.game_id,
                     hand_id = snapshot.hand_id,
-                    shuffler_id,
+                    ?shuffler_key,
                     seat,
                     hole_index,
                     sequence = snapshot.sequence,
@@ -480,7 +479,7 @@ where
             dealing_hash = dealing_hash_hex.as_str(),
             seat,
             hole_index,
-            shuffler_id,
+            ?shuffler_key,
             contribution_count,
             expected = snapshot.shufflers.len(),
             "accepted player blinding share"
@@ -630,7 +629,6 @@ where
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>> {
-        let _shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos;
 
@@ -1182,21 +1180,15 @@ where
         hasher: &dyn LedgerHasher,
     ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
-        let actor_id = envelope.actor.player_id;
+        let player_key = envelope.actor.player_key.clone();
 
-        let player_entry = snapshot
+        let _player_entry = snapshot
             .betting
             .state
             .players
             .iter()
             .find(|p| p.seat == seat)
             .context("player seat not found in betting state")?;
-        ensure!(
-            player_entry.player_id == Some(actor_id),
-            "showdown actor mismatch: expected {:?}, got {}",
-            player_entry.player_id,
-            actor_id
-        );
 
         ensure!(
             !snapshot.reveals.revealed_holes.contains_key(&seat),
@@ -1204,7 +1196,8 @@ where
         );
 
         let player_identity = snapshot
-            .player_identity_by_id(actor_id)
+            .players
+            .get(&player_key)
             .context("player identity not found")?;
         ensure!(
             player_identity.seat == seat,
@@ -1854,12 +1847,13 @@ mod tests {
         let mut current_snapshot = AnyTableSnapshot::Dealing(snapshot);
         for (hole_index, &card_pos) in hole_positions.iter().enumerate() {
             for (order, shuffler_key) in ctx.expected_shuffler_order.iter().enumerate() {
-                let shuffler_identity = ctx
-                    .shufflers
-                    .as_ref()
-                    .get(shuffler_key)
-                    .expect("shuffler identity");
-                let shuffler_id = shuffler_identity.shuffler_id;
+                // Find the shuffler_id corresponding to this shuffler_key
+                let shuffler_id = ctx
+                    .shuffler_keys
+                    .iter()
+                    .find_map(|(id, key)| (key == shuffler_key).then_some(*id))
+                    .expect("shuffler_id for key");
+
                 let dealing_snapshot = match current_snapshot {
                     AnyTableSnapshot::Dealing(ref dealing) => dealing.clone(),
                     _ => panic!("unexpected snapshot state during blinding sequence"),

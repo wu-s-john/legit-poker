@@ -977,7 +977,7 @@ where
             target = LOG_TARGET,
             game_id = runtime.game_id,
             hand_id = runtime.hand_id,
-            shuffler_id = actor.shuffler_id,
+            shuffler_key = ?actor.shuffler_key,
             deal_index = request.deal_index,
             ?request.slot,
             "board deal requests are not yet supported"

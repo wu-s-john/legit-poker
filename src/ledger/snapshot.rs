@@ -16,7 +16,7 @@ use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL};
 use crate::engine::nl::state::BettingState;
 use crate::engine::nl::types::{
-    HandConfig, PlayerId, PlayerState, PlayerStatus, Pot, Pots, SeatId, Street,
+    HandConfig, PlayerState, PlayerStatus, Pot, Pots, SeatId, Street,
 };
 use crate::ledger::hash::{chain_hash, initial_snapshot_hash, message_hash, LedgerHasher};
 use crate::ledger::messages::{
@@ -24,7 +24,7 @@ use crate::ledger::messages::{
     TurnStreet,
 };
 use crate::ledger::serialization::deserialize_curve_bytes;
-use crate::ledger::types::{EventPhase, GameId, HandId, ShufflerId, StateHash};
+use crate::ledger::types::{EventPhase, GameId, HandId, StateHash};
 use crate::ledger::CanonicalKey;
 use crate::showdown::HandCategory;
 use crate::shuffling::community_decryption::CommunityDecryptionShare;
@@ -57,7 +57,7 @@ pub struct PlayerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
     pub player_key: CanonicalKey<C>,
-    pub player_id: PlayerId,
+    pub player_id: crate::engine::nl::types::PlayerId,
     pub nonce: u64,
     pub seat: SeatId,
 }
@@ -71,7 +71,7 @@ pub struct ShufflerIdentity<C: CurveGroup> {
     #[serde(with = "crate::crypto_serde::curve")]
     pub public_key: C,
     pub shuffler_key: CanonicalKey<C>,
-    pub shuffler_id: ShufflerId,
+    pub shuffler_id: crate::ledger::types::ShufflerId,
     #[serde(with = "crate::crypto_serde::curve")]
     pub aggregated_public_key: C,
 }
@@ -410,7 +410,7 @@ mod tests {
             PlayerIdentity {
                 public_key: Curve::generator(),
                 player_key: key1.clone(),
-                player_id: 10,
+                player_id: 1,
                 nonce: 0,
                 seat: 1,
             },
@@ -420,7 +420,7 @@ mod tests {
             PlayerIdentity {
                 public_key: Curve::generator() + Curve::generator(),
                 player_key: key2.clone(),
-                player_id: 11,
+                player_id: 2,
                 nonce: 0,
                 seat: 2,
             },
@@ -783,24 +783,6 @@ where
     P: HandPhase<C>,
     C: CurveGroup,
 {
-    pub fn player_identity_by_id(&self, player_id: PlayerId) -> Option<&PlayerIdentity<C>> {
-        self.players
-            .values()
-            .find(|identity| identity.player_id == player_id)
-    }
-
-    pub fn shuffler_identity_by_id(&self, shuffler_id: ShufflerId) -> Option<&ShufflerIdentity<C>> {
-        self.shufflers
-            .values()
-            .find(|identity| identity.shuffler_id == shuffler_id)
-    }
-
-    pub fn shuffler_key_by_id(&self, shuffler_id: ShufflerId) -> Option<&CanonicalKey<C>> {
-        self.shufflers
-            .iter()
-            .find_map(|(key, identity)| (identity.shuffler_id == shuffler_id).then_some(key))
-    }
-
     pub fn initialize_hash(&mut self, hasher: &dyn LedgerHasher) {
         self.sequence = 0;
         self.previous_hash = None;
@@ -859,44 +841,6 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
         }
     }
 
-    pub fn player_identity_by_id(&self, player_id: PlayerId) -> Option<&PlayerIdentity<C>> {
-        match self {
-            AnyTableSnapshot::Shuffling(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Dealing(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Preflop(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Flop(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Turn(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::River(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Showdown(table) => table.player_identity_by_id(player_id),
-            AnyTableSnapshot::Complete(table) => table.player_identity_by_id(player_id),
-        }
-    }
-
-    pub fn shuffler_identity_by_id(&self, shuffler_id: ShufflerId) -> Option<&ShufflerIdentity<C>> {
-        match self {
-            AnyTableSnapshot::Shuffling(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Dealing(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Preflop(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Flop(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Turn(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::River(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Showdown(table) => table.shuffler_identity_by_id(shuffler_id),
-            AnyTableSnapshot::Complete(table) => table.shuffler_identity_by_id(shuffler_id),
-        }
-    }
-
-    pub fn shuffler_key_by_id(&self, shuffler_id: ShufflerId) -> Option<&CanonicalKey<C>> {
-        match self {
-            AnyTableSnapshot::Shuffling(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Dealing(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Preflop(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Flop(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Turn(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::River(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Showdown(table) => table.shuffler_key_by_id(shuffler_id),
-            AnyTableSnapshot::Complete(table) => table.shuffler_key_by_id(shuffler_id),
-        }
-    }
 
     pub fn previous_hash(&self) -> Option<StateHash> {
         match self {
@@ -1033,13 +977,13 @@ where
         let player = player_row.context("player row missing public key")?;
         let seat = u8::try_from(seat_row.seat)
             .map_err(|_| anyhow!("seat {} exceeds u8 range", seat_row.seat))?;
-        let player_id = u64::try_from(seat_row.player_id)
-            .map_err(|_| anyhow!("player id {} exceeds u64 range", seat_row.player_id))?;
         let nonce = u64::try_from(seat_row.nonce)
             .map_err(|_| anyhow!("nonce {} exceeds u64 range", seat_row.nonce))?;
         let public_key = deserialize_curve_bytes::<C>(&player.public_key)
             .context("failed to deserialize player public key")?;
         let player_key = CanonicalKey::new(public_key.clone());
+        let player_id = u64::try_from(player.id)
+            .map_err(|_| anyhow!("player id {} exceeds u64 range", player.id))?;
 
         roster.insert(
             player_key.clone(),

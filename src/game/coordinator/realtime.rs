@@ -657,6 +657,7 @@ where
         AnyActor::Shuffler {
             shuffler_id,
             shuffler_key,
+            ..
         } => ShufflerActor {
             shuffler_id,
             shuffler_key,

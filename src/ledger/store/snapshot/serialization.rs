@@ -1009,12 +1009,13 @@ where
         let public_key = C::deserialize_compressed(&player_row.public_key[..])
             .context("failed to deserialize player public key")?;
         let player_key = CanonicalKey::from_bytes(&player_row.public_key)?;
+        let player_id = u64::try_from(hp.player_id)
+            .map_err(|_| anyhow!("player id {} exceeds u64 range", hp.player_id))?;
 
         let identity = PlayerIdentity {
             public_key,
             player_key: player_key.clone(),
-            player_id: u64::try_from(hp.player_id)
-                .map_err(|_| anyhow!("player_id {} is negative", hp.player_id))?,
+            player_id,
             nonce: u64::try_from(hp.nonce)
                 .map_err(|_| anyhow!("player nonce {} is negative", hp.nonce))?,
             seat: hp

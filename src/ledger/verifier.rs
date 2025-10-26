@@ -492,11 +492,9 @@ fn validate_shuffle<C: CurveGroup>(
         return Err(VerifyError::InvalidMessage);
     }
     let shuffler_identity = table
-        .shuffler_identity_by_id(actor.shuffler_id)
+        .shufflers
+        .get(&actor.shuffler_key)
         .ok_or(VerifyError::Unauthorized)?;
-    if shuffler_identity.shuffler_key != actor.shuffler_key {
-        return Err(VerifyError::InvalidMessage);
-    }
     if next_index > 0 && table.shuffling.final_deck != message.deck_in {
         return Err(VerifyError::InvalidMessage);
     }

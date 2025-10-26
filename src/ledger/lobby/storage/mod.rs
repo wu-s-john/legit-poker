@@ -1,32 +1,56 @@
+use ark_ec::CurveGroup;
 use async_trait::async_trait;
 
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId};
 use crate::ledger::store::snapshot::PreparedSnapshot;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::CanonicalKey;
 
 use crate::ledger::lobby::error::GameSetupError;
 use crate::ledger::lobby::types::GameLobbyConfig;
 
 #[async_trait]
-pub trait LobbyStorage: Send + Sync {
-    async fn begin(&self) -> Result<Box<dyn LobbyStorageTxn>, GameSetupError>;
+pub trait LobbyStorage<C>: Send + Sync
+where
+    C: CurveGroup + Send + Sync + 'static,
+{
+    async fn begin(&self) -> Result<Box<dyn LobbyStorageTxn<C> + Send>, GameSetupError>;
 }
 
 #[async_trait]
-pub trait LobbyStorageTxn: Send {
-    async fn load_player(&mut self, id: PlayerId) -> Result<Option<StoredPlayer>, GameSetupError>;
+pub trait LobbyStorageTxn<C>: Send
+where
+    C: CurveGroup + Send + Sync + 'static,
+{
+    async fn load_player(
+        &mut self,
+        key: &CanonicalKey<C>,
+    ) -> Result<Option<StoredPlayer<C>>, GameSetupError>;
 
-    async fn insert_player(&mut self, player: NewPlayer) -> Result<PlayerId, GameSetupError>;
+    async fn load_player_by_id(
+        &mut self,
+        id: PlayerId,
+    ) -> Result<Option<StoredPlayer<C>>, GameSetupError>;
+
+    async fn insert_player(
+        &mut self,
+        player: NewPlayer<C>,
+    ) -> Result<(PlayerId, CanonicalKey<C>), GameSetupError>;
 
     async fn load_shuffler(
         &mut self,
+        key: &CanonicalKey<C>,
+    ) -> Result<Option<StoredShuffler<C>>, GameSetupError>;
+
+    async fn load_shuffler_by_id(
+        &mut self,
         id: ShufflerId,
-    ) -> Result<Option<StoredShuffler>, GameSetupError>;
+    ) -> Result<Option<StoredShuffler<C>>, GameSetupError>;
 
     async fn insert_shuffler(
         &mut self,
-        shuffler: NewShuffler,
-    ) -> Result<ShufflerId, GameSetupError>;
+        shuffler: NewShuffler<C>,
+    ) -> Result<(ShufflerId, CanonicalKey<C>), GameSetupError>;
 
     async fn insert_game(&mut self, game: NewGame) -> Result<GameId, GameSetupError>;
 
@@ -34,7 +58,8 @@ pub trait LobbyStorageTxn: Send {
 
     async fn count_game_shufflers(&mut self, game_id: GameId) -> Result<u16, GameSetupError>;
 
-    async fn insert_game_shuffler(&mut self, row: NewGameShuffler) -> Result<(), GameSetupError>;
+    async fn insert_game_shuffler(&mut self, row: NewGameShuffler<C>)
+        -> Result<(), GameSetupError>;
 
     async fn insert_hand_config(
         &mut self,
@@ -55,27 +80,27 @@ pub trait LobbyStorageTxn: Send {
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredPlayer {
+pub struct StoredPlayer<C: CurveGroup> {
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
 }
 
 #[derive(Clone, Debug)]
-pub struct NewPlayer {
+pub struct NewPlayer<C: CurveGroup> {
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
 }
 
 #[derive(Clone, Debug)]
-pub struct StoredShuffler {
+pub struct StoredShuffler<C: CurveGroup> {
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
 }
 
 #[derive(Clone, Debug)]
-pub struct NewShuffler {
+pub struct NewShuffler<C: CurveGroup> {
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
 }
 
 #[derive(Clone, Debug)]
@@ -92,11 +117,11 @@ pub struct NewGamePlayer {
 }
 
 #[derive(Clone, Debug)]
-pub struct NewGameShuffler {
+pub struct NewGameShuffler<C: CurveGroup> {
     pub game_id: GameId,
     pub shuffler_id: ShufflerId,
     pub sequence: u16,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
 }
 
 #[derive(Clone, Debug)]

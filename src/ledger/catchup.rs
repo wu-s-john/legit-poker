@@ -156,6 +156,7 @@ where
                 AnyActor::Shuffler {
                     shuffler_id,
                     shuffler_key,
+                    ..
                 } => ShufflerActor {
                     shuffler_id: *shuffler_id,
                     shuffler_key: shuffler_key.clone(),
@@ -196,6 +197,7 @@ where
                 AnyActor::Shuffler {
                     shuffler_id,
                     shuffler_key,
+                    ..
                 } => ShufflerActor {
                     shuffler_id: *shuffler_id,
                     shuffler_key: shuffler_key.clone(),
@@ -238,6 +240,7 @@ where
                 AnyActor::Shuffler {
                     shuffler_id,
                     shuffler_key,
+                    ..
                 } => ShufflerActor {
                     shuffler_id: *shuffler_id,
                     shuffler_key: shuffler_key.clone(),
@@ -281,6 +284,7 @@ where
                     seat_id,
                     player_id,
                     player_key,
+                    ..
                 } => PlayerActor {
                     seat_id: *seat_id,
                     player_id: *player_id,
@@ -323,6 +327,7 @@ where
                     seat_id,
                     player_id,
                     player_key,
+                    ..
                 } => PlayerActor {
                     seat_id: *seat_id,
                     player_id: *player_id,
@@ -365,6 +370,7 @@ where
                     seat_id,
                     player_id,
                     player_key,
+                    ..
                 } => PlayerActor {
                     seat_id: *seat_id,
                     player_id: *player_id,
@@ -407,6 +413,7 @@ where
                     seat_id,
                     player_id,
                     player_key,
+                    ..
                 } => PlayerActor {
                     seat_id: *seat_id,
                     player_id: *player_id,
@@ -449,6 +456,7 @@ where
                     seat_id,
                     player_id,
                     player_key,
+                    ..
                 } => PlayerActor {
                     seat_id: *seat_id,
                     player_id: *player_id,

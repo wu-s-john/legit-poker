@@ -4,9 +4,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use ark_bn254::{Fr as Scalar, G1Projective as Curve};
-use ark_ec::{CurveGroup, PrimeGroup};
+use ark_ec::PrimeGroup;
 use ark_ff::{PrimeField, UniformRand};
-use ark_serialize::CanonicalSerialize;
 use clap::Parser;
 use rand::{rngs::StdRng, SeedableRng};
 use tokio::time::{interval, MissedTickBehavior};
@@ -144,8 +143,6 @@ async fn run_demo(config: Config) -> Result<()> {
             .map(|material| material.public_key.clone())
             .collect(),
     );
-    let aggregated_public_key_bytes = serialize_point(&aggregated_public_key)
-        .context("failed to serialize aggregated shuffler public key")?;
 
     info!(
         target = LOG_TARGET,
@@ -170,11 +167,9 @@ async fn run_demo(config: Config) -> Result<()> {
     let lobby_config = build_lobby_config();
 
     info!(target = LOG_TARGET, "hosting game via lobby API");
-    let host_public_key_bytes = serialize_point(&player_specs[0].public_key)
-        .context("failed to serialize host public key")?;
     let host_registration = PlayerRecord {
         display_name: player_specs[0].name.clone(),
-        public_key: host_public_key_bytes,
+        public_key: player_specs[0].public_key,
         seat_preference: Some(player_specs[0].seat),
         state: MaybeSaved { id: None },
     };
@@ -226,18 +221,14 @@ async fn run_demo(config: Config) -> Result<()> {
         .iter()
         .zip(shuffler_materials.iter())
         .map(|(registration, material)| {
-            serialize_point(&material.public_key)
-                .context("failed to serialize shuffler public key")
-                .map(|public_key_bytes| {
-                    ShufflerAssignment::new(
-                        registration.shuffler.clone(),
-                        registration.assigned_sequence,
-                        public_key_bytes,
-                        aggregated_public_key_bytes.clone(),
-                    )
-                })
+            ShufflerAssignment::new(
+                registration.shuffler.clone(),
+                registration.assigned_sequence,
+                material.public_key,
+                aggregated_public_key,
+            )
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
 
     let params = CommenceGameParams {
         game: metadata.record.clone(),
@@ -251,13 +242,19 @@ async fn run_demo(config: Config) -> Result<()> {
     };
 
     info!(target = LOG_TARGET, "commencing hand");
+    let hasher = operator.state().hasher();
     let outcome = lobby
-        .commence_game(operator.as_ref(), params)
+        .commence_game(hasher.as_ref(), params)
         .await
         .context("failed to commence game")?;
 
     let hand_id = outcome.hand.state.id;
     let game_id = outcome.hand.game_id;
+    state_handle.upsert_snapshot(
+        hand_id,
+        AnyTableSnapshot::Shuffling(outcome.initial_snapshot.clone()),
+        true,
+    );
     let expected_order = outcome.initial_snapshot.shuffling.expected_order.clone();
 
     coordinator
@@ -295,7 +292,7 @@ async fn run_demo(config: Config) -> Result<()> {
 
 async fn seat_players(
     lobby: &Arc<dyn LobbyService<Curve>>,
-    metadata: &GameMetadata,
+    metadata: &GameMetadata<Curve>,
     specs: &[PlayerSpec],
     starting_stack: Chips,
 ) -> Result<Vec<PlayerSeatSnapshot<Curve>>> {
@@ -329,11 +326,9 @@ async fn seat_players(
     );
 
     for spec in specs.iter().skip(1) {
-        let public_key_bytes =
-            serialize_point(&spec.public_key).context("failed to serialize player public key")?;
         let record = PlayerRecord {
             display_name: spec.name.clone(),
-            public_key: public_key_bytes.clone(),
+            public_key: spec.public_key,
             seat_preference: Some(spec.seat),
             state: MaybeSaved { id: None },
         };
@@ -361,16 +356,14 @@ async fn seat_players(
 
 async fn register_shufflers(
     lobby: &Arc<dyn LobbyService<Curve>>,
-    metadata: &GameMetadata,
+    metadata: &GameMetadata<Curve>,
     materials: &[ShufflerMaterial],
-) -> Result<Vec<RegisterShufflerOutput>> {
+) -> Result<Vec<RegisterShufflerOutput<Curve>>> {
     let mut outputs = Vec::with_capacity(materials.len());
     for (index, material) in materials.iter().enumerate() {
-        let public_key_bytes = serialize_point(&material.public_key)
-            .context("failed to serialize shuffler public key")?;
         let record = ShufflerRecord {
             display_name: format!("demo-shuffler-{}", index + 1),
-            public_key: public_key_bytes.clone(),
+            public_key: material.public_key,
             state: MaybeSaved { id: None },
         };
 
@@ -647,15 +640,6 @@ fn decode_scalar(hex_scalar: &str) -> Result<Scalar> {
         bail!("scalar value cannot be empty");
     }
     Ok(Scalar::from_le_bytes_mod_order(&bytes))
-}
-
-fn serialize_point(point: &Curve) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    point
-        .into_affine()
-        .serialize_compressed(&mut buf)
-        .map_err(|err| anyhow!("failed to serialize curve point: {err}"))?;
-    Ok(buf)
 }
 
 fn seed_to_bytes(seed: u64) -> [u8; 32] {

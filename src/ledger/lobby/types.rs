@@ -3,20 +3,23 @@ use crate::ledger::snapshot::TableAtShuffling;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{DbRowStatus, MaybeSaved, NotSaved, Saved};
 use ark_ec::CurveGroup;
-use std::marker::PhantomData;
 
 #[derive(Clone, Debug)]
-pub struct PlayerRecord<State: DbRowStatus> {
+pub struct PlayerRecord<C, State>
+where
+    C: CurveGroup,
+    State: DbRowStatus,
+{
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
     pub seat_preference: Option<SeatId>,
     pub state: State,
 }
 
-impl PlayerRecord<NotSaved> {
+impl<C: CurveGroup> PlayerRecord<C, NotSaved> {
     pub fn new(
         display_name: impl Into<String>,
-        public_key: Vec<u8>,
+        public_key: C,
         seat_preference: Option<SeatId>,
     ) -> Self {
         Self {
@@ -28,11 +31,11 @@ impl PlayerRecord<NotSaved> {
     }
 }
 
-impl PlayerRecord<MaybeSaved<PlayerId>> {
+impl<C: CurveGroup> PlayerRecord<C, MaybeSaved<PlayerId>> {
     pub fn existing(id: PlayerId) -> Self {
         Self {
             display_name: String::new(),
-            public_key: Vec::new(),
+            public_key: C::zero(),
             seat_preference: None,
             state: MaybeSaved { id: Some(id) },
         }
@@ -40,14 +43,18 @@ impl PlayerRecord<MaybeSaved<PlayerId>> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ShufflerRecord<State: DbRowStatus> {
+pub struct ShufflerRecord<C, State>
+where
+    C: CurveGroup,
+    State: DbRowStatus,
+{
     pub display_name: String,
-    pub public_key: Vec<u8>,
+    pub public_key: C,
     pub state: State,
 }
 
-impl ShufflerRecord<NotSaved> {
-    pub fn new(display_name: impl Into<String>, public_key: Vec<u8>) -> Self {
+impl<C: CurveGroup> ShufflerRecord<C, NotSaved> {
+    pub fn new(display_name: impl Into<String>, public_key: C) -> Self {
         Self {
             display_name: display_name.into(),
             public_key,
@@ -56,18 +63,21 @@ impl ShufflerRecord<NotSaved> {
     }
 }
 
-impl ShufflerRecord<MaybeSaved<ShufflerId>> {
+impl<C: CurveGroup> ShufflerRecord<C, MaybeSaved<ShufflerId>> {
     pub fn existing(id: ShufflerId) -> Self {
         Self {
             display_name: String::new(),
-            public_key: Vec::new(),
+            public_key: C::zero(),
             state: MaybeSaved { id: Some(id) },
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct GameRecord<State: DbRowStatus> {
+pub struct GameRecord<State>
+where
+    State: DbRowStatus,
+{
     pub name: String,
     pub currency: String,
     pub stakes: TableStakes,
@@ -126,7 +136,7 @@ pub struct PlayerSeatSnapshot<C>
 where
     C: CurveGroup,
 {
-    pub player: PlayerRecord<Saved<PlayerId>>,
+    pub player: PlayerRecord<C, Saved<PlayerId>>,
     pub seat_id: SeatId,
     pub starting_stack: Chips,
     pub public_key: C,
@@ -137,7 +147,7 @@ where
     C: CurveGroup,
 {
     pub fn new(
-        player: PlayerRecord<Saved<PlayerId>>,
+        player: PlayerRecord<C, Saved<PlayerId>>,
         seat_id: SeatId,
         starting_stack: Chips,
         public_key: C,
@@ -152,27 +162,25 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct ShufflerAssignment<C> {
-    pub shuffler: ShufflerRecord<Saved<ShufflerId>>,
+pub struct ShufflerAssignment<C: CurveGroup> {
+    pub shuffler: ShufflerRecord<C, Saved<ShufflerId>>,
     pub sequence: u16,
-    pub public_key: Vec<u8>,
-    pub aggregated_public_key: Vec<u8>,
-    pub _marker: PhantomData<C>,
+    pub public_key: C,
+    pub aggregated_public_key: C,
 }
 
-impl<C> ShufflerAssignment<C> {
+impl<C: CurveGroup> ShufflerAssignment<C> {
     pub fn new(
-        shuffler: ShufflerRecord<Saved<ShufflerId>>,
+        shuffler: ShufflerRecord<C, Saved<ShufflerId>>,
         sequence: u16,
-        public_key: Vec<u8>,
-        aggregated_public_key: Vec<u8>,
+        public_key: C,
+        aggregated_public_key: C,
     ) -> Self {
         Self {
             shuffler,
             sequence,
             public_key,
             aggregated_public_key,
-            _marker: PhantomData,
         }
     }
 }
@@ -193,14 +201,14 @@ pub struct GameLobbyConfig {
 }
 
 #[derive(Clone)]
-pub struct GameMetadata {
+pub struct GameMetadata<C: CurveGroup> {
     pub record: GameRecord<Saved<GameId>>,
-    pub host: PlayerRecord<Saved<PlayerId>>,
+    pub host: PlayerRecord<C, Saved<PlayerId>>,
 }
 
 #[derive(Clone, Debug)]
-pub struct JoinGameOutput {
-    pub player: PlayerRecord<Saved<PlayerId>>,
+pub struct JoinGameOutput<C: CurveGroup> {
+    pub player: PlayerRecord<C, Saved<PlayerId>>,
     pub game_player_row_id: (GameId, PlayerId),
 }
 
@@ -210,8 +218,8 @@ pub struct ShufflerRegistrationConfig {
 }
 
 #[derive(Clone, Debug)]
-pub struct RegisterShufflerOutput {
-    pub shuffler: ShufflerRecord<Saved<ShufflerId>>,
+pub struct RegisterShufflerOutput<C: CurveGroup> {
+    pub shuffler: ShufflerRecord<C, Saved<ShufflerId>>,
     pub game_shuffler_row_id: (GameId, ShufflerId),
     pub assigned_sequence: u16,
 }

@@ -457,7 +457,7 @@ mod tests {
 
         let host = PlayerRecord {
             display_name: "Host".into(),
-            public_key: host_keys.host.bytes.clone(),
+            public_key: host_keys.host.point,
             seat_preference: Some(0),
             state: MaybeSaved { id: None },
         };
@@ -486,7 +486,7 @@ mod tests {
         let guest_keys = TestKeys::new();
         let guest = PlayerRecord {
             display_name: "Guest".into(),
-            public_key: guest_keys.player.bytes.clone(),
+            public_key: guest_keys.player.point,
             seat_preference: Some(1),
             state: MaybeSaved { id: None },
         };
@@ -500,7 +500,7 @@ mod tests {
         let third_keys = TestKeys::new();
         let third_player = PlayerRecord {
             display_name: "Third".into(),
-            public_key: third_keys.player.bytes.clone(),
+            public_key: third_keys.player.point,
             seat_preference: Some(2),
             state: MaybeSaved { id: None },
         };
@@ -513,7 +513,7 @@ mod tests {
 
         let shuffler = ShufflerRecord {
             display_name: "Primary Shuffler".into(),
-            public_key: host_keys.shuffler.bytes.clone(),
+            public_key: host_keys.shuffler.point,
             state: MaybeSaved { id: None },
         };
         let shuffler_output = lobby
@@ -540,26 +540,26 @@ mod tests {
                     host_registered,
                     0,
                     lobby_cfg.buy_in,
-                    host_keys.host.point.clone(),
+                    host_keys.host.point,
                 ),
                 PlayerSeatSnapshot::new(
                     guest_saved.clone(),
                     1,
                     lobby_cfg.buy_in,
-                    guest_keys.player.point.clone(),
+                    guest_keys.player.point,
                 ),
                 PlayerSeatSnapshot::new(
                     third_saved.clone(),
                     2,
                     lobby_cfg.buy_in,
-                    third_keys.player.point.clone(),
+                    third_keys.player.point,
                 ),
             ],
             shufflers: vec![ShufflerAssignment::new(
                 shuffler_output.shuffler,
                 shuffler_output.assigned_sequence,
-                host_keys.shuffler.bytes.clone(),
-                host_keys.aggregated.clone(),
+                host_keys.shuffler.point,
+                host_keys.shuffler.point,
             )],
             deck_commitment: None,
             buy_in: lobby_cfg.buy_in,
@@ -567,7 +567,7 @@ mod tests {
         };
 
         let hand = lobby
-            .commence_game(&operator, params)
+            .commence_game(&operator.state().hasher(), params)
             .await
             .expect("commence_game should succeed in prepare_environment")
             .hand

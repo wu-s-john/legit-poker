@@ -2,11 +2,7 @@ use ark_ec::CurveGroup;
 use ark_serialize::{self, CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    engine::nl::{PlayerId, SeatId},
-    ledger::{CanonicalKey, ShufflerId},
-    signing::DomainSeparated,
-};
+use crate::{engine::nl::SeatId, ledger::CanonicalKey, signing::DomainSeparated};
 
 pub trait GameActor {}
 
@@ -17,7 +13,7 @@ pub trait GameActor {}
 ))]
 pub struct PlayerActor<C: CurveGroup> {
     pub seat_id: SeatId,
-    pub player_id: PlayerId,
+    pub player_id: crate::engine::nl::types::PlayerId,
     pub player_key: CanonicalKey<C>,
 }
 
@@ -35,7 +31,7 @@ impl<C: CurveGroup> DomainSeparated for PlayerActor<C> {
     deserialize = "C: CanonicalDeserialize"
 ))]
 pub struct ShufflerActor<C: CurveGroup> {
-    pub shuffler_id: ShufflerId,
+    pub shuffler_id: crate::ledger::types::ShufflerId,
     pub shuffler_key: CanonicalKey<C>,
 }
 
@@ -57,11 +53,11 @@ pub enum AnyActor<C: CurveGroup> {
     None,
     Player {
         seat_id: SeatId,
-        player_id: PlayerId,
+        player_id: crate::engine::nl::types::PlayerId,
         player_key: CanonicalKey<C>,
     },
     Shuffler {
-        shuffler_id: ShufflerId,
+        shuffler_id: crate::ledger::types::ShufflerId,
         shuffler_key: CanonicalKey<C>,
     },
 }
@@ -92,20 +88,15 @@ impl<C: CurveGroup> CanonicalSerialize for AnyActor<C> {
             }
             AnyActor::Player {
                 seat_id,
-                player_id,
                 player_key,
+                ..
             } => {
                 1u8.serialize_with_mode(&mut writer, compress)?;
                 seat_id.serialize_with_mode(&mut writer, compress)?;
-                player_id.serialize_with_mode(&mut writer, compress)?;
                 player_key.serialize_with_mode(&mut writer, compress)?;
             }
-            AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key,
-            } => {
+            AnyActor::Shuffler { shuffler_key, .. } => {
                 2u8.serialize_with_mode(&mut writer, compress)?;
-                shuffler_id.serialize_with_mode(&mut writer, compress)?;
                 shuffler_key.serialize_with_mode(&mut writer, compress)?;
             }
         }
@@ -117,17 +108,10 @@ impl<C: CurveGroup> CanonicalSerialize for AnyActor<C> {
             AnyActor::None => 0,
             AnyActor::Player {
                 seat_id,
-                player_id,
                 player_key,
-            } => {
-                seat_id.serialized_size(compress)
-                    + player_id.serialized_size(compress)
-                    + player_key.serialized_size(compress)
-            }
-            AnyActor::Shuffler {
-                shuffler_id,
-                shuffler_key,
-            } => shuffler_id.serialized_size(compress) + shuffler_key.serialized_size(compress),
+                ..
+            } => seat_id.serialized_size(compress) + player_key.serialized_size(compress),
+            AnyActor::Shuffler { shuffler_key, .. } => shuffler_key.serialized_size(compress),
         }
     }
 }
@@ -143,22 +127,19 @@ impl<C: CurveGroup> CanonicalDeserialize for AnyActor<C> {
             0 => Ok(AnyActor::None),
             1 => {
                 let seat_id = SeatId::deserialize_with_mode(&mut reader, compress, validate)?;
-                let player_id = PlayerId::deserialize_with_mode(&mut reader, compress, validate)?;
                 let player_key =
                     CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(AnyActor::Player {
                     seat_id,
-                    player_id,
+                    player_id: 0, // Default value, will be populated from context
                     player_key,
                 })
             }
             2 => {
-                let shuffler_id =
-                    ShufflerId::deserialize_with_mode(&mut reader, compress, validate)?;
                 let shuffler_key =
                     CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(AnyActor::Shuffler {
-                    shuffler_id,
+                    shuffler_id: 0, // Default value, will be populated from context
                     shuffler_key,
                 })
             }
