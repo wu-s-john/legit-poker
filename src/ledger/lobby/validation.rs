@@ -58,7 +58,7 @@ pub fn ensure_min_players<C: CurveGroup>(
     Ok(())
 }
 
-pub fn ensure_shuffler_sequence<C>(
+pub fn ensure_shuffler_sequence<C: ark_ec::CurveGroup>(
     shufflers: &[ShufflerAssignment<C>],
 ) -> Result<(), GameSetupError> {
     if shufflers.is_empty() {

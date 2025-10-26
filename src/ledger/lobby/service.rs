@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 use ark_crypto_primitives::sponge::Absorb;
@@ -21,7 +20,7 @@ use crate::ledger::snapshot::{
 use crate::ledger::store::snapshot::prepare_snapshot;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
-use crate::ledger::{CanonicalKey, LedgerOperator};
+use crate::ledger::CanonicalKey;
 use crate::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
 
 use super::error::GameSetupError;
@@ -51,27 +50,27 @@ where
 {
     async fn host_game(
         &self,
-        host: PlayerRecord<MaybeSaved<PlayerId>>,
+        host: PlayerRecord<C, MaybeSaved<PlayerId>>,
         lobby: GameLobbyConfig,
-    ) -> Result<GameMetadata, GameSetupError>;
+    ) -> Result<GameMetadata<C>, GameSetupError>;
 
     async fn join_game(
         &self,
         game: &GameRecord<Saved<GameId>>,
-        player: PlayerRecord<MaybeSaved<PlayerId>>,
+        player: PlayerRecord<C, MaybeSaved<PlayerId>>,
         seat_preference: Option<SeatId>,
-    ) -> Result<JoinGameOutput, GameSetupError>;
+    ) -> Result<JoinGameOutput<C>, GameSetupError>;
 
     async fn register_shuffler(
         &self,
         game: &GameRecord<Saved<GameId>>,
-        shuffler: ShufflerRecord<MaybeSaved<ShufflerId>>,
+        shuffler: ShufflerRecord<C, MaybeSaved<ShufflerId>>,
         cfg: ShufflerRegistrationConfig,
-    ) -> Result<RegisterShufflerOutput, GameSetupError>;
+    ) -> Result<RegisterShufflerOutput<C>, GameSetupError>;
 
     async fn commence_game(
         &self,
-        operator: &LedgerOperator<C>,
+        hasher: &dyn LedgerHasher,
         params: CommenceGameParams<C>,
     ) -> Result<CommenceGameOutcome<C>, GameSetupError>;
 }
@@ -84,8 +83,7 @@ where
     C::ScalarField: PrimeField + UniformRand + Absorb,
     C::Affine: Absorb,
 {
-    storage: Arc<dyn LobbyStorage>,
-    marker: PhantomData<C>,
+    storage: Arc<dyn LobbyStorage<C>>,
 }
 
 impl<C> LobbyServiceFactory<C>
@@ -95,118 +93,122 @@ where
     C::ScalarField: PrimeField + UniformRand + Absorb,
     C::Affine: Absorb,
 {
-    pub fn new(storage: Arc<dyn LobbyStorage>) -> Self {
-        Self {
-            storage,
-            marker: PhantomData,
-        }
+    pub fn new(storage: Arc<dyn LobbyStorage<C>>) -> Self {
+        Self { storage }
     }
 
     pub fn from_sea_orm(connection: DatabaseConnection) -> Self {
-        let storage = Arc::new(SeaOrmLobbyStorage::new(connection)) as Arc<dyn LobbyStorage>;
+        let storage =
+            Arc::new(SeaOrmLobbyStorage::<C>::new(connection)) as Arc<dyn LobbyStorage<C>>;
         Self::new(storage)
     }
 
     pub fn in_memory() -> Self {
-        let storage = Arc::new(InMemoryLobbyStorage::new()) as Arc<dyn LobbyStorage>;
+        let storage = Arc::new(InMemoryLobbyStorage::<C>::new()) as Arc<dyn LobbyStorage<C>>;
         Self::new(storage)
     }
+}
 
-    async fn ensure_player_saved(
-        &self,
-        txn: &mut dyn LobbyStorageTxn,
-        mut player: PlayerRecord<MaybeSaved<PlayerId>>,
-    ) -> Result<PlayerRecord<Saved<PlayerId>>, GameSetupError> {
-        if let Some(id) = player.state.id {
-            if let Some(existing) = txn.load_player(id).await? {
-                if player.display_name.is_empty() {
-                    player.display_name = existing.display_name;
-                }
-                if player.public_key.is_empty() {
-                    player.public_key = existing.public_key;
-                }
-                return Ok(PlayerRecord {
-                    display_name: player.display_name,
-                    public_key: player.public_key,
-                    seat_preference: player.seat_preference,
-                    state: Saved { id },
-                });
+pub async fn ensure_player_saved<C>(
+    txn: &mut dyn LobbyStorageTxn<C>,
+    mut player: PlayerRecord<C, MaybeSaved<PlayerId>>,
+) -> Result<PlayerRecord<C, Saved<PlayerId>>, GameSetupError>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + CanonicalDeserialize + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + UniformRand + Absorb,
+    C::Affine: Absorb,
+{
+    if let Some(id) = player.state.id {
+        if let Some(existing) = txn.load_player_by_id(id).await? {
+            if player.display_name.is_empty() {
+                player.display_name = existing.display_name;
             }
-            return Err(GameSetupError::NotFound("player"));
+            // Use stored public key if caller didn't provide one (C::zero() is the default)
+            let public_key = if player.public_key == C::zero() {
+                existing.public_key
+            } else {
+                player.public_key
+            };
+            return Ok(PlayerRecord {
+                display_name: player.display_name,
+                public_key,
+                seat_preference: player.seat_preference,
+                state: Saved { id },
+            });
         }
-
-        if player.display_name.is_empty() {
-            return Err(GameSetupError::validation(
-                "display_name is required for new players",
-            ));
-        }
-        if player.public_key.is_empty() {
-            return Err(GameSetupError::validation(
-                "public_key is required for new players",
-            ));
-        }
-
-        let id = txn
-            .insert_player(NewPlayer {
-                display_name: player.display_name.clone(),
-                public_key: player.public_key.clone(),
-            })
-            .await?;
-
-        Ok(PlayerRecord {
-            display_name: player.display_name,
-            public_key: player.public_key,
-            seat_preference: player.seat_preference,
-            state: Saved { id },
-        })
+        return Err(GameSetupError::NotFound("player"));
     }
 
-    async fn ensure_shuffler_saved(
-        &self,
-        txn: &mut dyn LobbyStorageTxn,
-        mut shuffler: ShufflerRecord<MaybeSaved<ShufflerId>>,
-    ) -> Result<ShufflerRecord<Saved<ShufflerId>>, GameSetupError> {
-        if let Some(id) = shuffler.state.id {
-            if let Some(existing) = txn.load_shuffler(id).await? {
-                if shuffler.display_name.is_empty() {
-                    shuffler.display_name = existing.display_name;
-                }
-                if shuffler.public_key.is_empty() {
-                    shuffler.public_key = existing.public_key;
-                }
-                return Ok(ShufflerRecord {
-                    display_name: shuffler.display_name,
-                    public_key: shuffler.public_key,
-                    state: Saved { id },
-                });
-            }
-            return Err(GameSetupError::NotFound("shuffler"));
-        }
-
-        if shuffler.display_name.is_empty() {
-            return Err(GameSetupError::validation(
-                "display_name is required for new shufflers",
-            ));
-        }
-        if shuffler.public_key.is_empty() {
-            return Err(GameSetupError::validation(
-                "public_key is required for new shufflers",
-            ));
-        }
-
-        let id = txn
-            .insert_shuffler(NewShuffler {
-                display_name: shuffler.display_name.clone(),
-                public_key: shuffler.public_key.clone(),
-            })
-            .await?;
-
-        Ok(ShufflerRecord {
-            display_name: shuffler.display_name,
-            public_key: shuffler.public_key,
-            state: Saved { id },
-        })
+    if player.display_name.is_empty() {
+        return Err(GameSetupError::validation(
+            "display_name is required for new players",
+        ));
     }
+
+    let (id, _key) = txn
+        .insert_player(NewPlayer {
+            display_name: player.display_name.clone(),
+            public_key: player.public_key.clone(),
+        })
+        .await?;
+
+    Ok(PlayerRecord {
+        display_name: player.display_name,
+        public_key: player.public_key,
+        seat_preference: player.seat_preference,
+        state: Saved { id },
+    })
+}
+
+pub async fn ensure_shuffler_saved<C>(
+    txn: &mut dyn LobbyStorageTxn<C>,
+    mut shuffler: ShufflerRecord<C, MaybeSaved<ShufflerId>>,
+) -> Result<ShufflerRecord<C, Saved<ShufflerId>>, GameSetupError>
+where
+    C: CurveGroup + CurveAbsorb<C::BaseField> + CanonicalDeserialize + Send + Sync + 'static,
+    C::BaseField: PrimeField,
+    C::ScalarField: PrimeField + UniformRand + Absorb,
+    C::Affine: Absorb,
+{
+    if let Some(id) = shuffler.state.id {
+        if let Some(existing) = txn.load_shuffler_by_id(id).await? {
+            if shuffler.display_name.is_empty() {
+                shuffler.display_name = existing.display_name;
+            }
+            // Use stored public key if caller didn't provide one (C::zero() is the default)
+            let public_key = if shuffler.public_key == C::zero() {
+                existing.public_key
+            } else {
+                shuffler.public_key
+            };
+            return Ok(ShufflerRecord {
+                display_name: shuffler.display_name,
+                public_key,
+                state: Saved { id },
+            });
+        }
+        return Err(GameSetupError::NotFound("shuffler"));
+    }
+
+    if shuffler.display_name.is_empty() {
+        return Err(GameSetupError::validation(
+            "display_name is required for new shufflers",
+        ));
+    }
+
+    let (id, _key) = txn
+        .insert_shuffler(NewShuffler {
+            display_name: shuffler.display_name.clone(),
+            public_key: shuffler.public_key.clone(),
+        })
+        .await?;
+
+    Ok(ShufflerRecord {
+        display_name: shuffler.display_name,
+        public_key: shuffler.public_key,
+        state: Saved { id },
+    })
 }
 
 #[async_trait]
@@ -219,18 +221,18 @@ where
 {
     async fn host_game(
         &self,
-        host: PlayerRecord<MaybeSaved<PlayerId>>,
+        host: PlayerRecord<C, MaybeSaved<PlayerId>>,
         lobby: GameLobbyConfig,
-    ) -> Result<GameMetadata, GameSetupError> {
+    ) -> Result<GameMetadata<C>, GameSetupError> {
         validate_lobby_config(&lobby)?;
 
         let mut txn = self.storage.begin().await?;
         let result = async {
-            let host_saved = self.ensure_player_saved(txn.as_mut(), host).await?;
+            let host_saved = ensure_player_saved(txn.as_mut(), host).await?;
 
             let game_id = txn
                 .insert_game(NewGame {
-                    host_player_id: host_saved.state.id,
+                    host_player_id: host_saved.state.id.clone(),
                     config: lobby.clone(),
                 })
                 .await?;
@@ -242,7 +244,7 @@ where
                     stakes: lobby.stakes,
                     max_players: lobby.max_players,
                     rake_bps: lobby.rake_bps,
-                    host: host_saved.state.id,
+                    host: host_saved.state.id.clone(),
                     state: Saved { id: game_id },
                 },
                 host: host_saved,
@@ -265,15 +267,15 @@ where
     async fn join_game(
         &self,
         game: &GameRecord<Saved<GameId>>,
-        player: PlayerRecord<MaybeSaved<PlayerId>>,
+        player: PlayerRecord<C, MaybeSaved<PlayerId>>,
         seat_preference: Option<SeatId>,
-    ) -> Result<JoinGameOutput, GameSetupError> {
+    ) -> Result<JoinGameOutput<C>, GameSetupError> {
         let mut txn = self.storage.begin().await?;
         let result = async {
-            let player_saved = self.ensure_player_saved(txn.as_mut(), player).await?;
+            let player_saved = ensure_player_saved(txn.as_mut(), player).await?;
             txn.insert_game_player(NewGamePlayer {
                 game_id: game.state.id,
-                player_id: player_saved.state.id,
+                player_id: player_saved.state.id.clone(),
                 seat_preference,
             })
             .await?;
@@ -301,12 +303,12 @@ where
     async fn register_shuffler(
         &self,
         game: &GameRecord<Saved<GameId>>,
-        shuffler: ShufflerRecord<MaybeSaved<ShufflerId>>,
+        shuffler: ShufflerRecord<C, MaybeSaved<ShufflerId>>,
         cfg: ShufflerRegistrationConfig,
-    ) -> Result<RegisterShufflerOutput, GameSetupError> {
+    ) -> Result<RegisterShufflerOutput<C>, GameSetupError> {
         let mut txn = self.storage.begin().await?;
         let result = async {
-            let shuffler_saved = self.ensure_shuffler_saved(txn.as_mut(), shuffler).await?;
+            let shuffler_saved = ensure_shuffler_saved(txn.as_mut(), shuffler).await?;
             let sequence = match cfg.sequence {
                 Some(seq) => seq,
                 None => txn.count_game_shufflers(game.state.id).await?,
@@ -315,7 +317,7 @@ where
             let shuffler_saved_clone = shuffler_saved.clone();
             txn.insert_game_shuffler(NewGameShuffler {
                 game_id: game.state.id,
-                shuffler_id: shuffler_saved_clone.state.id,
+                shuffler_id: shuffler_saved_clone.state.id.clone(),
                 sequence,
                 public_key: shuffler_saved_clone.public_key.clone(),
             })
@@ -343,7 +345,7 @@ where
 
     async fn commence_game(
         &self,
-        operator: &LedgerOperator<C>,
+        hasher: &dyn LedgerHasher,
         params: CommenceGameParams<C>,
     ) -> Result<CommenceGameOutcome<C>, GameSetupError> {
         ensure_unique_seats(&params.players)?;
@@ -374,7 +376,7 @@ where
                 txn.insert_hand_player(NewHandPlayer {
                     game_id: params.game.state.id,
                     hand_id,
-                    player_id: seat.player.state.id,
+                    player_id: seat.player.state.id.clone(),
                     seat: seat.seat_id,
                 })
                 .await?;
@@ -383,37 +385,32 @@ where
             for assignment in &params.shufflers {
                 txn.insert_hand_shuffler(NewHandShuffler {
                     hand_id,
-                    shuffler_id: assignment.shuffler.state.id,
+                    shuffler_id: assignment.shuffler.state.id.clone(),
                     sequence: assignment.sequence,
                 })
                 .await?;
             }
 
-            let state = operator.state();
-            let hasher = state.hasher();
             let snapshot = build_initial_snapshot::<C>(
                 hand_id,
                 &params,
                 &prepared_players,
                 &prepared_shufflers,
-                hasher.as_ref(),
+                hasher,
             )?;
             let initial_snapshot = AnyTableSnapshot::Shuffling(snapshot.clone());
-            let prepared = prepare_snapshot(&initial_snapshot, hasher.as_ref())
+            let prepared = prepare_snapshot(&initial_snapshot, hasher)
                 .map_err(|err| GameSetupError::Database(DbErr::Custom(err.to_string())))?;
 
             txn.persist_snapshot(prepared).await?;
 
-            Ok((hand_id, snapshot, state))
+            Ok((hand_id, snapshot))
         }
         .await;
 
         match result {
-            Ok((hand_id, snapshot, state)) => {
+            Ok((hand_id, snapshot)) => {
                 txn.commit().await?;
-
-                let initial_snapshot = AnyTableSnapshot::Shuffling(snapshot.clone());
-                state.upsert_snapshot(hand_id, initial_snapshot.clone(), true);
 
                 Ok(CommenceGameOutcome {
                     hand: HandRecord {
@@ -473,38 +470,19 @@ fn prepare_shufflers<C>(
     shufflers: &[ShufflerAssignment<C>],
 ) -> Result<Vec<PreparedShuffler<C>>, GameSetupError>
 where
-    C: CurveGroup + CanonicalDeserialize,
+    C: CurveGroup,
 {
     shufflers
         .iter()
         .map(|assignment| {
-            let pk_msg = format!(
-                "invalid shuffler public key for shuffler {}",
-                assignment.shuffler.state.id
-            );
-            let public_key = deserialize_curve_point::<C>(&assignment.public_key, pk_msg)?;
-            let agg_msg = format!(
-                "invalid aggregated shuffler key for shuffler {}",
-                assignment.shuffler.state.id
-            );
-            let aggregated_public_key =
-                deserialize_curve_point::<C>(&assignment.aggregated_public_key, agg_msg)?;
             Ok(PreparedShuffler {
                 shuffler_id: assignment.shuffler.state.id,
                 sequence: assignment.sequence,
-                public_key,
-                aggregated_public_key,
+                public_key: assignment.public_key.clone(),
+                aggregated_public_key: assignment.aggregated_public_key.clone(),
             })
         })
         .collect()
-}
-
-fn deserialize_curve_point<C>(bytes: &[u8], context: impl Into<String>) -> Result<C, GameSetupError>
-where
-    C: CurveGroup + CanonicalDeserialize,
-{
-    C::deserialize_compressed(&mut &bytes[..])
-        .map_err(|_| GameSetupError::validation(context.into()))
 }
 
 fn build_initial_snapshot<C>(

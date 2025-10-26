@@ -155,6 +155,7 @@ where
     worker_handle: Option<JoinHandle<Result<(), WorkerError>>>,
     shufflers: Arc<HashMap<ShufflerId, Arc<ShufflerService<C, ShufflerScheme<C>>>>>,
     shuffler_order: Arc<HashMap<ShufflerId, usize>>,
+    shuffler_key_to_id: Arc<HashMap<crate::ledger::CanonicalKey<C>, ShufflerId>>,
     active_hands: Arc<DashMap<(GameId, HandId), Vec<HandSubscription<C>>>>,
 }
 
@@ -214,6 +215,7 @@ where
 
         let mut shufflers = HashMap::with_capacity(config.shufflers.len());
         let mut shuffler_order = HashMap::with_capacity(config.shufflers.len());
+        let mut shuffler_key_to_id = HashMap::with_capacity(config.shufflers.len());
         for (index, (shuffler, public_key)) in config
             .shufflers
             .iter()
@@ -226,6 +228,7 @@ where
             let signing_secret = SchnorrSecretKey::<C>(shuffler.secret.clone());
             let events_rx = operator.event_updates();
             let snapshots_rx = operator.snapshot_updates();
+            let canonical_key = crate::ledger::CanonicalKey::new(public_key);
             let instance = Arc::new(ShufflerService::<C, ShufflerScheme<C>>::new(
                 shuffler.id,
                 public_key,
@@ -239,10 +242,12 @@ where
             ));
             shufflers.insert(shuffler.id, instance);
             shuffler_order.insert(shuffler.id, index);
+            shuffler_key_to_id.insert(canonical_key, shuffler.id);
         }
 
         let shufflers = Arc::new(shufflers);
         let shuffler_order = Arc::new(shuffler_order);
+        let shuffler_key_to_id = Arc::new(shuffler_key_to_id);
         let active_hands = Arc::new(DashMap::new());
 
         let worker = LedgerWorker::new(
@@ -270,6 +275,7 @@ where
             worker_handle,
             shufflers,
             shuffler_order,
+            shuffler_key_to_id,
             active_hands,
         })
     }
@@ -326,13 +332,22 @@ where
                 .shufflers
                 .get(shuffler_key)
                 .ok_or_else(|| anyhow!("expected shuffler key not found in snapshot"))?;
+            let shuffler_id = self
+                .shuffler_key_to_id
+                .get(&identity.shuffler_key)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no shuffler configured for shuffler key {:?}",
+                        identity.shuffler_key
+                    )
+                })?;
             let shuffler = self
                 .shufflers
-                .get(&identity.shuffler_id)
+                .get(shuffler_id)
                 .ok_or_else(|| {
                     anyhow!(
                         "no shuffler configured for shuffler id  {:?}",
-                        identity.shuffler_id
+                        shuffler_id
                     )
                 })?
                 .clone();
@@ -347,13 +362,22 @@ where
                 .shufflers
                 .get(first_shuffler_key)
                 .ok_or_else(|| anyhow!("expected shuffler key not found in snapshot"))?;
+            let shuffler_id = self
+                .shuffler_key_to_id
+                .get(&identity.shuffler_key)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no shuffler configured for shuffler key {:?}",
+                        identity.shuffler_key
+                    )
+                })?;
             let first = self
                 .shufflers
-                .get(&identity.shuffler_id)
+                .get(shuffler_id)
                 .ok_or_else(|| {
                     anyhow!(
                         "no shuffler configured for shuffler id  {:?}",
-                        identity.shuffler_id
+                        shuffler_id
                     )
                 })?
                 .clone();
@@ -362,8 +386,8 @@ where
                 .await
                 .with_context(|| {
                     format!(
-                        "failed to kick start hand {} for shuffler {}",
-                        hand_id, identity.shuffler_id
+                        "failed to kick start hand {} for shuffler {:?}",
+                        hand_id, shuffler_id
                     )
                 })?;
         }
