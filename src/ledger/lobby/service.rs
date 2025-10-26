@@ -380,11 +380,19 @@ where
                     GameSetupError::validation("player must have seat assignment")
                 })?;
 
-                // Use provided stack if available, otherwise fall back to buy-in
-                let starting_stack = stack_map
-                    .get(player_id)
-                    .copied()
-                    .unwrap_or(game_config.buy_in);
+                // Determine starting stack based on whether player_stacks was provided
+                let starting_stack = if params.player_stacks.is_some() {
+                    // For subsequent hands: player MUST be in player_stacks
+                    stack_map.get(player_id).copied().ok_or_else(|| {
+                        GameSetupError::validation(format!(
+                            "player {} missing from player_stacks (required for subsequent hands)",
+                            player_id
+                        ))
+                    })?
+                } else {
+                    // For first hand: default to buy-in
+                    game_config.buy_in
+                };
 
                 Ok(PlayerSeatSnapshot {
                     player: PlayerRecord {

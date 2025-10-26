@@ -30,6 +30,7 @@ where
 {
     verifier: Arc<dyn Verifier<C> + Send + Sync>,
     sender: mpsc::Sender<AnyMessageEnvelope<C>>,
+    #[allow(dead_code)]
     event_store: Arc<dyn EventStore<C>>,
     state: Arc<LedgerState<C>>,
     events_tx: broadcast::Sender<FinalizedAnyMessageEnvelope<C>>,

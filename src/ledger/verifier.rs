@@ -491,7 +491,7 @@ fn validate_shuffle<C: CurveGroup>(
     if expected_order[next_index] != actor.shuffler_key {
         return Err(VerifyError::InvalidMessage);
     }
-    let shuffler_identity = table
+    let _shuffler_identity = table
         .shufflers
         .get(&actor.shuffler_key)
         .ok_or(VerifyError::Unauthorized)?;

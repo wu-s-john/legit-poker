@@ -24,6 +24,7 @@ use self::serialization::{encode_actor, message_type, to_db_event_phase};
 
 pub type SharedEventStore<C> = Arc<dyn EventStore<C>>;
 
+#[allow(dead_code)]
 const LOG_TARGET: &str = "legit_poker::ledger::event_store";
 
 pub fn serialize_curve<C>(value: &C) -> anyhow::Result<Vec<u8>>
@@ -44,6 +45,7 @@ fn status_columns(status: &SnapshotStatus) -> (bool, Option<String>) {
     }
 }
 
+#[allow(dead_code)]
 fn log_event_payload<C>(
     event: &FinalizedAnyMessageEnvelope<C>,
     payload_value: &JsonValue,
@@ -161,7 +163,6 @@ where
     async fn persist_event(&self, event: &FinalizedAnyMessageEnvelope<C>) -> anyhow::Result<()> {
         let message_json = serde_json::to_value(&event.envelope.message.value)?;
         let payload_value = message_json;
-        log_event_payload(event, &payload_value, "persisting event payload")?;
 
         let active = active_model_for_event(
             event,
@@ -184,7 +185,6 @@ where
     ) -> anyhow::Result<()> {
         let message_json = serde_json::to_value(&event.envelope.message.value)?;
         let payload_value = message_json;
-        log_event_payload(event, &payload_value, "persisting event payload (txn)")?;
 
         let active = active_model_for_event(
             event,
@@ -281,10 +281,11 @@ mod tests {
     use super::*;
     use crate::db::{connect_to_postgres_db, postgres_test_url};
     use crate::engine::nl::actions::PlayerBetAction;
-    use crate::engine::nl::types::{HandConfig, TableStakes};
+    use crate::engine::nl::types::TableStakes;
     use crate::ledger::actor::AnyActor;
     use crate::ledger::lobby::types::{
-        CommenceGameParams, GameLobbyConfig, PlayerRecord, ShufflerRecord, ShufflerRegistrationConfig,
+        CommenceGameParams, GameLobbyConfig, PlayerRecord, ShufflerRecord,
+        ShufflerRegistrationConfig,
     };
     use crate::ledger::messages::{
         AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
@@ -531,7 +532,7 @@ mod tests {
             small_blind_seat: 1,
             big_blind_seat: 2,
             deck_commitment: None,
-        player_stacks: None, // First hand - use buy-in
+            player_stacks: None, // First hand - use buy-in
         };
 
         let hand = lobby
