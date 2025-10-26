@@ -75,12 +75,23 @@ export async function fetchDemoEvents(
     seqIds?: number[];
   }
 ): Promise<FinalizedAnyMessageEnvelope[]> {
-  let url = `${API_BASE}/game/${gameId}/hand/${handId}/events`;
+  let url = `${API_BASE}/games/${gameId}/hands/${handId}/messages`;
+
+  // Backend uses from_sequence/to_sequence query params
+  const params = new URLSearchParams();
 
   if (options?.seqIds && options.seqIds.length > 0) {
-    url += `?seq_ids=${options.seqIds.join(',')}`;
+    // Fetch range from min to max of requested sequence IDs
+    const minSeq = Math.min(...options.seqIds);
+    const maxSeq = Math.max(...options.seqIds);
+    params.append('from_sequence', minSeq.toString());
+    params.append('to_sequence', maxSeq.toString());
   } else if (options?.sinceSeqId !== undefined) {
-    url += `?since_seq_id=${options.sinceSeqId}`;
+    params.append('from_sequence', options.sinceSeqId.toString());
+  }
+
+  if (params.toString()) {
+    url += `?${params.toString()}`;
   }
 
   const response = await fetch(url);
