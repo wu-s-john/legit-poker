@@ -22,6 +22,9 @@ export class DemoEventHandler {
   private shuffleEventCount = 0;
   private totalShuffleEvents = 0;
   private dealingStarted = false;
+  private viewerPublicKey: string | null = null;
+  private playerCount = 7; // Default, will be updated from hand_created event
+  private static readonly VIEWER_SEAT = 0;
 
   constructor(
     private dispatch: (action: DemoAction) => void,
@@ -65,9 +68,22 @@ export class DemoEventHandler {
   private handlePlayerCreated(
     event: Extract<DemoStreamEvent, { type: "player_created" }>,
   ): void {
+    // Viewer is always seated at seat 0
+    if (event.seat === DemoEventHandler.VIEWER_SEAT) {
+      this.viewerPublicKey = event.public_key;
+      console.log(
+        "[EventHandler] Viewer public key captured:",
+        this.viewerPublicKey,
+      );
+      this.dispatch({
+        type: "SET_VIEWER_PUBLIC_KEY",
+        publicKey: event.public_key,
+      });
+    }
+
     this.dispatch({
       type: "UPDATE_STATUS",
-      message: `Player ${event.seat} joined`,
+      message: `Player ${event.seat + 1} joined`,
     });
   }
 
@@ -75,11 +91,33 @@ export class DemoEventHandler {
    * Handle hand_created event - start shuffle phase
    */
   private handleHandCreated(
-    _event: Extract<DemoStreamEvent, { type: "hand_created" }>,
+    event: Extract<DemoStreamEvent, { type: "hand_created" }>,
   ): void {
     this.shuffleEventCount = 0;
     this.totalShuffleEvents = 0;
     this.dealingStarted = false;
+
+    // Store player count from event
+    this.playerCount = event.player_count;
+
+    // Resolve viewer public key (may arrive after hand_created)
+    const snapshotViewerPublicKey = this.resolveViewerPublicKeyFromSnapshot(
+      event.snapshot?.players,
+    );
+    if (!this.viewerPublicKey && snapshotViewerPublicKey) {
+      this.viewerPublicKey = snapshotViewerPublicKey;
+    }
+    const resolvedViewerPublicKey =
+      this.viewerPublicKey ?? snapshotViewerPublicKey ?? null;
+
+    // Initialize game state with metadata from backend
+    this.dispatch({
+      type: "INIT_GAME",
+      gameId: event.game_id,
+      handId: event.hand_id,
+      publicKey: resolvedViewerPublicKey,
+      playerCount: event.player_count,
+    });
 
     this.dispatch({ type: "START_SHUFFLE" });
     this.callbacks.onPhaseChange?.("shuffling");
@@ -288,8 +326,7 @@ export class DemoEventHandler {
     let deckPosition = 0;
 
     // First card to each player
-    for (let seat = 0; seat < 7; seat++) {
-      // Assuming 7 players for demo
+    for (let seat = 0; seat < this.playerCount; seat++) {
       setTimeout(() => {
         this.dispatch({ type: "CARD_DEALT", seat, cardIndex: 0 });
         this.callbacks.onCardDealt?.(seat, 0, deckPosition);
@@ -298,14 +335,14 @@ export class DemoEventHandler {
     }
 
     // Second card to each player
-    for (let seat = 0; seat < 7; seat++) {
+    for (let seat = 0; seat < this.playerCount; seat++) {
       setTimeout(
         () => {
           this.dispatch({ type: "CARD_DEALT", seat, cardIndex: 1 });
           this.callbacks.onCardDealt?.(seat, 1, deckPosition);
         },
         1400 + seat * 200,
-      ); // Start after first round (7 × 200ms) + delay
+      ); // Start after first round (playerCount × 200ms) + delay
       deckPosition++;
     }
   }
@@ -341,5 +378,41 @@ export class DemoEventHandler {
     this.shuffleEventCount = 0;
     this.totalShuffleEvents = 0;
     this.dealingStarted = false;
+    this.viewerPublicKey = null;
+    this.playerCount = 7; // Reset to default
+  }
+
+  /**
+   * Attempt to recover the viewer's public key from snapshot data
+   */
+  private resolveViewerPublicKeyFromSnapshot(
+    players:
+      | Record<
+          string,
+          {
+            seat: number;
+            public_key: string;
+            player_key: string;
+          }
+        >
+      | undefined,
+  ): string | null {
+    if (this.viewerPublicKey) {
+      return this.viewerPublicKey;
+    }
+
+    if (!players) {
+      return null;
+    }
+
+    const viewerEntry = Object.values(players).find(
+      (player) => player.seat === DemoEventHandler.VIEWER_SEAT,
+    );
+
+    if (!viewerEntry) {
+      return null;
+    }
+
+    return viewerEntry.public_key ?? null;
   }
 }

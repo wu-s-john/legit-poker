@@ -13,6 +13,7 @@ interface DemoStreamState {
   messages: FinalizedAnyMessageEnvelope[];
   gameId: number | null;
   handId: number | null;
+  viewerPublicKey: string | null;
   status: "idle" | "connecting" | "connected" | "error" | "completed";
   error: string | null;
   playerMapping: Map<string, { seat: number; player_key: string }>;
@@ -29,6 +30,7 @@ export function useDemoStream(enabled = true) {
     messages: [],
     gameId: null,
     handId: null,
+    viewerPublicKey: null,
     status: "idle",
     error: null,
     playerMapping: new Map(),
@@ -89,7 +91,31 @@ export function useDemoStream(enabled = true) {
         const messageEvent = event as MessageEvent<string>;
         console.log("[SSE] Received 'player_created' event:", messageEvent);
         console.log("[SSE] Event data:", messageEvent.data);
-        // Player created events are informational, no state update needed
+
+        try {
+          const json: unknown = JSON.parse(messageEvent.data);
+          const parsed = demoStreamEventSchema.parse(json);
+
+          if (parsed.type === "player_created") {
+            // Viewer is always seated at seat 0
+            if (parsed.seat === 0) {
+              console.log(
+                "[SSE] Viewer public key captured:",
+                parsed.public_key,
+              );
+              setState((prev) => ({
+                ...prev,
+                viewerPublicKey: parsed.public_key,
+              }));
+            }
+          }
+        } catch (error) {
+          console.error(
+            "[SSE] Failed to parse player_created event:",
+            messageEvent.data,
+            error,
+          );
+        }
       });
 
       eventSource.addEventListener("hand_created", (event: Event) => {
@@ -132,7 +158,7 @@ export function useDemoStream(enabled = true) {
         } catch (error) {
           console.error(
             "[SSE] Failed to parse hand_created event:",
-            event.data,
+            messageEvent.data,
             error,
           );
         }
@@ -150,23 +176,29 @@ export function useDemoStream(enabled = true) {
           console.log("[SSE] Validated game_event:", parsed);
 
           if (parsed.type === "game_event") {
+            // Reconstruct full FinalizedAnyMessageEnvelope
+            const finalizedEnvelope: FinalizedAnyMessageEnvelope = {
+              envelope: parsed.envelope,
+              snapshot_status: parsed.snapshot_status,
+              applied_phase: parsed.applied_phase,
+              snapshot_sequence_id: parsed.snapshot_sequence_id,
+              created_timestamp: parsed.created_timestamp,
+            };
+
             setState((prev) => {
               console.log(
-                "[SSE] Adding message to list. Current count:",
+                "[SSE] Adding finalized message to list. Current count:",
                 prev.messages.length,
               );
               return {
                 ...prev,
-                messages: [
-                  parsed.envelope,
-                  ...prev.messages,
-                ],
+                messages: [finalizedEnvelope, ...prev.messages],
               };
             });
           }
         } catch (error) {
           console.error("[SSE] Failed to parse game_event:", error);
-          console.error("[SSE] Problem payload was:", event.data);
+          console.error("[SSE] Problem payload was:", messageEvent.data);
         }
       });
 
@@ -247,17 +279,23 @@ export function useDemoStream(enabled = true) {
 
           // Handle game_event - add to messages list (prepend for reverse chronological)
           if (parsed.type === "game_event") {
+            // Reconstruct full FinalizedAnyMessageEnvelope
+            const finalizedEnvelope: FinalizedAnyMessageEnvelope = {
+              envelope: parsed.envelope,
+              snapshot_status: parsed.snapshot_status,
+              applied_phase: parsed.applied_phase,
+              snapshot_sequence_id: parsed.snapshot_sequence_id,
+              created_timestamp: parsed.created_timestamp,
+            };
+
             setState((prev) => {
               console.log(
-                "[SSE] game_event - Adding message to list. Current count:",
+                "[SSE] game_event - Adding finalized message to list. Current count:",
                 prev.messages.length,
               );
               return {
                 ...prev,
-                messages: [
-                  parsed.envelope,
-                  ...prev.messages,
-                ],
+                messages: [finalizedEnvelope, ...prev.messages],
               };
             });
           }

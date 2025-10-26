@@ -46,7 +46,8 @@ export interface DemoState {
 }
 
 export type DemoAction =
-  | { type: 'INIT_GAME'; gameId: number; handId: number; publicKey: string; playerCount: number }
+  | { type: 'INIT_GAME'; gameId: number; handId: number; publicKey: string | null; playerCount: number }
+  | { type: 'SET_VIEWER_PUBLIC_KEY'; publicKey: string }
   | { type: 'START_SHUFFLE' }
   | { type: 'SHUFFLE_PROGRESS'; currentStep: number; totalSteps: number }
   | { type: 'SHUFFLE_COMPLETE' }
@@ -154,6 +155,12 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         viewerPublicKey: action.publicKey,
         playerCount: action.playerCount,
         statusMessage: `Game ${action.gameId} initialized with ${action.playerCount} players`,
+      };
+
+    case 'SET_VIEWER_PUBLIC_KEY':
+      return {
+        ...state,
+        viewerPublicKey: action.publicKey,
       };
 
     case 'START_SHUFFLE':
