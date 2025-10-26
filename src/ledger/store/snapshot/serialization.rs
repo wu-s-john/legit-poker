@@ -1014,10 +1014,11 @@ where
         .await
         .context("failed to query hand_shufflers")?;
 
-    let mut roster = BTreeMap::new();
-    let mut aggregated = C::zero();
+    // First pass: load all shuffler data and compute global aggregated key
+    let mut shuffler_data = Vec::new();
+    let mut global_aggregated = C::zero();
 
-    for hs in hand_shufflers {
+    for hs in &hand_shufflers {
         let shuffler_row = shufflers::Entity::find_by_id(hs.shuffler_id)
             .one(conn)
             .await
@@ -1028,14 +1029,18 @@ where
             .context("failed to deserialize shuffler public key")?;
         let shuffler_key = CanonicalKey::from_bytes(&shuffler_row.public_key)?;
 
-        // Aggregate public keys in sequence order
-        aggregated = aggregated + public_key;
+        global_aggregated = global_aggregated + public_key;
+        shuffler_data.push((hs.shuffler_id, public_key, shuffler_key));
+    }
 
+    // Second pass: create roster with global aggregated key for all shufflers
+    let mut roster = BTreeMap::new();
+    for (shuffler_id, public_key, shuffler_key) in shuffler_data {
         let identity = ShufflerIdentity {
             public_key,
             shuffler_key: shuffler_key.clone(),
-            shuffler_id: hs.shuffler_id,
-            aggregated_public_key: aggregated,
+            shuffler_id,
+            aggregated_public_key: global_aggregated,
         };
 
         roster.insert(shuffler_key, identity);
