@@ -144,7 +144,8 @@ impl<C: CurveGroup> CanonicalDeserialize for AnyActor<C> {
             1 => {
                 let seat_id = SeatId::deserialize_with_mode(&mut reader, compress, validate)?;
                 let player_id = PlayerId::deserialize_with_mode(&mut reader, compress, validate)?;
-                let player_key = CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
+                let player_key =
+                    CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(AnyActor::Player {
                     seat_id,
                     player_id,
@@ -152,8 +153,10 @@ impl<C: CurveGroup> CanonicalDeserialize for AnyActor<C> {
                 })
             }
             2 => {
-                let shuffler_id = ShufflerId::deserialize_with_mode(&mut reader, compress, validate)?;
-                let shuffler_key = CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
+                let shuffler_id =
+                    ShufflerId::deserialize_with_mode(&mut reader, compress, validate)?;
+                let shuffler_key =
+                    CanonicalKey::deserialize_with_mode(&mut reader, compress, validate)?;
                 Ok(AnyActor::Shuffler {
                     shuffler_id,
                     shuffler_key,

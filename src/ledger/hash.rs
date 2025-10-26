@@ -79,57 +79,75 @@ where
     bytes.extend_from_slice(b"ledger/state/init\0");
 
     // Serialize snapshot metadata
-    snapshot.game_id.serialize_compressed(&mut bytes)
+    snapshot
+        .game_id
+        .serialize_compressed(&mut bytes)
         .expect("game_id serialization should not fail");
 
     // Serialize optional hand_id
     if let Some(hand_id) = snapshot.hand_id {
-        1u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
-        hand_id.serialize_compressed(&mut bytes)
+        1u8.serialize_compressed(&mut bytes)
+            .expect("u8 serialization should not fail");
+        hand_id
+            .serialize_compressed(&mut bytes)
             .expect("hand_id serialization should not fail");
     } else {
-        0u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
+        0u8.serialize_compressed(&mut bytes)
+            .expect("u8 serialization should not fail");
     }
 
     // Version byte
-    1u8.serialize_compressed(&mut bytes).expect("u8 serialization should not fail");
+    1u8.serialize_compressed(&mut bytes)
+        .expect("u8 serialization should not fail");
 
     // Serialize snapshot state
     // Dereference Arc to get HandConfig
-    snapshot.cfg.as_ref().serialize_compressed(&mut bytes)
+    snapshot
+        .cfg
+        .as_ref()
+        .serialize_compressed(&mut bytes)
         .expect("cfg serialization should not fail");
 
     // Serialize BTreeMaps by serializing their entries
     let shufflers_count = snapshot.shufflers.len() as u64;
-    shufflers_count.serialize_compressed(&mut bytes)
+    shufflers_count
+        .serialize_compressed(&mut bytes)
         .expect("shufflers count serialization should not fail");
     for (key, value) in snapshot.shufflers.as_ref().iter() {
         key.serialize_compressed(&mut bytes)
             .expect("shuffler key serialization should not fail");
-        value.serialize_compressed(&mut bytes)
+        value
+            .serialize_compressed(&mut bytes)
             .expect("shuffler value serialization should not fail");
     }
 
     let players_count = snapshot.players.len() as u64;
-    players_count.serialize_compressed(&mut bytes)
+    players_count
+        .serialize_compressed(&mut bytes)
         .expect("players count serialization should not fail");
     for (key, value) in snapshot.players.as_ref().iter() {
         key.serialize_compressed(&mut bytes)
             .expect("player key serialization should not fail");
-        value.serialize_compressed(&mut bytes)
+        value
+            .serialize_compressed(&mut bytes)
             .expect("player value serialization should not fail");
     }
 
-    snapshot.seating.as_ref().serialize_compressed(&mut bytes)
+    snapshot
+        .seating
+        .as_ref()
+        .serialize_compressed(&mut bytes)
         .expect("seating serialization should not fail");
 
     let stacks_count = snapshot.stacks.len() as u64;
-    stacks_count.serialize_compressed(&mut bytes)
+    stacks_count
+        .serialize_compressed(&mut bytes)
         .expect("stacks count serialization should not fail");
     for (seat, stack_info) in snapshot.stacks.as_ref().iter() {
         seat.serialize_compressed(&mut bytes)
             .expect("seat serialization should not fail");
-        stack_info.serialize_compressed(&mut bytes)
+        stack_info
+            .serialize_compressed(&mut bytes)
             .expect("stack info serialization should not fail");
     }
 
@@ -147,15 +165,25 @@ where
     bytes.extend_from_slice(b"ledger/state/msg\0");
 
     // Serialize envelope metadata
-    envelope.game_id.serialize_compressed(&mut bytes)
+    envelope
+        .game_id
+        .serialize_compressed(&mut bytes)
         .expect("game_id serialization should not fail");
-    envelope.hand_id.serialize_compressed(&mut bytes)
+    envelope
+        .hand_id
+        .serialize_compressed(&mut bytes)
         .expect("hand_id serialization should not fail");
-    envelope.nonce.serialize_compressed(&mut bytes)
+    envelope
+        .nonce
+        .serialize_compressed(&mut bytes)
         .expect("nonce serialization should not fail");
-    envelope.actor.serialize_compressed(&mut bytes)
+    envelope
+        .actor
+        .serialize_compressed(&mut bytes)
         .expect("actor serialization should not fail");
-    envelope.public_key.serialize_compressed(&mut bytes)
+    envelope
+        .public_key
+        .serialize_compressed(&mut bytes)
         .expect("public_key serialization should not fail");
 
     // Serialize message payload using signing_bytes (which includes message's domain tag)

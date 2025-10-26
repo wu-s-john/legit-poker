@@ -69,6 +69,37 @@ pub struct ShufflerHandState<C: CurveGroup> {
     pub dealing: DealingHandState<C>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::test_support::{fixture_shuffling_snapshot, FixtureContext};
+    use ark_bn254::G1Projective as TestCurve;
+
+    #[test]
+    fn from_shuffling_snapshot_uses_snapshot_order() {
+        // Two shufflers whose canonical keys will sort deterministically by bytes.
+        let ctx = FixtureContext::<TestCurve>::new(&[0, 1, 2], &[0, 1]);
+        let mut snapshot = fixture_shuffling_snapshot(&ctx);
+
+        // Force the expected order to diverge from the canonical (BTreeMap) ordering.
+        snapshot.shuffling.expected_order.reverse();
+
+        let shuffler_key = snapshot.shuffling.expected_order[0].value().clone();
+        let state = ShufflerHandState::from_shuffling_snapshot(&snapshot, &shuffler_key, [7u8; 32])
+            .expect("state should build from snapshot");
+
+        assert_eq!(state.shuffler_index, 0, "should respect snapshot order");
+        assert_eq!(
+            state.shuffling.expected_order, snapshot.shuffling.expected_order,
+            "expected order should be copied from snapshot"
+        );
+        assert_eq!(
+            state.aggregated_public_key, ctx.aggregated_shuffler_pk,
+            "aggregated key should remain the global aggregate"
+        );
+    }
+}
+
 impl<C: CurveGroup> ShufflerHandState<C> {
     /// Record an incoming shuffle message and return whether shuffling is complete.
     pub fn record_incoming_shuffle(

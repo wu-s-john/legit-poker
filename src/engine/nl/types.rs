@@ -87,7 +87,9 @@ pub struct Pots {
     pub sides: Vec<Pot>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct TableStakes {
     pub small_blind: Chips,
     pub big_blind: Chips,
@@ -95,7 +97,9 @@ pub struct TableStakes {
 }
 
 /// Fixed for the hand (No-Limit only).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CanonicalSerialize, CanonicalDeserialize,
+)]
 pub struct HandConfig {
     pub stakes: TableStakes,
     pub button: SeatId,

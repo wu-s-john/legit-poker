@@ -8,7 +8,8 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
+    QueryFilter, QueryOrder, Set,
 };
 use serde_json::Value as JsonValue;
 use tracing::info;
@@ -31,13 +32,13 @@ use crate::ledger::hash::LedgerHasher;
 use crate::ledger::identity::CanonicalKey;
 use crate::ledger::messages::{FlopStreet, PreflopStreet, RiverStreet, TurnStreet};
 use crate::ledger::snapshot::{
-    AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, CardDestination, PhaseBetting,
-    PhaseComplete, PhaseDealing, PhaseShuffling, PhaseShowdown, PlayerIdentity, PlayerRoster,
-    PlayerStacks, RevealsSnapshot, SeatingMap, ShufflerIdentity, ShufflerRoster,
+    AnyPlayerActionMsg, AnyTableSnapshot, BettingSnapshot, CardDestination, DealingSnapshot,
+    PhaseBetting, PhaseComplete, PhaseDealing, PhaseShowdown, PhaseShuffling, PlayerIdentity,
+    PlayerRoster, PlayerStacks, RevealsSnapshot, SeatingMap, ShufflerIdentity, ShufflerRoster,
     ShufflingSnapshot, SnapshotSeq, SnapshotStatus, TableAtDealing, TableAtShowdown,
-    TableAtShuffling, TableSnapshot, DealingSnapshot,
+    TableAtShuffling, TableSnapshot,
 };
-use crate::ledger::types::{GameId, HandId, StateHash};
+use crate::ledger::types::{GameId, HandId, ShufflerId, StateHash};
 use crate::showdown::HandCategory;
 use crate::shuffling::data_structures::DECK_SIZE;
 
@@ -608,8 +609,12 @@ fn serialize_betting_state(bytes: &mut Vec<u8>, state: &BettingState) -> anyhow:
     state.button.serialize_compressed(&mut *bytes)?;
     state.first_to_act.serialize_compressed(&mut *bytes)?;
     state.to_act.serialize_compressed(&mut *bytes)?;
-    state.current_bet_to_match.serialize_compressed(&mut *bytes)?;
-    state.last_full_raise_amount.serialize_compressed(&mut *bytes)?;
+    state
+        .current_bet_to_match
+        .serialize_compressed(&mut *bytes)?;
+    state
+        .last_full_raise_amount
+        .serialize_compressed(&mut *bytes)?;
     match state.last_aggressor {
         Some(seat) => {
             1u8.serialize_compressed(&mut *bytes)?;
@@ -626,11 +631,22 @@ fn serialize_betting_state(bytes: &mut Vec<u8>, state: &BettingState) -> anyhow:
 
     serialize_pots(bytes, &state.pots)?;
     // Inline HandConfig serialization
-    state.cfg.stakes.small_blind.serialize_compressed(&mut *bytes)?;
-    state.cfg.stakes.big_blind.serialize_compressed(&mut *bytes)?;
+    state
+        .cfg
+        .stakes
+        .small_blind
+        .serialize_compressed(&mut *bytes)?;
+    state
+        .cfg
+        .stakes
+        .big_blind
+        .serialize_compressed(&mut *bytes)?;
     state.cfg.stakes.ante.serialize_compressed(&mut *bytes)?;
     state.cfg.button.serialize_compressed(&mut *bytes)?;
-    state.cfg.small_blind_seat.serialize_compressed(&mut *bytes)?;
+    state
+        .cfg
+        .small_blind_seat
+        .serialize_compressed(&mut *bytes)?;
     state.cfg.big_blind_seat.serialize_compressed(&mut *bytes)?;
     (state.cfg.check_raise_allowed as u8).serialize_compressed(&mut *bytes)?;
 
@@ -647,8 +663,12 @@ fn serialize_betting_state(bytes: &mut Vec<u8>, state: &BettingState) -> anyhow:
         bytes.extend_from_slice(street.as_bytes());
         entry.seat.serialize_compressed(&mut *bytes)?;
         serialize_normalized_action(bytes, &entry.action)?;
-        entry.price_to_call_before.serialize_compressed(&mut *bytes)?;
-        entry.current_bet_to_match_after.serialize_compressed(&mut *bytes)?;
+        entry
+            .price_to_call_before
+            .serialize_compressed(&mut *bytes)?;
+        entry
+            .current_bet_to_match_after
+            .serialize_compressed(&mut *bytes)?;
     }
 
     Ok(())
@@ -664,7 +684,9 @@ fn serialize_player_state(bytes: &mut Vec<u8>, state: &EnginePlayerState) -> any
         None => 0u8.serialize_compressed(&mut *bytes)?,
     }
     state.stack.serialize_compressed(&mut *bytes)?;
-    state.committed_this_round.serialize_compressed(&mut *bytes)?;
+    state
+        .committed_this_round
+        .serialize_compressed(&mut *bytes)?;
     state.committed_total.serialize_compressed(&mut *bytes)?;
     let status_byte = match state.status {
         EnginePlayerStatus::Active => 0u8,
@@ -696,7 +718,10 @@ fn serialize_pot(bytes: &mut Vec<u8>, pot: &EnginePot) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn serialize_normalized_action(bytes: &mut Vec<u8>, action: &NormalizedAction) -> anyhow::Result<()> {
+fn serialize_normalized_action(
+    bytes: &mut Vec<u8>,
+    action: &NormalizedAction,
+) -> anyhow::Result<()> {
     match action {
         NormalizedAction::Fold => 0u8.serialize_compressed(&mut *bytes)?,
         NormalizedAction::Check => 1u8.serialize_compressed(&mut *bytes)?,
@@ -748,7 +773,10 @@ fn serialize_normalized_action(bytes: &mut Vec<u8>, action: &NormalizedAction) -
     Ok(())
 }
 
-fn serialize_player_action<C>(bytes: &mut Vec<u8>, event: &AnyPlayerActionMsg<C>) -> anyhow::Result<()>
+fn serialize_player_action<C>(
+    bytes: &mut Vec<u8>,
+    event: &AnyPlayerActionMsg<C>,
+) -> anyhow::Result<()>
 where
     C: CurveGroup,
 {
@@ -989,7 +1017,9 @@ where
                 .map_err(|_| anyhow!("player_id {} is negative", hp.player_id))?,
             nonce: u64::try_from(hp.nonce)
                 .map_err(|_| anyhow!("player nonce {} is negative", hp.nonce))?,
-            seat: hp.seat.try_into()
+            seat: hp
+                .seat
+                .try_into()
                 .map_err(|_| anyhow!("player seat {} is invalid", hp.seat))?,
         };
 
@@ -1016,7 +1046,6 @@ where
 
     // First pass: load all shuffler data and compute global aggregated key
     let mut shuffler_data = Vec::new();
-    let mut global_aggregated = C::zero();
 
     for hs in &hand_shufflers {
         let shuffler_row = shufflers::Entity::find_by_id(hs.shuffler_id)
@@ -1029,24 +1058,38 @@ where
             .context("failed to deserialize shuffler public key")?;
         let shuffler_key = CanonicalKey::from_bytes(&shuffler_row.public_key)?;
 
-        global_aggregated = global_aggregated + public_key;
         shuffler_data.push((hs.shuffler_id, public_key, shuffler_key));
     }
 
-    // Second pass: create roster with global aggregated key for all shufflers
+    Ok(assemble_shuffler_roster(shuffler_data))
+}
+
+fn assemble_shuffler_roster<C>(
+    shuffler_data: Vec<(ShufflerId, C, CanonicalKey<C>)>,
+) -> ShufflerRoster<C>
+where
+    C: CurveGroup,
+{
+    let global = shuffler_data
+        .iter()
+        .fold(C::zero(), |acc, (_, public_key, _)| {
+            acc + public_key.clone()
+        });
+
     let mut roster = BTreeMap::new();
     for (shuffler_id, public_key, shuffler_key) in shuffler_data {
-        let identity = ShufflerIdentity {
-            public_key,
-            shuffler_key: shuffler_key.clone(),
-            shuffler_id,
-            aggregated_public_key: global_aggregated,
-        };
-
-        roster.insert(shuffler_key, identity);
+        roster.insert(
+            shuffler_key.clone(),
+            ShufflerIdentity {
+                public_key,
+                shuffler_key,
+                shuffler_id,
+                aggregated_public_key: global.clone(),
+            },
+        );
     }
 
-    Ok(roster)
+    roster
 }
 
 /// Loads seating map from database for a given hand
@@ -1073,7 +1116,9 @@ where
             .ok_or_else(|| anyhow!("player {} not found", hp.player_id))?;
 
         let player_key = CanonicalKey::from_bytes(&player_row.public_key)?;
-        let seat = hp.seat.try_into()
+        let seat = hp
+            .seat
+            .try_into()
             .map_err(|_| anyhow!("player seat {} is invalid", hp.seat))?;
 
         seating.insert(seat, Some(player_key));
@@ -1088,7 +1133,13 @@ pub(crate) async fn reconstruct_snapshot_from_db<C>(
     conn: &DatabaseConnection,
 ) -> anyhow::Result<AnyTableSnapshot<C>>
 where
-    C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
+    C: CurveGroup
+        + CanonicalSerialize
+        + CanonicalDeserialize
+        + CurveAbsorb<C::BaseField>
+        + Send
+        + Sync
+        + 'static,
     C::BaseField: PrimeField + CanonicalSerialize + CanonicalDeserialize,
     C::ScalarField: PrimeField + Absorb + CanonicalSerialize + CanonicalDeserialize,
     C::Affine: Absorb,
@@ -1117,7 +1168,8 @@ where
     // Convert state hashes
     let state_hash = StateHash::from_bytes(snapshot_row.state_hash.clone())
         .context("failed to parse state hash")?;
-    let previous_hash = snapshot_row.previous_hash
+    let previous_hash = snapshot_row
+        .previous_hash
         .clone()
         .map(StateHash::from_bytes)
         .transpose()
@@ -1127,8 +1179,10 @@ where
     let status = match snapshot_row.application_status {
         DbApplicationStatus::Success => SnapshotStatus::Success,
         DbApplicationStatus::Failure => SnapshotStatus::Failure(
-            snapshot_row.failure_reason.clone()
-                .unwrap_or_else(|| "unknown failure".to_string())
+            snapshot_row
+                .failure_reason
+                .clone()
+                .unwrap_or_else(|| "unknown failure".to_string()),
         ),
     };
 
@@ -1137,18 +1191,21 @@ where
     let shufflers_roster = load_shuffler_roster::<C>(conn, snapshot_row.hand_id).await?;
     let seating_map = load_seating_map::<C>(conn, snapshot_row.hand_id).await?;
 
-    // Determine phase based on which hash columns are populated
-    let phase_kind = determine_phase_kind(&snapshot_row)?;
+    // Determine phase based on stored hand metadata (falling back to hash hints)
+    let phase_kind = determine_phase_kind(conn, &snapshot_row).await?;
 
     match phase_kind {
         db_enums::PhaseKind::Shuffling => {
             let shuffling = load_phase::<ShufflingSnapshot<C>>(
                 conn,
-                snapshot_row.shuffling_hash.as_ref()
+                snapshot_row
+                    .shuffling_hash
+                    .as_ref()
                     .ok_or_else(|| anyhow!("shuffling phase missing hash"))?
                     .as_slice(),
                 db_enums::PhaseKind::Shuffling,
-            ).await?;
+            )
+            .await?;
 
             let table = TableSnapshot::<PhaseShuffling, C> {
                 game_id: snapshot_row.game_id,
@@ -1173,17 +1230,25 @@ where
         db_enums::PhaseKind::Dealing => {
             let shuffling = load_phase::<ShufflingSnapshot<C>>(
                 conn,
-                snapshot_row.shuffling_hash.as_ref()
-                    .ok_or_else(|| anyhow!("dealing phase missing shuffling hash"))?.as_slice(),
+                snapshot_row
+                    .shuffling_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("dealing phase missing shuffling hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Shuffling,
-            ).await?;
+            )
+            .await?;
 
             let dealing = load_phase::<DealingSnapshot<C>>(
                 conn,
-                snapshot_row.dealing_hash.as_ref()
-                    .ok_or_else(|| anyhow!("dealing phase missing dealing hash"))?.as_slice(),
+                snapshot_row
+                    .dealing_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("dealing phase missing dealing hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Dealing,
-            ).await?;
+            )
+            .await?;
 
             let table = TableSnapshot::<PhaseDealing, C> {
                 game_id: snapshot_row.game_id,
@@ -1209,31 +1274,47 @@ where
             // Load all phase snapshots
             let shuffling = load_phase::<ShufflingSnapshot<C>>(
                 conn,
-                snapshot_row.shuffling_hash.as_ref()
-                    .ok_or_else(|| anyhow!("betting phase missing shuffling hash"))?.as_slice(),
+                snapshot_row
+                    .shuffling_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing shuffling hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Shuffling,
-            ).await?;
+            )
+            .await?;
 
             let dealing = load_phase::<DealingSnapshot<C>>(
                 conn,
-                snapshot_row.dealing_hash.as_ref()
-                    .ok_or_else(|| anyhow!("betting phase missing dealing hash"))?.as_slice(),
+                snapshot_row
+                    .dealing_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing dealing hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Dealing,
-            ).await?;
+            )
+            .await?;
 
             let betting = load_phase::<BettingSnapshot<C>>(
                 conn,
-                snapshot_row.betting_hash.as_ref()
-                    .ok_or_else(|| anyhow!("betting phase missing betting hash"))?.as_slice(),
+                snapshot_row
+                    .betting_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing betting hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Betting,
-            ).await?;
+            )
+            .await?;
 
             let reveals = load_phase::<RevealsSnapshot<C>>(
                 conn,
-                snapshot_row.reveals_hash.as_ref()
-                    .ok_or_else(|| anyhow!("betting phase missing reveals hash"))?.as_slice(),
+                snapshot_row
+                    .reveals_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("betting phase missing reveals hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Reveals,
-            ).await?;
+            )
+            .await?;
 
             // Determine which street based on betting state
             reconstruct_betting_snapshot(
@@ -1257,31 +1338,47 @@ where
             // Load all phase snapshots
             let shuffling = load_phase::<ShufflingSnapshot<C>>(
                 conn,
-                snapshot_row.shuffling_hash.as_ref()
-                    .ok_or_else(|| anyhow!("reveals phase missing shuffling hash"))?.as_slice(),
+                snapshot_row
+                    .shuffling_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing shuffling hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Shuffling,
-            ).await?;
+            )
+            .await?;
 
             let dealing = load_phase::<DealingSnapshot<C>>(
                 conn,
-                snapshot_row.dealing_hash.as_ref()
-                    .ok_or_else(|| anyhow!("reveals phase missing dealing hash"))?.as_slice(),
+                snapshot_row
+                    .dealing_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing dealing hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Dealing,
-            ).await?;
+            )
+            .await?;
 
             let betting = load_phase::<BettingSnapshot<C>>(
                 conn,
-                snapshot_row.betting_hash.as_ref()
-                    .ok_or_else(|| anyhow!("reveals phase missing betting hash"))?.as_slice(),
+                snapshot_row
+                    .betting_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing betting hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Betting,
-            ).await?;
+            )
+            .await?;
 
             let reveals = load_phase::<RevealsSnapshot<C>>(
                 conn,
-                snapshot_row.reveals_hash.as_ref()
-                    .ok_or_else(|| anyhow!("reveals phase missing reveals hash"))?.as_slice(),
+                snapshot_row
+                    .reveals_hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("reveals phase missing reveals hash"))?
+                    .as_slice(),
                 db_enums::PhaseKind::Reveals,
-            ).await?;
+            )
+            .await?;
 
             // Determine if showdown or complete based on application status
             // Complete phase is the terminal state after all reveals are done and hand is finalized
@@ -1309,28 +1406,67 @@ where
     }
 }
 
-/// Determines the phase kind based on which hash columns are populated
-fn determine_phase_kind(snapshot_row: &table_snapshots::Model) -> anyhow::Result<db_enums::PhaseKind> {
-    match (
-        &snapshot_row.shuffling_hash,
-        &snapshot_row.dealing_hash,
-        &snapshot_row.betting_hash,
-        &snapshot_row.reveals_hash,
-    ) {
-        (Some(_), None, None, None) => Ok(db_enums::PhaseKind::Shuffling),
-        (Some(_), Some(_), None, None) => Ok(db_enums::PhaseKind::Dealing),
-        (Some(_), Some(_), Some(_), Some(_)) if snapshot_row.reveals_hash.as_ref().map(|v| !v.is_empty()).unwrap_or(false) => {
-            // If reveals hash is populated and non-empty, it's reveals phase
-            Ok(db_enums::PhaseKind::Reveals)
-        }
-        (Some(_), Some(_), Some(_), _) => Ok(db_enums::PhaseKind::Betting),
-        _ => bail!(
-            "Invalid phase hash combination for snapshot game_id={} hand_id={} seq={}",
-            snapshot_row.game_id,
-            snapshot_row.hand_id,
-            snapshot_row.sequence
-        ),
+/// Determines the phase kind for a snapshot row.
+///
+/// We first trust the `hands.current_phase` value that is updated as part of the
+/// snapshot persistence transaction. When that metadata is unavailable (for
+/// example, legacy rows inserted before the column was populated), we fall back
+/// to inspecting the hash columns. In the ambiguous case where both betting and
+/// reveals hashes are present we default to `Betting`, which ensures that catchup
+/// continues to accept incoming betting actions instead of prematurely locking
+/// the hand into the reveals phase.
+async fn determine_phase_kind(
+    conn: &DatabaseConnection,
+    snapshot_row: &table_snapshots::Model,
+) -> anyhow::Result<db_enums::PhaseKind> {
+    let hand_phase = hands::Entity::find_by_id(snapshot_row.hand_id)
+        .one(conn)
+        .await
+        .context("failed to query hand for current phase")?
+        .and_then(|hand| hand.current_phase);
+
+    resolve_phase_kind(
+        hand_phase,
+        snapshot_row.shuffling_hash.is_some(),
+        snapshot_row.dealing_hash.is_some(),
+        snapshot_row.betting_hash.is_some(),
+        snapshot_row.reveals_hash.is_some(),
+        snapshot_row.game_id,
+        snapshot_row.hand_id,
+        snapshot_row.sequence,
+    )
+}
+
+fn resolve_phase_kind(
+    hand_phase: Option<db_enums::PhaseKind>,
+    has_shuffling: bool,
+    has_dealing: bool,
+    has_betting: bool,
+    _has_reveals: bool,
+    game_id: GameId,
+    hand_id: HandId,
+    sequence: i32,
+) -> anyhow::Result<db_enums::PhaseKind> {
+    if let Some(phase) = hand_phase {
+        return Ok(phase);
     }
+
+    if has_shuffling && !has_dealing && !has_betting {
+        return Ok(db_enums::PhaseKind::Shuffling);
+    }
+    if has_shuffling && has_dealing && !has_betting {
+        return Ok(db_enums::PhaseKind::Dealing);
+    }
+    if has_shuffling && has_dealing && has_betting {
+        return Ok(db_enums::PhaseKind::Betting);
+    }
+
+    bail!(
+        "Invalid phase hash combination for snapshot game_id={} hand_id={} seq={}",
+        game_id,
+        hand_id,
+        sequence
+    )
 }
 
 /// Loads a phase snapshot from the database by its hash
@@ -1357,8 +1493,7 @@ where
         );
     }
 
-    serde_json::from_value(phase_row.payload)
-        .context("failed to deserialize phase payload")
+    serde_json::from_value(phase_row.payload).context("failed to deserialize phase payload")
 }
 
 /// Loads hand config from database
@@ -1382,11 +1517,19 @@ async fn load_hand_config(
             ante: u64::try_from(config_row.ante)
                 .map_err(|_| anyhow!("ante {} is negative", config_row.ante))?,
         },
-        button: config_row.button_seat.try_into()
+        button: config_row
+            .button_seat
+            .try_into()
             .map_err(|_| anyhow!("button_seat {} is invalid", config_row.button_seat))?,
-        small_blind_seat: config_row.small_blind_seat.try_into()
-            .map_err(|_| anyhow!("small_blind_seat {} is invalid", config_row.small_blind_seat))?,
-        big_blind_seat: config_row.big_blind_seat.try_into()
+        small_blind_seat: config_row.small_blind_seat.try_into().map_err(|_| {
+            anyhow!(
+                "small_blind_seat {} is invalid",
+                config_row.small_blind_seat
+            )
+        })?,
+        big_blind_seat: config_row
+            .big_blind_seat
+            .try_into()
             .map_err(|_| anyhow!("big_blind_seat {} is invalid", config_row.big_blind_seat))?,
         check_raise_allowed: config_row.check_raise_allowed,
     };
@@ -1499,5 +1642,69 @@ where
             };
             Ok(AnyTableSnapshot::River(table))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::entity::sea_orm_active_enums as db_enums;
+    use crate::ledger::test_support::FixtureContext;
+    use ark_bn254::G1Projective as TestCurve;
+
+    #[test]
+    fn assemble_roster_assigns_global_key() {
+        let ctx = FixtureContext::<TestCurve>::new(&[0, 1, 2], &[10, 11]);
+
+        let shuffler_data: Vec<_> = ctx
+            .expected_shuffler_order
+            .iter()
+            .map(|canonical_key| {
+                let identity = ctx
+                    .shufflers
+                    .get(canonical_key)
+                    .expect("identity present in roster");
+                (
+                    identity.shuffler_id,
+                    identity.public_key.clone(),
+                    canonical_key.clone(),
+                )
+            })
+            .collect();
+
+        let roster = assemble_shuffler_roster(shuffler_data);
+
+        assert_eq!(roster.len(), ctx.shufflers.len());
+        for identity in roster.values() {
+            assert_eq!(
+                identity.aggregated_public_key, ctx.aggregated_shuffler_pk,
+                "each identity should receive the global aggregated key"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_phase_kind_prefers_hand_metadata() {
+        let phase = resolve_phase_kind(
+            Some(db_enums::PhaseKind::Betting),
+            true,
+            true,
+            true,
+            true,
+            1,
+            2,
+            3,
+        )
+        .expect("phase resolves");
+
+        assert_eq!(phase, db_enums::PhaseKind::Betting);
+    }
+
+    #[test]
+    fn resolve_phase_kind_defaults_to_betting_when_ambiguous() {
+        let phase =
+            resolve_phase_kind(None, true, true, true, true, 4, 5, 6).expect("phase resolves");
+
+        assert_eq!(phase, db_enums::PhaseKind::Betting);
     }
 }

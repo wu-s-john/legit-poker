@@ -3,15 +3,15 @@ use ark_crypto_primitives::signature::schnorr::{Schnorr, SecretKey as SchnorrSec
 use sha2::Sha256;
 
 mod api;
-mod state;
 mod service;
+mod state;
 
-pub use state::{
-    BoardCardShufflerRequest, BoardCardSlot, DealShufflerRequest, DealingHandState,
-    HandResources, HandSubscription, PlayerBlindingRequest, PlayerUnblindingRequest,
-    ShufflerHandState, ShufflingHandState,
-};
 pub use service::{ShufflerRunConfig, ShufflerService};
+pub use state::{
+    BoardCardShufflerRequest, BoardCardSlot, DealShufflerRequest, DealingHandState, HandResources,
+    HandSubscription, PlayerBlindingRequest, PlayerUnblindingRequest, ShufflerHandState,
+    ShufflingHandState,
+};
 
 use crate::shuffling::ElGamalCiphertext;
 
@@ -457,8 +457,12 @@ mod tests {
             crate::shuffler::state::ShufflingHandState {
                 expected_order: Vec::new(),
                 buffered: Vec::new(),
-                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
-                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                initial_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
+                latest_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
                 acted: false,
             },
             0,
@@ -544,8 +548,12 @@ mod tests {
             crate::shuffler::state::ShufflingHandState {
                 expected_order: Vec::new(),
                 buffered: Vec::new(),
-                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
-                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                initial_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
+                latest_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
                 acted: false,
             },
             0,
@@ -613,8 +621,12 @@ mod tests {
             crate::shuffler::state::ShufflingHandState {
                 expected_order: Vec::new(),
                 buffered: Vec::new(),
-                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
-                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                initial_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
+                latest_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
                 acted: false,
             },
             0,
@@ -689,8 +701,12 @@ mod tests {
             crate::shuffler::state::ShufflingHandState {
                 expected_order: Vec::new(),
                 buffered: Vec::new(),
-                initial_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
-                latest_deck: std::array::from_fn(|_| crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())),
+                initial_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
+                latest_deck: std::array::from_fn(|_| {
+                    crate::shuffling::ElGamalCiphertext::new(Curve::zero(), Curve::zero())
+                }),
                 acted: false,
             },
             0,

@@ -128,9 +128,7 @@ where
                 return Err(anyhow!("shuffler secret cannot be empty"));
             }
             let scalar = C::ScalarField::from_le_bytes_mod_order(&bytes);
-            Ok(ShufflerSecret {
-                secret: scalar,
-            })
+            Ok(ShufflerSecret { secret: scalar })
         })
         .collect()
 }

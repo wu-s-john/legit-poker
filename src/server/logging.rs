@@ -1,10 +1,6 @@
 use std::time::Instant;
 
-use axum::{
-    extract::Request,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, middleware::Next, response::Response};
 
 const LOG_TARGET: &str = "server::http";
 

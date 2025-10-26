@@ -639,10 +639,7 @@ where
         message,
     } = envelope;
 
-    let WithSignature {
-        value,
-        signature,
-    } = message;
+    let WithSignature { value, signature } = message;
 
     let shuffle_message = match value {
         AnyGameMessage::Shuffle(msg) => msg,

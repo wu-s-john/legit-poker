@@ -148,13 +148,16 @@ where
             .message_order
             .iter()
             .filter_map(|hash| {
-                ledger.message_snapshots.get(hash).and_then(|(msg, snapshot)| {
-                    if snapshot.sequence() <= max_sequence {
-                        Some(msg.clone())
-                    } else {
-                        None
-                    }
-                })
+                ledger
+                    .message_snapshots
+                    .get(hash)
+                    .and_then(|(msg, snapshot)| {
+                        if snapshot.sequence() <= max_sequence {
+                            Some(msg.clone())
+                        } else {
+                            None
+                        }
+                    })
             })
             .collect()
     }

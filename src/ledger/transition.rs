@@ -219,8 +219,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let shuffler_id = envelope.actor.shuffler_id;
         let shuffler = snapshot
             .shuffler_identity_by_id(shuffler_id)
@@ -297,8 +296,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let shuffler_id = envelope.actor.shuffler_id;
         let span = tracing::Span::current();
         span.record("game_id", &display(snapshot.game_id));
@@ -631,8 +629,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let _shuffler_id = envelope.actor.shuffler_id;
         let card_pos = envelope.message.value.card_in_deck_position;
         let card_ref = card_pos;
@@ -760,8 +757,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -874,8 +870,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -1001,8 +996,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -1128,8 +1122,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 
@@ -1187,8 +1180,7 @@ where
         mut snapshot: TableSnapshot<Self::Phase, C>,
         envelope: &EnvelopedMessage<C, Self>,
         hasher: &dyn LedgerHasher,
-    ) -> Result<AnyTableSnapshot<C>>
-    {
+    ) -> Result<AnyTableSnapshot<C>> {
         let seat = envelope.actor.seat_id;
         let actor_id = envelope.actor.player_id;
 

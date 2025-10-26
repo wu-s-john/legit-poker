@@ -47,8 +47,13 @@ impl CanonicalSerialize for PlayerBetAction {
 
     fn serialized_size(&self, compress: ark_serialize::Compress) -> usize {
         1 + match self {
-            PlayerBetAction::Fold | PlayerBetAction::Check | PlayerBetAction::Call | PlayerBetAction::AllIn => 0,
-            PlayerBetAction::BetTo { to } | PlayerBetAction::RaiseTo { to } => to.serialized_size(compress),
+            PlayerBetAction::Fold
+            | PlayerBetAction::Check
+            | PlayerBetAction::Call
+            | PlayerBetAction::AllIn => 0,
+            PlayerBetAction::BetTo { to } | PlayerBetAction::RaiseTo { to } => {
+                to.serialized_size(compress)
+            }
         }
     }
 }

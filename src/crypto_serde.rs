@@ -154,7 +154,10 @@ pub mod simple_map {
         D: Deserializer<'de>,
     {
         let entries = Vec::<Entry<K, V>>::deserialize(deserializer)?;
-        Ok(entries.into_iter().map(|entry| (entry.key, entry.value)).collect())
+        Ok(entries
+            .into_iter()
+            .map(|entry| (entry.key, entry.value))
+            .collect())
     }
 }
 
@@ -673,7 +676,12 @@ pub mod player_blinding_map {
         let entries = Vec::<Entry<C, V>>::deserialize(deserializer)?;
         Ok(entries
             .into_iter()
-            .map(|entry| ((entry.player_key, entry.seat, entry.hole_index), entry.value))
+            .map(|entry| {
+                (
+                    (entry.player_key, entry.seat, entry.hole_index),
+                    entry.value,
+                )
+            })
             .collect())
     }
 }
