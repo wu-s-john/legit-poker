@@ -246,7 +246,7 @@ mod tests {
     use zk_poker::ledger::types::{EventPhase, StateHash};
     use zk_poker::ledger::{actor::AnyActor, CanonicalKey};
     use zk_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
-    use zk_poker::signing::{Signable, WithSignature};
+    use zk_poker::signing::WithSignature;
 
     type Curve = G1Projective;
 

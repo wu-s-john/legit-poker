@@ -1,4 +1,4 @@
-use super::types::{CommenceGameParams, GameLobbyConfig, PlayerSeatSnapshot, ShufflerAssignment};
+use super::types::{GameLobbyConfig, PlayerSeatSnapshot, ShufflerAssignment};
 use crate::engine::nl::types::Chips;
 use crate::ledger::GameSetupError;
 use ark_ec::CurveGroup;
@@ -91,12 +91,6 @@ pub fn ensure_buy_in<C: CurveGroup>(
     Ok(())
 }
 
-pub fn validate_commence_params<C: CurveGroup>(
-    params: &CommenceGameParams<C>,
-) -> Result<(), GameSetupError> {
-    ensure_unique_seats(&params.players)?;
-    ensure_min_players(params.min_players, &params.players)?;
-    ensure_shuffler_sequence(&params.shufflers)?;
-    ensure_buy_in(params.buy_in, &params.players)?;
-    Ok(())
-}
+// NOTE: validate_commence_params has been removed.
+// Validation is now done inside LobbyService::commence_game()
+// after querying the stored game state.

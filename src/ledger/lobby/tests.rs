@@ -181,33 +181,12 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
     };
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config: hand_cfg,
-        players: vec![
-            PlayerSeatSnapshot::new(
-                host_player.clone(),
-                0,
-                config.buy_in,
-                keys.host.point,
-            ),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point),
-            PlayerSeatSnapshot::new(
-                third_player.clone(),
-                2,
-                config.buy_in,
-                extra_keys.player.point,
-            ),
-        ],
-        shufflers: vec![ShufflerAssignment::new(
-            registered.shuffler.clone(),
-            registered.assigned_sequence,
-            keys.shuffler.point,
-            keys.shuffler.point,
-        )],
+        button_seat: hand_cfg.button,
+        small_blind_seat: hand_cfg.small_blind_seat,
+        big_blind_seat: hand_cfg.big_blind_seat,
         deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: config.min_players_to_start,
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -296,39 +275,12 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
     .shuffler;
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config: HandConfig {
-            stakes: config.stakes.clone(),
-            button: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
-            check_raise_allowed: true,
-        },
-        players: vec![
-            PlayerSeatSnapshot::new(
-                host_player.clone(),
-                0,
-                config.buy_in,
-                keys.host.point.clone(),
-            ),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
-            PlayerSeatSnapshot::new(
-                third_player.clone(),
-                1,
-                config.buy_in,
-                extra_keys.player.point.clone(),
-            ),
-        ],
-        shufflers: vec![ShufflerAssignment::new(
-            shuffler,
-            0,
-            keys.shuffler.point,
-            keys.shuffler.point,
-        )],
+        button_seat: 0,
+        small_blind_seat: 0,
+        big_blind_seat: 1,
         deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: config.min_players_to_start,
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -375,33 +327,12 @@ async fn commence_game_requires_min_players() -> Result<()> {
     .shuffler;
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config: HandConfig {
-            stakes: config.stakes.clone(),
-            button: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
-            check_raise_allowed: true,
-        },
-        players: vec![
-            PlayerSeatSnapshot::new(
-                host_player.clone(),
-                0,
-                config.buy_in,
-                keys.host.point.clone(),
-            ),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
-        ],
-        shufflers: vec![ShufflerAssignment::new(
-            shuffler,
-            0,
-            keys.shuffler.point,
-            keys.shuffler.point,
-        )],
+        button_seat: 0,
+        small_blind_seat: 0,
+        big_blind_seat: 1,
         deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: config.min_players_to_start,
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -462,44 +393,12 @@ async fn commence_game_requires_buy_in() -> Result<()> {
     .shuffler;
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config: HandConfig {
-            stakes: config.stakes.clone(),
-            button: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
-            check_raise_allowed: true,
-        },
-        players: vec![
-            PlayerSeatSnapshot::new(
-                host_player.clone(),
-                0,
-                config.buy_in,
-                keys.host.point.clone(),
-            ),
-            PlayerSeatSnapshot::new(
-                joiner.clone(),
-                1,
-                config.buy_in - 1,
-                keys.player.point.clone(),
-            ),
-            PlayerSeatSnapshot::new(
-                third_player.clone(),
-                2,
-                config.buy_in,
-                extra_keys.player.point.clone(),
-            ),
-        ],
-        shufflers: vec![ShufflerAssignment::new(
-            shuffler,
-            0,
-            keys.shuffler.point,
-            keys.shuffler.point,
-        )],
+        button_seat: 0,
+        small_blind_seat: 0,
+        big_blind_seat: 1,
         deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: config.min_players_to_start,
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -563,39 +462,12 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
     let invalid_player_key = keys.player.point.clone();
 
     let params = CommenceGameParams {
-        game: metadata.record.clone(),
+        game_id: metadata.record.state.id,
         hand_no: 1,
-        hand_config: HandConfig {
-            stakes: config.stakes.clone(),
-            button: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
-            check_raise_allowed: true,
-        },
-        players: vec![
-            PlayerSeatSnapshot::new(
-                host_player.clone(),
-                0,
-                config.buy_in,
-                keys.host.point.clone(),
-            ),
-            PlayerSeatSnapshot::new(joiner.clone(), 1, config.buy_in, keys.player.point.clone()),
-            PlayerSeatSnapshot::new(
-                third_player.clone(),
-                1,
-                config.buy_in,
-                invalid_player_key.clone(),
-            ),
-        ],
-        shufflers: vec![ShufflerAssignment::new(
-            registered.shuffler.clone(),
-            registered.assigned_sequence,
-            keys.shuffler.point,
-            keys.shuffler.point,
-        )],
+        button_seat: 0,
+        small_blind_seat: 0,
+        big_blind_seat: 1,
         deck_commitment: None,
-        buy_in: config.buy_in,
-        min_players: config.min_players_to_start,
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -790,7 +662,7 @@ async fn register_shuffler_curve(
 async fn commence_game_curve(
     lobby: &Arc<TestLobby>,
     operator: &LedgerOperator<TestCurve>,
-    params: CommenceGameParams<TestCurve>,
+    params: CommenceGameParams,
 ) -> Result<CommenceGameOutcome<TestCurve>, GameSetupError> {
     let outcome = lobby.commence_game(&operator.state().hasher(), params).await?;
 

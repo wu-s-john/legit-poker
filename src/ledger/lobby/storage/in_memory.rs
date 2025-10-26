@@ -394,6 +394,92 @@ where
         Ok(())
     }
 
+    async fn load_game(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<GameId>>, GameSetupError> {
+        use crate::ledger::lobby::types::GameRecord;
+        use crate::ledger::typestate::Saved;
+
+        let inner = self.inner.read();
+        let stored_game = inner
+            .games
+            .get(&game_id)
+            .ok_or_else(|| GameSetupError::validation(format!("game {} not found", game_id)))?;
+
+        Ok(GameRecord {
+            name: stored_game.config.name.clone(),
+            currency: stored_game.config.currency.clone(),
+            stakes: stored_game.config.stakes.clone(),
+            max_players: stored_game.config.max_players,
+            rake_bps: stored_game.config.rake_bps,
+            host: stored_game.host_player_id,
+            state: Saved { id: game_id },
+        })
+    }
+
+    async fn load_game_config(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<crate::ledger::lobby::types::GameLobbyConfig, GameSetupError> {
+        let inner = self.inner.read();
+        let stored_game = inner
+            .games
+            .get(&game_id)
+            .ok_or_else(|| GameSetupError::validation(format!("game {} not found", game_id)))?;
+
+        Ok(stored_game.config.clone())
+    }
+
+    async fn load_game_players(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<Vec<(crate::engine::nl::types::PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
+        let inner = self.inner.read();
+
+        let mut result = Vec::new();
+        for game_player in &inner.game_players {
+            if game_player.game_id == game_id {
+                let player = inner
+                    .players_by_id
+                    .get(&game_player.player_id)
+                    .ok_or_else(|| {
+                        GameSetupError::validation(format!("player {} not found", game_player.player_id))
+                    })?;
+                result.push((
+                    game_player.player_id,
+                    game_player.seat_preference,
+                    player.public_key.clone(),
+                ));
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn load_game_shufflers(
+        &mut self,
+        game_id: GameId,
+    ) -> Result<Vec<(crate::ledger::types::ShufflerId, u16, C)>, GameSetupError> {
+        let inner = self.inner.read();
+
+        let mut result = Vec::new();
+        for game_shuffler in &inner.game_shufflers {
+            if game_shuffler.game_id == game_id {
+                result.push((
+                    game_shuffler.shuffler_id,
+                    game_shuffler.sequence,
+                    game_shuffler.public_key.clone(),
+                ));
+            }
+        }
+
+        // Sort by sequence
+        result.sort_by_key(|(_, seq, _)| *seq);
+
+        Ok(result)
+    }
+
     async fn rollback(mut self: Box<Self>) {
         self.committed = true;
     }
