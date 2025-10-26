@@ -91,6 +91,29 @@ pub fn ensure_buy_in<C: CurveGroup>(
     Ok(())
 }
 
+pub fn validate_blind_positions(
+    button: u8,
+    small_blind_seat: u8,
+    big_blind_seat: u8,
+) -> Result<(), GameSetupError> {
+    if button == small_blind_seat {
+        return Err(GameSetupError::validation(
+            "button and small blind cannot be the same seat",
+        ));
+    }
+    if button == big_blind_seat {
+        return Err(GameSetupError::validation(
+            "button and big blind cannot be the same seat",
+        ));
+    }
+    if small_blind_seat == big_blind_seat {
+        return Err(GameSetupError::validation(
+            "small blind and big blind cannot be the same seat",
+        ));
+    }
+    Ok(())
+}
+
 // NOTE: validate_commence_params has been removed.
 // Validation is now done inside LobbyService::commence_game()
 // after querying the stored game state.

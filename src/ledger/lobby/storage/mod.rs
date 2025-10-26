@@ -160,6 +160,7 @@ pub struct NewHandPlayer {
     pub hand_id: HandId,
     pub player_id: PlayerId,
     pub seat: SeatId,
+    pub starting_stack: crate::engine::nl::types::Chips,
 }
 
 #[derive(Clone, Debug)]

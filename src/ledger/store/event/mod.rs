@@ -528,9 +528,10 @@ mod tests {
             game_id: metadata.record.state.id,
             hand_no: 0,
             button_seat: 0,
-            small_blind_seat: 0,
-            big_blind_seat: 1,
+            small_blind_seat: 1,
+            big_blind_seat: 2,
             deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
         };
 
         let hand = lobby

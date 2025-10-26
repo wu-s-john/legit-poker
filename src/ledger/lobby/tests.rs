@@ -175,8 +175,8 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
     let hand_cfg = HandConfig {
         stakes: config.stakes.clone(),
         button: 0,
-        small_blind_seat: 0,
-        big_blind_seat: 1,
+        small_blind_seat: 1,
+        big_blind_seat: 2,
         check_raise_allowed: true,
     };
 
@@ -187,6 +187,7 @@ async fn commence_game_creates_hand_artifacts() -> Result<()> {
         small_blind_seat: hand_cfg.small_blind_seat,
         big_blind_seat: hand_cfg.big_blind_seat,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -281,6 +282,7 @@ async fn commence_game_rejects_duplicate_seats() -> Result<()> {
         small_blind_seat: 0,
         big_blind_seat: 1,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -333,6 +335,7 @@ async fn commence_game_requires_min_players() -> Result<()> {
         small_blind_seat: 0,
         big_blind_seat: 1,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -399,6 +402,7 @@ async fn commence_game_requires_buy_in() -> Result<()> {
         small_blind_seat: 0,
         big_blind_seat: 1,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());
@@ -468,6 +472,7 @@ async fn commence_game_rejects_invalid_player_key_bytes() -> Result<()> {
         small_blind_seat: 0,
         big_blind_seat: 1,
         deck_commitment: None,
+        player_stacks: None, // First hand - use buy-in
     };
     let Some(operator) = setup_operator(&conn).await else {
         return Ok(());

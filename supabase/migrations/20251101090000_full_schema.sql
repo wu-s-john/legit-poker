@@ -77,8 +77,17 @@ CREATE TABLE public.games (
     big_blind BIGINT NOT NULL CHECK (big_blind >= 0),
     ante BIGINT NOT NULL DEFAULT 0 CHECK (ante >= 0),
     rake_bps SMALLINT NOT NULL DEFAULT 0,
-    status public.game_status NOT NULL DEFAULT 'onboarding'
+    status public.game_status NOT NULL DEFAULT 'onboarding',
+    buy_in BIGINT NOT NULL DEFAULT 10000 CHECK (buy_in > 0),
+    min_players_to_start SMALLINT NOT NULL DEFAULT 2 CHECK (min_players_to_start >= 2),
+    check_raise_allowed BOOLEAN NOT NULL DEFAULT true,
+    action_time_limit_secs INTEGER NOT NULL DEFAULT 30 CHECK (action_time_limit_secs > 0)
 );
+
+COMMENT ON COLUMN public.games.buy_in IS 'Default buy-in amount for hands in this game';
+COMMENT ON COLUMN public.games.min_players_to_start IS 'Minimum players required to commence a hand';
+COMMENT ON COLUMN public.games.check_raise_allowed IS 'Whether check-raise is allowed in this game';
+COMMENT ON COLUMN public.games.action_time_limit_secs IS 'Time limit for player actions in seconds';
 
 CREATE TABLE public.game_players (
     game_id BIGINT NOT NULL REFERENCES public.games(id) ON DELETE CASCADE,
@@ -163,6 +172,7 @@ CREATE TABLE public.hand_player (
     player_id BIGINT NOT NULL REFERENCES public.players(id),
     seat SMALLINT NOT NULL CHECK (seat >= 0),
     nonce BIGINT NOT NULL,
+    starting_stack BIGINT NOT NULL DEFAULT 10000 CHECK (starting_stack > 0),
     joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (hand_id, seat),
     UNIQUE (hand_id, player_id),
@@ -170,6 +180,8 @@ CREATE TABLE public.hand_player (
         REFERENCES public.game_players(game_id, player_id)
         ON DELETE CASCADE
 );
+
+COMMENT ON COLUMN public.hand_player.starting_stack IS 'Stack size at the start of this hand';
 
 CREATE INDEX idx_hand_player_game_player
     ON public.hand_player(game_id, player_id);

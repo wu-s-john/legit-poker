@@ -3,6 +3,10 @@ name = "zk_poker"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "legit_poker"
+path = "src/lib.rs"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
