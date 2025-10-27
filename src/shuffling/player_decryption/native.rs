@@ -190,8 +190,11 @@ impl<C: CurveGroup> CardValueMap<C> {
         let mut value_to_element = Vec::with_capacity(52);
 
         // Pre-compute g^i for all valid card values
+        // IMPORTANT: Normalize to affine form for consistent HashMap lookups
         for i in 0u8..52 {
-            let element = generator * C::ScalarField::from(i);
+            let element = (generator * C::ScalarField::from(i as u64))
+                .into_affine()
+                .into_group();
             element_to_value.insert(element, i);
             value_to_element.push(element);
         }
@@ -205,7 +208,9 @@ impl<C: CurveGroup> CardValueMap<C> {
     /// Lookup the card value for a given group element
     /// Returns None if the element doesn't correspond to a valid card
     fn lookup(&self, element: &C) -> Option<u8> {
-        self.element_to_value.get(element).copied()
+        // Normalize to affine form for consistent comparison
+        let normalized = element.into_affine().into_group();
+        self.element_to_value.get(&normalized).copied()
     }
 }
 
@@ -259,6 +264,14 @@ where
     C::Affine: Absorb,
     C: CurveAbsorb<C::BaseField>,
 {
+    tracing::info!(
+        target: LOG_TARGET,
+        initial_c1 = ?initial_ciphertext.c1,
+        initial_c2 = ?initial_ciphertext.c2,
+        num_contributions = blinding_contributions.len(),
+        "combine_blinding_contributions_for_player called"
+    );
+
     // First verify all blinding contributions using try_for_each for early abort
     blinding_contributions
         .iter()
@@ -275,25 +288,34 @@ where
     // Combine all blinding contributions using separate folds for clarity
 
     // Accumulate blinded base: g^r + Σg^δ_j
+    // Normalize to affine coordinates for consistent point representation
     let blinded_base = blinding_contributions
         .iter()
         .fold(initial_ciphertext.c1, |acc, contribution| {
             acc + contribution.blinding_base_contribution
-        });
+        })
+        .into_affine()
+        .into_group();
 
     // Accumulate blinded message with player key: pk^r * g^m_i + Σ(pk·y_u)^δ_j
+    // Normalize to affine coordinates for consistent point representation
     let blinded_message_with_player_key = blinding_contributions
         .iter()
         .fold(initial_ciphertext.c2, |acc, contribution| {
             acc + contribution.blinding_combined_contribution
-        });
+        })
+        .into_affine()
+        .into_group();
 
     // Accumulate player unblinding helper: Σg^δ_j
+    // Normalize to affine coordinates for consistent point representation
     let player_unblinding_helper = blinding_contributions
         .iter()
         .fold(C::zero(), |acc, contribution| {
             acc + contribution.blinding_base_contribution
-        });
+        })
+        .into_affine()
+        .into_group();
 
     // Collect all proofs for the transcript
     let proofs: Vec<_> = blinding_contributions
@@ -436,7 +458,7 @@ where
     C: CurveGroup + 'static,
     C::ScalarField: PrimeField,
 {
-    tracing::debug!(
+    tracing::info!(
         target: LOG_TARGET,
         blinded_base = ?player_ciphertext.blinded_base,
         blinded_message = ?player_ciphertext.blinded_message_with_player_key,
@@ -448,7 +470,7 @@ where
     // Step 1: Compute player-specific unblinding using the helper element
     // Only the player can do this as it requires knowing s_u
     let player_unblinding = player_ciphertext.player_unblinding_helper * player_secret;
-    tracing::debug!(
+    tracing::info!(
         target: LOG_TARGET,
         ?player_unblinding,
         "Player unblinding (helper * secret)"
@@ -457,7 +479,7 @@ where
     // Step 2: Combine committee unblinding shares
     // This requires ALL n committee members (n-of-n scheme)
     let combined_unblinding = combine_unblinding_shares(&unblinding_shares, expected_members)?;
-    tracing::debug!(
+    tracing::info!(
         target: LOG_TARGET,
         ?combined_unblinding,
         expected_members,
@@ -469,23 +491,53 @@ where
     // g^m = blinded_message / (combined_unblinding · player_unblinding)
     let recovered_element =
         player_ciphertext.blinded_message_with_player_key - combined_unblinding - player_unblinding;
-    tracing::debug!(
+
+    // Normalize to affine form for consistent comparison
+    let recovered_element = recovered_element.into_affine().into_group();
+
+    tracing::info!(
         target: LOG_TARGET,
         ?recovered_element,
-        "Recovered element"
+        "Recovered element (normalized, should be g^card_index)"
     );
+
+    // Debug: Also compute what we'd expect for various card values
+    let generator = C::generator();
+    tracing::info!(
+        target: LOG_TARGET,
+        ?generator,
+        "Generator point"
+    );
+
+    // Check specific card values around position 6
+    for test_card in [0u8, 1, 6, 7, 10, 20, 30, 40, 50, 51] {
+        let expected_for_card = (generator * C::ScalarField::from(test_card as u64))
+            .into_affine()
+            .into_group();
+        tracing::info!(
+            target: LOG_TARGET,
+            card_index = test_card,
+            ?expected_for_card,
+            matches = (recovered_element == expected_for_card),
+            "Expected value for card index {}", test_card
+        );
+    }
 
     // Step 4: Map the group element back to a card value using pre-computed table
     let card_map = get_card_value_map::<C>();
 
-    tracing::debug!(target: LOG_TARGET, "Looking up in card map...");
-    // Check what the expected values should be for our test indices
+    tracing::debug!(target: LOG_TARGET, ?recovered_element, "Looking up in card map...");
+
+    // Try linear search to find the match
     let generator = C::generator();
-    for i in 48u8..52 {
-        let expected = generator * C::ScalarField::from(i);
-        tracing::trace!(target: LOG_TARGET, "g^{} = {:?}", i, expected);
+    for i in 0u8..52 {
+        let expected = (generator * C::ScalarField::from(i as u64))
+            .into_affine()
+            .into_group();
+        tracing::trace!(target: LOG_TARGET, "g^{} (card {}) = {:?}", i, i, expected);
         if expected == recovered_element {
-            tracing::debug!(target: LOG_TARGET, "Found match at index {}", i);
+            tracing::info!(target: LOG_TARGET, "Found match via linear search at card index {}", i);
+            return Ok(i);
         }
     }
 
@@ -496,7 +548,8 @@ where
         }
         None => {
             warn!(target: LOG_TARGET,
-                "Failed to find card value for recovered element"
+                ?recovered_element,
+                "Failed to find card value for recovered element via both linear search and hashmap"
             );
             Err("Recovered element does not correspond to a valid card value")
         }
