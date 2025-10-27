@@ -28,16 +28,17 @@ export function FlyingCard({
   const [isAnimating, setIsAnimating] = useState(false);
 
   useEffect(() => {
-    if (!cardRef.current) return;
-
     const timer = setTimeout(() => {
+      // Check if ref is still valid when timer fires
+      if (!cardRef.current) return;
+
       setIsAnimating(true);
 
       const glowColor = isForYou
         ? 'rgba(251, 191, 36, 0.6)'
         : 'rgba(0, 217, 255, 0.6)';
 
-      const animation = cardRef.current!.animate(
+      const animation = cardRef.current.animate(
         [
           {
             left: `${startPosition.x}px`,
