@@ -222,8 +222,13 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         return state;
       }
 
+      // Mark card as arrived (animation complete)
+      const updatedCards = new Map(state.cards);
+      updatedCards.set(key, { ...cardState, hasArrived: true });
+
       return {
         ...state,
+        cards: updatedCards,
         statusMessage:
           action.seat === state.viewerSeat
             ? `Card ${action.cardIndex + 1} dealt to you`
