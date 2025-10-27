@@ -130,6 +130,13 @@ export function EmbeddedDemoScene({
           // Check for gaps in protocol messages
           const result = gapDetectorRef.current.detectGaps(event);
 
+          console.log('[EmbeddedDemoScene] Gap detection result:', {
+            seqId: event.snapshot_sequence_id,
+            hasGap: result.hasGap,
+            missingSeqIds: result.missingSeqIds,
+            readyEventsCount: result.readyEvents.length,
+          });
+
           if (result.hasGap) {
             console.warn('Gap detected, fetching missing events:', result.missingSeqIds);
             void handleGapRecovery(result.missingSeqIds);
@@ -137,6 +144,7 @@ export function EmbeddedDemoScene({
 
           // Process all ready events (they're already full game_event objects)
           result.readyEvents.forEach((gameEvent) => {
+            console.log('[EmbeddedDemoScene] Processing ready event:', gameEvent.snapshot_sequence_id);
             eventHandlerRef.current?.handleDemoEvent(gameEvent);
           });
         } else {
@@ -383,7 +391,12 @@ export function EmbeddedDemoScene({
       </PokerTable>
 
       {/* Phase Overlays */}
-      <ShuffleOverlay progress={shuffleProgress} isVisible={state.currentPhase === 'shuffling'} />
+      <ShuffleOverlay
+        progress={shuffleProgress}
+        isVisible={state.currentPhase === 'shuffling'}
+        currentShuffler={state.currentShuffleStep > 0 ? state.currentShuffleStep - 1 : undefined}
+        totalShufflers={state.totalShuffleSteps > 0 ? state.totalShuffleSteps : undefined}
+      />
 
       <DealingOverlay
         isVisible={state.currentPhase === 'dealing'}

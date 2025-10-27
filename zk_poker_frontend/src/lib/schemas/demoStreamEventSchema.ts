@@ -29,6 +29,7 @@ export const demoStreamEventSchema = z.discriminatedUnion('type', [
     game_id: gameIdSchema,
     hand_id: handIdSchema,
     player_count: z.number().int().min(1),
+    shuffler_count: z.number().int().min(1),
     snapshot: tableSnapshotShufflingSchema,
   }),
   z.object({

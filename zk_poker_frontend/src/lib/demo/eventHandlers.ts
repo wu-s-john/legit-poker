@@ -94,7 +94,7 @@ export class DemoEventHandler {
     event: Extract<DemoStreamEvent, { type: "hand_created" }>,
   ): void {
     this.shuffleEventCount = 0;
-    this.totalShuffleEvents = 0;
+    this.totalShuffleEvents = event.shuffler_count;
     this.dealingStarted = false;
 
     // Store player count from event
@@ -121,6 +121,13 @@ export class DemoEventHandler {
 
     this.dispatch({ type: "START_SHUFFLE" });
     this.callbacks.onPhaseChange?.("shuffling");
+
+    // Initialize shuffle progress with total shuffler count
+    this.dispatch({
+      type: "SHUFFLE_PROGRESS",
+      currentStep: 0,
+      totalSteps: event.shuffler_count,
+    });
 
     this.dispatch({
       type: "UPDATE_STATUS",

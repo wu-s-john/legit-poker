@@ -31,6 +31,12 @@ export class GapDetector {
     const seqId = event.snapshot_sequence_id;
 
     // Note: snapshot_sequence_id is now at event top-level (flattened from Rust)
+
+    // Initialize on first event
+    if (this.expectedSeqId === 0 && this.pendingEvents.size === 0) {
+      this.expectedSeqId = seqId;
+    }
+
     // Store event in pending buffer
     this.pendingEvents.set(seqId, event);
 

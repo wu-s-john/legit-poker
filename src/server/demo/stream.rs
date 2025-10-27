@@ -132,6 +132,7 @@ where
     let initial_snapshot = outcome.initial_snapshot.clone();
     let hand_id: HandId = outcome.hand.state.id;
     let player_count = player_snapshots.len();
+    let shuffler_count = descriptors.len();
 
     coordinator
         .state()
@@ -142,12 +143,13 @@ where
             game_id,
             hand_id,
             player_count,
+            shuffler_count,
             snapshot: initial_snapshot,
         })
         .await
         .map_err(|_| ApiError::internal("hand event channel closed"))?;
 
-    let expected_shufflers = descriptors.len();
+    let expected_shufflers = shuffler_count;
 
     // IMPORTANT: Get staging receiver BEFORE attaching hand to avoid missing updates
     // Broadcast channels drop messages if there are no active receivers
