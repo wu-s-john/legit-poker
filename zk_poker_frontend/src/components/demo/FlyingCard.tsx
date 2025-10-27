@@ -1,11 +1,14 @@
 /**
  * Flying Card - Animated card that flies from deck to player position
+ * Now stays permanent and reveals when cardState updates
  */
 
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
 import type { Position } from '~/lib/demo/positioning';
+import type { Card as CardType } from '~/types/poker';
+import { Card } from './Card';
 
 interface FlyingCardProps {
   startPosition: Position;
@@ -14,6 +17,11 @@ interface FlyingCardProps {
   duration?: number;
   delay?: number;
   onComplete?: () => void;
+  // New: card state for revealing
+  cardState?: {
+    revealed: boolean;
+    displayCard?: CardType;
+  };
 }
 
 export function FlyingCard({
@@ -23,21 +31,24 @@ export function FlyingCard({
   duration = 400,
   delay = 0,
   onComplete,
+  cardState,
 }: FlyingCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [hasLanded, setHasLanded] = useState(false);
 
   useEffect(() => {
-    if (!cardRef.current) return;
-
     const timer = setTimeout(() => {
+      // Check if ref is still valid when timer fires
+      if (!cardRef.current) return;
+
       setIsAnimating(true);
 
       const glowColor = isForYou
         ? 'rgba(251, 191, 36, 0.6)'
         : 'rgba(0, 217, 255, 0.6)';
 
-      const animation = cardRef.current!.animate(
+      const animation = cardRef.current.animate(
         [
           {
             left: `${startPosition.x}px`,
@@ -70,6 +81,7 @@ export function FlyingCard({
 
       animation.onfinish = () => {
         setIsAnimating(false);
+        setHasLanded(true);
         onComplete?.();
       };
     }, delay);
@@ -77,6 +89,29 @@ export function FlyingCard({
     return () => clearTimeout(timer);
   }, [startPosition, endPosition, isForYou, duration, delay, onComplete]);
 
+  // After landing, use Card component for revealing
+  if (hasLanded && cardState) {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: `${endPosition.x}px`,
+          top: `${endPosition.y}px`,
+          transform: 'translate(-50%, -50%)',
+          pointerEvents: 'none',
+          zIndex: 10,
+        }}
+      >
+        <Card
+          card={cardState.displayCard}
+          revealed={cardState.revealed}
+          size={isForYou ? 'medium' : 'small'}
+        />
+      </div>
+    );
+  }
+
+  // During animation: show card back emoji
   return (
     <div
       ref={cardRef}

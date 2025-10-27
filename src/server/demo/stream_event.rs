@@ -33,6 +33,7 @@ where
         game_id: GameId,
         hand_id: HandId,
         player_count: usize,
+        shuffler_count: usize,
         snapshot: TableAtShuffling<C>,
     },
 

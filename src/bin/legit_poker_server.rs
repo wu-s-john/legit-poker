@@ -10,8 +10,8 @@ use tracing::warn;
 use tracing_subscriber::{fmt, EnvFilter};
 use url::Url;
 
-use zk_poker::game::coordinator::{load_shuffler_secrets_from_env, ShufflerSecret};
-use zk_poker::server::{run_server as run_http_server, ServerConfig};
+use legit_poker::game::coordinator::{load_shuffler_secrets_from_env, ShufflerSecret};
+use legit_poker::server::{run_server as run_http_server, ServerConfig};
 
 use serde_json::Value as JsonValue;
 

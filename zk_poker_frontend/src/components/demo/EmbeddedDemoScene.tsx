@@ -78,6 +78,9 @@ export function EmbeddedDemoScene({
 
   // Initialize event handler
   useEffect(() => {
+    // Guard: prevent recreation on Strict Mode remounts
+    if (eventHandlerRef.current) return;
+
     eventHandlerRef.current = new DemoEventHandler(dispatch, {
       onShuffleProgress: (_current, _total) => {
         // Already handled in reducer
@@ -92,7 +95,6 @@ export function EmbeddedDemoScene({
         console.log('Phase changed:', phase);
       },
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Conditional initialization - only when isActive becomes true
@@ -130,6 +132,13 @@ export function EmbeddedDemoScene({
           // Check for gaps in protocol messages
           const result = gapDetectorRef.current.detectGaps(event);
 
+          console.log('[EmbeddedDemoScene] Gap detection result:', {
+            seqId: event.snapshot_sequence_id,
+            hasGap: result.hasGap,
+            missingSeqIds: result.missingSeqIds,
+            readyEventsCount: result.readyEvents.length,
+          });
+
           if (result.hasGap) {
             console.warn('Gap detected, fetching missing events:', result.missingSeqIds);
             void handleGapRecovery(result.missingSeqIds);
@@ -137,6 +146,7 @@ export function EmbeddedDemoScene({
 
           // Process all ready events (they're already full game_event objects)
           result.readyEvents.forEach((gameEvent) => {
+            console.log('[EmbeddedDemoScene] Processing ready event:', gameEvent.snapshot_sequence_id);
             eventHandlerRef.current?.handleDemoEvent(gameEvent);
           });
         } else {
@@ -205,10 +215,7 @@ export function EmbeddedDemoScene({
 
     setFlyingCards((prev) => [...prev, animation]);
 
-    // Remove animation after completion
-    setTimeout(() => {
-      setFlyingCards((prev) => prev.filter((a) => a.id !== animation.id));
-    }, 600);
+    // FlyingCard now stays permanent after animation completes
   }
 
   // Handle new hand request
@@ -240,7 +247,7 @@ export function EmbeddedDemoScene({
   // Calculate progress
   const shuffleProgress = getShuffleProgress(state);
   const totalCards = state.playerCount * 2;
-  const cardsDealt = Array.from(state.cards.values()).filter((c) => c.revealed).length;
+  const cardsDealt = Array.from(state.cards.values()).filter((c) => c.hasArrived).length;
 
   // Container class names
   const containerClasses = ['demo-scene', 'embedded'].filter(Boolean).join(' ');
@@ -321,7 +328,6 @@ export function EmbeddedDemoScene({
 
         {/* Players */}
         {playerPositions.map((playerPos) => {
-          const playerCards = getCardsForSeat(state, playerPos.seat);
           const isViewer = playerPos.seat === state.viewerSeat;
 
           return (
@@ -333,57 +339,47 @@ export function EmbeddedDemoScene({
               name={`Player ${playerPos.seat + 1}`}
               isActive={false}
             >
-              {/* Show cards for viewer */}
-              {isViewer && playerCards.length > 0 && (
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '12px',
-                    marginTop: '12px',
-                    justifyContent: 'center',
-                  }}
-                >
-                  {playerCards.map((cardState) => (
-                    <div key={cardState.position}>
-                      <Card
-                        card={cardState.displayCard ?? { rank: 'A', suit: 'spades' }}
-                        revealed={cardState.revealed}
-                        size="medium"
-                      />
-                      {cardState.revealed && cardState.displayCard && (
-                        <StatusText text="Revealed!" type="revealed" />
-                      )}
-                      {!cardState.revealed && cardState.blindingShares.size > 0 && (
-                        <StatusText
-                          text={`Collecting shares... ${cardState.blindingShares.size + cardState.partialUnblindingShares.size}/${cardState.requiredSharesPerType * 2}`}
-                          type="collecting"
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* Cards are now shown via FlyingCard components */}
             </PlayerSeat>
           );
         })}
 
         {/* Flying card animations */}
-        {flyingCards.map((anim) => (
-          <FlyingCard
-            key={anim.id}
-            startPosition={anim.startPosition}
-            endPosition={anim.endPosition}
-            isForYou={anim.seat === state.viewerSeat}
-            duration={400}
-            onComplete={() => {
-              // Animation complete
-            }}
-          />
-        ))}
+        {flyingCards.map((anim) => {
+          // Get card state for this flying card
+          const playerCards = getCardsForSeat(state, anim.seat);
+          const cardState = playerCards.find((c) => c.position === anim.cardIndex);
+
+          return (
+            <FlyingCard
+              key={anim.id}
+              startPosition={anim.startPosition}
+              endPosition={anim.endPosition}
+              isForYou={anim.seat === state.viewerSeat}
+              duration={400}
+              cardState={
+                cardState
+                  ? {
+                      revealed: cardState.revealed,
+                      displayCard: cardState.displayCard,
+                    }
+                  : undefined
+              }
+              onComplete={() => {
+                // Animation complete
+              }}
+            />
+          );
+        })}
       </PokerTable>
 
       {/* Phase Overlays */}
-      <ShuffleOverlay progress={shuffleProgress} isVisible={state.currentPhase === 'shuffling'} />
+      <ShuffleOverlay
+        progress={shuffleProgress}
+        isVisible={state.currentPhase === 'shuffling'}
+        currentShuffler={state.currentShuffleStep > 0 ? state.currentShuffleStep - 1 : undefined}
+        totalShufflers={state.totalShuffleSteps > 0 ? state.totalShuffleSteps : undefined}
+      />
 
       <DealingOverlay
         isVisible={state.currentPhase === 'dealing'}

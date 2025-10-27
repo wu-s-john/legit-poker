@@ -113,14 +113,17 @@ export function CompactLogsPanel({
             </div>
           </div>
         ) : (
-          messages.map((msg) => (
-            <CompactMessageRow
-              key={`${msg.envelope.hand_id}-${msg.snapshot_sequence_id}`}
-              message={msg}
-              viewerPublicKey="placeholder_viewer_key"
-              playerMapping={playerMapping}
-            />
-          ))
+          messages
+            .slice()
+            .reverse()
+            .map((msg) => (
+              <CompactMessageRow
+                key={`${msg.envelope.hand_id}-${msg.snapshot_sequence_id}`}
+                message={msg}
+                viewerPublicKey="placeholder_viewer_key"
+                playerMapping={playerMapping}
+              />
+            ))
         )}
       </div>
     </div>
