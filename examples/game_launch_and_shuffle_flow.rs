@@ -26,19 +26,24 @@ use legit_poker::ledger::lobby::service::{LobbyService, LobbyServiceFactory};
 use legit_poker::ledger::lobby::types::{
     CommenceGameParams, GameLobbyConfig, PlayerRecord, ShufflerRecord, ShufflerRegistrationConfig,
 };
-use legit_poker::ledger::messages::AnyMessageEnvelope;
-use legit_poker::ledger::snapshot::AnyTableSnapshot;
+use legit_poker::ledger::messages::{
+    AnyMessageEnvelope, GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage,
+};
+use legit_poker::ledger::snapshot::{AnyTableSnapshot, CardDestination, TableAtDealing};
 use legit_poker::ledger::transition::apply_transition;
 use legit_poker::ledger::types::ShufflerId;
 use legit_poker::ledger::typestate::MaybeSaved;
 use legit_poker::ledger::CanonicalKey;
-use legit_poker::shuffler::{ShufflerEngine, ShufflerHandState};
+use legit_poker::showdown::decode_card;
+use legit_poker::shuffler::{ShufflerApi, ShufflerEngine, ShufflerHandState};
+use legit_poker::shuffling::recover_card_value;
 
 // Type aliases for clarity
 type Schnorr254 = Schnorr<Curve, Sha256>;
 
-const NUM_SHUFFLERS: usize = 7;
-const NUM_PLAYERS: usize = 9;
+const NUM_SHUFFLERS: usize = 5;
+const NUM_PLAYERS: usize = 7;
+const LOG_TARGET: &str = "example::game_launch_and_shuffle_flow";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -48,40 +53,46 @@ async fn main() -> Result<()> {
         .with_target(true)
         .init();
 
-    println!("🎰 Starting Complete Game Launch and Shuffle Flow Example");
-    println!("================================================\n");
+    tracing::info!(target: LOG_TARGET, "🎰 Starting Complete Game Launch and Shuffle Flow Example");
+    tracing::info!(target: LOG_TARGET, "================================================");
 
     // Step 1: Initialize RNG and hasher
-    println!("📊 Step 1: Initializing cryptographic components");
+    tracing::info!(target: LOG_TARGET, "📊 Step 1: Initializing cryptographic components");
     let mut rng = StdRng::seed_from_u64(42);
     let hasher = Arc::new(LedgerHasherSha256);
 
     // Step 2: Set up the lobby service
-    println!("🏛️  Step 2: Setting up lobby service with in-memory storage");
+    tracing::info!(target: LOG_TARGET, "🏛️  Step 2: Setting up lobby service with in-memory storage");
     let lobby_service = LobbyServiceFactory::<Curve>::in_memory();
 
     // Step 3: Generate shuffler identities and keys
-    println!(
-        "🔀 Step 3: Generating {} shuffler identities",
-        NUM_SHUFFLERS
+    tracing::info!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        "🔀 Step 3: Generating shuffler identities"
     );
     let shuffler_engines = generate_shuffler_engines(&mut rng)?;
     let shuffler_records = create_shuffler_records(&shuffler_engines);
 
     // Compute aggregated public key for all shufflers
     let _aggregated_public_key = compute_aggregated_public_key(&shuffler_engines);
-    println!(
-        "   ✅ Aggregated public key computed from {} shufflers",
-        NUM_SHUFFLERS
+    tracing::debug!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        "✅ Aggregated public key computed from shufflers"
     );
 
     // Step 4: Generate player identities and keys
-    println!("👥 Step 4: Generating {} player identities", NUM_PLAYERS);
+    tracing::info!(
+        target: LOG_TARGET,
+        num_players = NUM_PLAYERS,
+        "👥 Step 4: Generating player identities"
+    );
     let player_keys = generate_player_keys(&mut rng, NUM_PLAYERS);
     let player_records = create_player_records(&player_keys);
 
     // Step 5: Host a game
-    println!("\n🎮 Step 5: Hosting a new game");
+    tracing::info!(target: LOG_TARGET, "🎮 Step 5: Hosting a new game");
     let host = player_records[0].clone();
     let lobby_config = GameLobbyConfig {
         stakes: TableStakes {
@@ -101,10 +112,18 @@ async fn main() -> Result<()> {
 
     let game_metadata = lobby_service.host_game(host, lobby_config).await?;
     let game_record = game_metadata.record;
-    println!("   ✅ Game created with ID: {}", game_record.state.id);
+    tracing::debug!(
+        target: LOG_TARGET,
+        game_id = game_record.state.id,
+        "✅ Game created"
+    );
 
     // Step 6: Register shufflers
-    println!("\n🔀 Step 6: Registering {} shufflers", NUM_SHUFFLERS);
+    tracing::info!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        "🔀 Step 6: Registering shufflers"
+    );
     let mut registered_shufflers = Vec::new();
     for (idx, shuffler_record) in shuffler_records.into_iter().enumerate() {
         let cfg = ShufflerRegistrationConfig {
@@ -113,27 +132,38 @@ async fn main() -> Result<()> {
         let output = lobby_service
             .register_shuffler(&game_record, shuffler_record.clone(), cfg)
             .await?;
-        println!(
-            "   ✅ Shuffler {} registered with sequence {}",
-            idx, output.assigned_sequence
+        tracing::debug!(
+            target: LOG_TARGET,
+            shuffler_index = idx,
+            sequence = output.assigned_sequence,
+            "✅ Shuffler registered"
         );
         registered_shufflers.push((output.shuffler, output.assigned_sequence));
     }
 
     // Step 7: Join players to the game
-    println!("\n👥 Step 7: Joining {} players to the game", NUM_PLAYERS);
+    tracing::info!(
+        target: LOG_TARGET,
+        num_players = NUM_PLAYERS,
+        "👥 Step 7: Joining players to the game"
+    );
     let mut joined_players = Vec::new();
     for (idx, player_record) in player_records.into_iter().enumerate() {
         let seat_id = idx as SeatId;
         let output = lobby_service
             .join_game(&game_record, player_record.clone(), Some(seat_id))
             .await?;
-        println!("   ✅ Player {} joined and seated at seat {}", idx, seat_id);
+        tracing::debug!(
+            target: LOG_TARGET,
+            player_index = idx,
+            seat_id = seat_id,
+            "✅ Player joined and seated"
+        );
         joined_players.push((output.player, seat_id));
     }
 
     // Step 8: Prepare and commence the game
-    println!("\n🚀 Step 8: Commencing the game");
+    tracing::info!(target: LOG_TARGET, "🚀 Step 8: Commencing the game");
     let hand_config = HandConfig {
         stakes: game_record.stakes.clone(),
         button: 0,
@@ -159,20 +189,18 @@ async fn main() -> Result<()> {
     let hand_id = outcome.hand.state.id;
     let mut current_snapshot = outcome.initial_snapshot.clone();
 
-    println!("   ✅ Game commenced!");
-    println!("      Hand ID: {}", hand_id);
-    println!("      Initial sequence: {}", current_snapshot.sequence);
-    println!(
-        "      Shuffler order: {} shufflers expected",
-        current_snapshot.shuffling.expected_order.len()
-    );
-    println!(
-        "      Initial deck size: {}",
-        current_snapshot.shuffling.initial_deck.len()
+    tracing::info!(target: LOG_TARGET, "   ✅ Game commenced!");
+    tracing::debug!(
+        target: LOG_TARGET,
+        hand_id = hand_id,
+        sequence = current_snapshot.sequence,
+        expected_shufflers = current_snapshot.shuffling.expected_order.len(),
+        initial_deck_size = current_snapshot.shuffling.initial_deck.len(),
+        "Game commencement details"
     );
 
     // Step 9: Create ShufflerHandState for each shuffler
-    println!("\n🎲 Step 9: Initializing shuffler states");
+    tracing::info!(target: LOG_TARGET, "🎲 Step 9: Initializing shuffler states");
     let mut shuffler_states = Vec::new();
     for (idx, engine) in shuffler_engines.iter().enumerate() {
         let mut hand_seed = [0u8; 32];
@@ -184,12 +212,16 @@ async fn main() -> Result<()> {
             hand_seed,
         )?;
         shuffler_states.push(state);
-        println!("   ✅ Shuffler {} state initialized", idx);
+        tracing::debug!(
+            target: LOG_TARGET,
+            shuffler_index = idx,
+            "✅ Shuffler state initialized"
+        );
     }
 
     // Step 10: Execute the shuffle phase
-    println!("\n🔄 Step 10: Executing shuffle phase");
-    println!("   Each shuffler will shuffle the deck in order...\n");
+    tracing::info!(target: LOG_TARGET, "🔄 Step 10: Executing shuffle phase");
+    tracing::info!(target: LOG_TARGET, "   Each shuffler will shuffle the deck in order...");
 
     // Loop through each expected shuffle operation
     for shuffle_round in 0..NUM_SHUFFLERS {
@@ -215,11 +247,12 @@ async fn main() -> Result<()> {
                 };
 
             // This shuffler successfully generated a shuffle
-            println!(
-                "   🎯 Shuffler {} performing shuffle {}/{}...",
-                shuffler_index,
-                shuffle_round + 1,
-                NUM_SHUFFLERS
+            tracing::info!(
+                target: LOG_TARGET,
+                shuffler_index = shuffler_index,
+                shuffle_number = shuffle_round + 1,
+                total_shuffles = NUM_SHUFFLERS,
+                "🎯 Shuffler performing shuffle"
             );
             acted = true;
 
@@ -232,11 +265,12 @@ async fn main() -> Result<()> {
 
             match next_snapshot {
                 AnyTableSnapshot::Shuffling(snapshot) => {
-                    println!(
-                        "      ✅ Shuffle applied, sequence: {}, steps: {}/{}",
-                        snapshot.sequence,
-                        snapshot.shuffling.steps.len(),
-                        NUM_SHUFFLERS
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        sequence = snapshot.sequence,
+                        steps_completed = snapshot.shuffling.steps.len(),
+                        total_steps = NUM_SHUFFLERS,
+                        "✅ Shuffle applied"
                     );
 
                     // Update all shuffler states with the new deck and buffered message
@@ -250,17 +284,33 @@ async fn main() -> Result<()> {
                     current_snapshot = snapshot;
                     break; // Break inner loop to proceed to next shuffle round
                 }
-                AnyTableSnapshot::Dealing(snapshot) => {
-                    println!("\n   🎉 Shuffling phase complete!");
-                    println!("      ✅ Transitioned to Dealing phase");
-                    println!("      Final sequence: {}", snapshot.sequence);
-                    println!("      Card plan size: {}", snapshot.dealing.card_plan.len());
-                    println!("      Assignments: {}", snapshot.dealing.assignments.len());
-                    println!(
-                        "      Total shuffle steps: {}",
-                        snapshot.shuffling.steps.len()
+                AnyTableSnapshot::Dealing(dealing_snapshot) => {
+                    tracing::info!(target: LOG_TARGET, "🎉 Shuffling phase complete!");
+                    tracing::info!(target: LOG_TARGET, "   ✅ Transitioned to Dealing phase");
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        sequence = dealing_snapshot.sequence,
+                        card_plan_size = dealing_snapshot.dealing.card_plan.len(),
+                        assignments = dealing_snapshot.dealing.assignments.len(),
+                        total_shuffle_steps = dealing_snapshot.shuffling.steps.len(),
+                        "Dealing phase details"
                     );
-                    return Ok(()); // Successfully completed - exit function
+
+                    // Shadow current_snapshot with the dealing snapshot and exit the shuffle loop
+                    let mut current_snapshot = dealing_snapshot;
+
+                    // Continue directly into Step 11 & 12 here before breaking
+                    execute_decryption_phase(
+                        &mut current_snapshot,
+                        &shuffler_engines,
+                        &joined_players,
+                        &player_keys,
+                        &_aggregated_public_key,
+                        &mut rng,
+                        hasher.as_ref(),
+                    )?;
+
+                    break; // Exit shuffle loop - decryption is complete
                 }
                 other => {
                     return Err(anyhow::anyhow!(
@@ -279,15 +329,26 @@ async fn main() -> Result<()> {
         }
     }
 
-    println!("\n✅ Complete flow executed successfully!");
-    println!("   - Lobby service initialized");
-    println!("   - Game hosted and configured");
-    println!("   - {} shufflers registered", NUM_SHUFFLERS);
-    println!("   - {} players joined", NUM_PLAYERS);
-    println!("   - Game commenced with initial snapshot");
-    println!("   - {} shuffle operations completed", NUM_SHUFFLERS);
-    println!("   - Transitioned to dealing phase");
-    println!("\n🎉 All systems operational!\n");
+    tracing::info!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        num_players = NUM_PLAYERS,
+        "{}",
+        format!(
+            "✅ Complete flow executed successfully!\n\
+             ================================================\n\
+             - Lobby service initialized\n\
+             - Game hosted and configured\n\
+             - {} shufflers registered\n\
+             - {} players joined\n\
+             - Game commenced with initial snapshot\n\
+             - {} shuffle operations completed\n\
+             - Transitioned to dealing phase\n\
+             - All players decrypted their hole cards\n\
+             🎉 All systems operational!",
+            NUM_SHUFFLERS, NUM_PLAYERS, NUM_SHUFFLERS
+        )
+    );
 
     Ok(())
 }
@@ -390,4 +451,181 @@ fn extract_shuffle_envelope(
             "expected shuffle message, got different message type"
         )),
     }
+}
+
+/// Execute the decryption phase (Steps 11-12)
+fn execute_decryption_phase(
+    current_snapshot: &mut TableAtDealing<Curve>,
+    shuffler_engines: &[ShufflerEngine<Curve, Schnorr254>],
+    joined_players: &[(
+        PlayerRecord<Curve, legit_poker::ledger::typestate::Saved<PlayerId>>,
+        SeatId,
+    )],
+    player_secret_keys: &[(<Curve as PrimeGroup>::ScalarField, Curve)],
+    aggregated_shuffler_public_key: &Curve,
+    rng: &mut StdRng,
+    hasher: &dyn legit_poker::ledger::hash::LedgerHasher,
+) -> Result<()> {
+    // Step 11: Create ShufflerHandStates from dealing snapshot
+    tracing::info!(target: LOG_TARGET, "📋 Step 11: Creating shuffler hand states from dealing snapshot");
+
+    let mut shuffler_states: Vec<ShufflerHandState<Curve>> = shuffler_engines
+        .iter()
+        .map(|engine| {
+            let mut rng_seed = [0u8; 32];
+            rng.fill_bytes(&mut rng_seed);
+
+            ShufflerHandState::from_dealing_snapshot(
+                &current_snapshot,
+                &engine.public_key,
+                rng_seed,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        num_states = shuffler_states.len(),
+        "✅ Created shuffler hand states"
+    );
+
+    // Step 12: Extract and decrypt player hole cards
+    tracing::info!(target: LOG_TARGET, "🎴 Step 12: Extracting and decrypting player hole cards");
+
+    let player_hole_cards = current_snapshot.dealing.get_player_hole_cards()?;
+    tracing::info!(
+        target: LOG_TARGET,
+        num_players = player_hole_cards.len(),
+        "✅ Found players with hole cards"
+    );
+
+    for (seat, hole_cards) in &player_hole_cards {
+        let player_pk = joined_players[*seat as usize].0.public_key.clone();
+        let player_secret = player_secret_keys[*seat as usize].0;
+
+        tracing::info!(target: LOG_TARGET, seat = seat, "👤 Processing player");
+
+        for hole_card in hole_cards {
+            tracing::info!(
+                target: LOG_TARGET,
+                hole_index = hole_card.hole_index,
+                "   🎴 Decrypting hole card"
+            );
+
+            // Get deal_index from card_plan
+            let deal_index = current_snapshot
+                .dealing
+                .card_plan
+                .iter()
+                .find(|(_, dest)| {
+                    matches!(dest, CardDestination::Hole { seat: s, hole_index: h }
+                    if *s == hole_card.seat && *h == hole_card.hole_index)
+                })
+                .map(|(idx, _)| *idx)
+                .ok_or_else(|| anyhow::anyhow!("deal_index not found"))?;
+
+            // Phase A: Blinding contributions
+            tracing::debug!(
+                target: LOG_TARGET,
+                num_shufflers = NUM_SHUFFLERS,
+                "      📦 Collecting blinding contributions"
+            );
+            for (idx, engine) in shuffler_engines.iter().enumerate() {
+                let state = &mut shuffler_states[idx];
+                let ctx = state.next_metadata_envelope();
+
+                let (_, any_envelope) = engine.player_blinding_and_sign(
+                    aggregated_shuffler_public_key,
+                    &ctx,
+                    deal_index,
+                    &player_pk,
+                    rng,
+                )?;
+
+                let blinding_envelope: legit_poker::ledger::messages::EnvelopedMessage<
+                    Curve,
+                    GameBlindingDecryptionMessage<Curve>,
+                > = (&any_envelope).try_into()?;
+                let any_snapshot =
+                    apply_transition(current_snapshot.clone(), &blinding_envelope, hasher)?;
+                let dealing_ref: &TableAtDealing<Curve> = (&any_snapshot).try_into()?;
+                *current_snapshot = dealing_ref.clone();
+
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    shuffler_index = idx,
+                    "         ✅ Shuffler blinding applied"
+                );
+            }
+
+            // Get player ciphertext from snapshot
+            let player_ciphertext = current_snapshot
+                .dealing
+                .player_ciphertexts
+                .get(&(hole_card.seat, hole_card.hole_index))
+                .ok_or_else(|| anyhow::anyhow!("player ciphertext not found"))?
+                .clone();
+
+            // Phase B: Unblinding shares
+            tracing::debug!(
+                target: LOG_TARGET,
+                num_shufflers = NUM_SHUFFLERS,
+                "      🔓 Collecting unblinding shares"
+            );
+            for (idx, engine) in shuffler_engines.iter().enumerate() {
+                let state = &mut shuffler_states[idx];
+                let ctx = state.next_metadata_envelope();
+
+                let (_, any_envelope) = engine.player_unblinding_and_sign(
+                    &ctx,
+                    deal_index,
+                    &player_pk,
+                    &player_ciphertext,
+                    rng,
+                )?;
+
+                let unblinding_envelope: legit_poker::ledger::messages::EnvelopedMessage<
+                    Curve,
+                    GamePartialUnblindingShareMessage<Curve>,
+                > = (&any_envelope).try_into()?;
+                let any_snapshot =
+                    apply_transition(current_snapshot.clone(), &unblinding_envelope, hasher)?;
+                let dealing_ref: &TableAtDealing<Curve> = (&any_snapshot).try_into()?;
+                *current_snapshot = dealing_ref.clone();
+
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    shuffler_index = idx,
+                    "         ✅ Shuffler unblinding applied"
+                );
+            }
+
+            // Decrypt from snapshot shares
+            let unblinding_shares: Vec<_> = current_snapshot
+                .dealing
+                .player_unblinding_shares
+                .get(&(hole_card.seat, hole_card.hole_index))
+                .ok_or_else(|| anyhow::anyhow!("unblinding shares not found"))?
+                .values()
+                .cloned()
+                .collect();
+
+            let decrypted_card = recover_card_value::<Curve>(
+                &player_ciphertext,
+                player_secret,
+                unblinding_shares,
+                NUM_SHUFFLERS,
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            tracing::info!(
+                target: LOG_TARGET,
+                card_index = decrypted_card,
+                card = %decode_card(decrypted_card),
+                "      🎯 Decrypted card"
+            );
+        }
+    }
+
+    Ok(())
 }

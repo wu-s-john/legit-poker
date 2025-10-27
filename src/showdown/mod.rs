@@ -38,6 +38,19 @@ pub struct Card {
     pub suit: Suit, // enum
 }
 
+impl std::fmt::Display for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const RANKS: &[&str] = &["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+        const SUITS: &[&str] = &["♣", "♦", "♥", "♠"];
+        write!(
+            f,
+            "{}{}",
+            RANKS[(self.rank - 2) as usize],
+            SUITS[self.suit.as_u8() as usize]
+        )
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

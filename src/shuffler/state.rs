@@ -101,6 +101,30 @@ mod tests {
 }
 
 impl<C: CurveGroup> ShufflerHandState<C> {
+    /// Create a ShufflerActor from this state.
+    pub fn actor(&self) -> ShufflerActor<C> {
+        ShufflerActor {
+            shuffler_id: self.shuffler_id,
+            shuffler_key: self.shuffler_key.clone(),
+        }
+    }
+
+    /// Generate a MetadataEnvelope with the current nonce and increment it.
+    ///
+    /// This method consumes and increments the internal nonce counter,
+    /// ensuring each generated envelope has a unique nonce.
+    pub fn next_metadata_envelope(&mut self) -> MetadataEnvelope<C, ShufflerActor<C>> {
+        let envelope = MetadataEnvelope {
+            hand_id: self.hand_id,
+            game_id: self.game_id,
+            actor: self.actor(),
+            nonce: self.next_nonce,
+            public_key: self.shuffler_key.value().clone(),
+        };
+        self.next_nonce = self.next_nonce.saturating_add(1);
+        envelope
+    }
+
     /// Record an incoming shuffle message and return whether shuffling is complete.
     pub fn record_incoming_shuffle(
         &mut self,
@@ -153,13 +177,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         let turn_index = u16::try_from(self.shuffler_index)
             .map_err(|_| anyhow!("turn index overflow for shuffle message"))?;
 
-        let ctx = MetadataEnvelope {
-            hand_id: self.hand_id,
-            game_id: self.game_id,
-            actor: actor.clone(),
-            nonce: self.next_nonce,
-            public_key: self.shuffler_key.value().clone(),
-        };
+        let ctx = self.next_metadata_envelope();
 
         let (typed, any) = shuffler.shuffle_and_sign(
             &self.aggregated_public_key,
@@ -172,7 +190,6 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         // Update state
         self.shuffling.latest_deck = typed.message.value.deck_out.clone();
         self.shuffling.acted = true;
-        self.next_nonce = self.next_nonce.saturating_add(1);
 
         info!(
             target = LOG_TARGET,
@@ -215,13 +232,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             return Ok(None);
         }
 
-        let ctx = MetadataEnvelope {
-            hand_id: self.hand_id,
-            game_id: self.game_id,
-            actor: actor.clone(),
-            nonce: self.next_nonce,
-            public_key: self.shuffler_key.value().clone(),
-        };
+        let ctx = self.next_metadata_envelope();
 
         let (_, any) = shuffler.player_blinding_and_sign(
             &self.aggregated_public_key,
@@ -230,8 +241,6 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             &request.player_public_key,
             &mut self.dealing_rng,
         )?;
-
-        self.next_nonce = self.next_nonce.saturating_add(1);
 
         info!(
             target = LOG_TARGET,
@@ -276,13 +285,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             return Ok(None);
         }
 
-        let ctx = MetadataEnvelope {
-            hand_id: self.hand_id,
-            game_id: self.game_id,
-            actor: actor.clone(),
-            nonce: self.next_nonce,
-            public_key: self.shuffler_key.value().clone(),
-        };
+        let ctx = self.next_metadata_envelope();
 
         let (_, any) = shuffler.player_unblinding_and_sign(
             &ctx,
@@ -291,8 +294,6 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             &request.ciphertext,
             &mut self.dealing_rng,
         )?;
-
-        self.next_nonce = self.next_nonce.saturating_add(1);
 
         info!(
             target = LOG_TARGET,
@@ -435,6 +436,95 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             dealing_rng,
             shuffling,
             dealing: DealingHandState::new(),
+        })
+    }
+
+    /// Create a new ShufflerHandState from a dealing snapshot using the shuffler's public key.
+    ///
+    /// # Arguments
+    /// * `snapshot` - The table snapshot at dealing phase
+    /// * `shuffler_public_key` - This shuffler's public key (used to find identity)
+    /// * `rng_seed` - Seed for both shuffling and dealing RNGs
+    pub fn from_dealing_snapshot(
+        snapshot: &TableAtDealing<C>,
+        shuffler_public_key: &C,
+        rng_seed: [u8; 32],
+    ) -> Result<Self>
+    where
+        C: CanonicalSerialize + CurveAbsorb<C::BaseField>,
+        C::BaseField: PrimeField + CanonicalSerialize,
+        C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
+        C::Affine: Absorb,
+    {
+        let shuffler_key = CanonicalKey::new(shuffler_public_key.clone());
+
+        // Find this shuffler in the roster
+        let identity = snapshot
+            .shufflers
+            .values()
+            .find(|id| id.shuffler_key == shuffler_key)
+            .ok_or_else(|| anyhow!("shuffler public key not found in roster"))?;
+
+        let shuffler_id = identity.shuffler_id;
+
+        // Use the expected order from the snapshot
+        let expected_order = snapshot.shuffling.expected_order.clone();
+
+        let shuffler_index = expected_order
+            .iter()
+            .position(|key| key == &shuffler_key)
+            .ok_or_else(|| anyhow!("shuffler not found in expected order"))?;
+
+        let hand_id = snapshot
+            .hand_id
+            .ok_or_else(|| anyhow!("hand_id missing from dealing snapshot"))?;
+
+        // Initialize decks from snapshot
+        let initial_deck = snapshot.shuffling.initial_deck.clone();
+        let latest_deck = snapshot.shuffling.final_deck.clone();
+
+        // Compute aggregated public key from all shuffler public keys
+        let shuffler_public_keys: Vec<C> = snapshot
+            .shufflers
+            .values()
+            .map(|id| id.shuffler_key.value().clone())
+            .collect();
+        let aggregated_public_key = crate::shuffling::make_global_public_keys(shuffler_public_keys);
+
+        // Derive separate RNG seeds for shuffling and dealing
+        let shuffling_rng = StdRng::from_seed(rng_seed);
+        let mut dealing_seed = rng_seed;
+        dealing_seed[0] = dealing_seed[0].wrapping_add(1);
+        let dealing_rng = StdRng::from_seed(dealing_seed);
+
+        // Shuffling phase is complete at this point
+        let acted = true;
+
+        // Create shuffling state
+        let shuffling = ShufflingHandState {
+            expected_order,
+            buffered: Vec::new(),
+            initial_deck,
+            latest_deck,
+            acted,
+        };
+
+        // Create dealing state from snapshot
+        let dealing =
+            DealingHandState::from_dealing_snapshot(&snapshot.dealing, &snapshot.shufflers, &shuffler_key);
+
+        Ok(Self {
+            game_id: snapshot.game_id,
+            hand_id,
+            shuffler_id,
+            shuffler_index,
+            shuffler_key,
+            next_nonce: 0,
+            aggregated_public_key,
+            shuffling_rng,
+            dealing_rng,
+            shuffling,
+            dealing,
         })
     }
 
@@ -930,6 +1020,34 @@ impl<C: CurveGroup> DealingHandState<C> {
             blinding_sent: BTreeSet::new(),
             unblinding_sent: BTreeSet::new(),
             board_sent: BTreeSet::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Derive DealingHandState from a DealingSnapshot for a specific shuffler.
+    ///
+    /// This reconstructs what this shuffler has already contributed by querying
+    /// the snapshot's state.
+    pub fn from_dealing_snapshot(
+        snapshot: &DealingSnapshot<C>,
+        shuffler_roster: &Shared<ShufflerRoster<C>>,
+        shuffler_key: &CanonicalKey<C>,
+    ) -> Self {
+        let blinding_sent = snapshot.get_blinding_contributions_by_shuffler(shuffler_key);
+        let unblinding_sent = snapshot.get_unblinding_shares_by_shuffler(shuffler_key);
+        let board_sent = snapshot.get_revealed_board_cards();
+
+        let shuffler_keys: Vec<CanonicalKey<C>> = shuffler_roster
+            .values()
+            .map(|identity| identity.shuffler_key.clone())
+            .collect();
+
+        Self {
+            card_plan: Some(snapshot.card_plan.clone()),
+            shuffler_keys,
+            blinding_sent,
+            unblinding_sent,
+            board_sent,
             _marker: std::marker::PhantomData,
         }
     }

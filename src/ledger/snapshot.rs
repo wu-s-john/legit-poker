@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -25,7 +25,7 @@ use crate::ledger::messages::{
 };
 use crate::ledger::serialization::deserialize_curve_bytes;
 use crate::ledger::types::{EventPhase, GameId, HandId, StateHash};
-use crate::ledger::CanonicalKey;
+use crate::ledger::{CanonicalKey, PlayerHoleCard};
 use crate::showdown::HandCategory;
 use crate::shuffling::community_decryption::CommunityDecryptionShare;
 use crate::shuffling::data_structures::{ElGamalCiphertext, ShuffleProof, DECK_SIZE};
@@ -623,6 +623,154 @@ pub struct DealingSnapshot<C: CurveGroup> {
     pub card_plan: CardPlan,
 }
 
+impl<C: CurveGroup> DealingSnapshot<C> {
+    /// Extract player hole cards organized by seat.
+    ///
+    /// Returns a map of seat -> Vec<PlayerHoleCard> for all hole cards
+    /// assigned to players in the card plan.
+    pub fn get_player_hole_cards(
+        &self,
+    ) -> Result<BTreeMap<SeatId, Vec<PlayerHoleCard<C>>>> {
+        let mut player_hole_cards: BTreeMap<SeatId, Vec<PlayerHoleCard<C>>> = BTreeMap::new();
+
+        for (&deal_index, destination) in &self.card_plan {
+            if let CardDestination::Hole { seat, hole_index } = destination {
+                let card_cipher = self
+                    .assignments
+                    .get(&deal_index)
+                    .map(|dealt| dealt.cipher.clone())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "missing hole card assignment for deal_index {}",
+                            deal_index
+                        )
+                    })?;
+
+                player_hole_cards
+                    .entry(*seat)
+                    .or_insert_with(Vec::new)
+                    .push(PlayerHoleCard {
+                        seat: *seat,
+                        hole_index: *hole_index,
+                        cipher: card_cipher,
+                    });
+            }
+        }
+
+        Ok(player_hole_cards)
+    }
+
+    /// Extract community (board) cards organized by board index.
+    ///
+    /// Returns a map of board_index -> ciphertext for all community cards
+    /// in the card plan. Board indices are:
+    /// - 0, 1, 2: Flop cards
+    /// - 3: Turn card
+    /// - 4: River card
+    pub fn get_community_cards(&self) -> Result<BTreeMap<u8, ElGamalCiphertext<C>>> {
+        let mut community_cards: BTreeMap<u8, ElGamalCiphertext<C>> = BTreeMap::new();
+
+        for (&deal_index, destination) in &self.card_plan {
+            if let CardDestination::Board { board_index } = destination {
+                let card_cipher = self
+                    .assignments
+                    .get(&deal_index)
+                    .map(|dealt| dealt.cipher.clone())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "missing community card assignment for deal_index {}",
+                            deal_index
+                        )
+                    })?;
+
+                community_cards.insert(*board_index, card_cipher);
+            }
+        }
+
+        Ok(community_cards)
+    }
+
+    /// Get all deal indices where a specific shuffler has sent blinding contributions.
+    ///
+    /// Returns the set of deal_index values for which the given shuffler
+    /// has already submitted a blinding contribution.
+    pub fn get_blinding_contributions_by_shuffler(
+        &self,
+        shuffler_key: &CanonicalKey<C>,
+    ) -> BTreeSet<u8> {
+        self.card_plan
+            .keys()
+            .filter(|&&deal_index| {
+                self.player_blinding_contribs
+                    .keys()
+                    .any(|(key, seat, hole_index)| {
+                        key == shuffler_key
+                            && self
+                                .card_plan
+                                .get(&deal_index)
+                                .map(|dest| match dest {
+                                    CardDestination::Hole {
+                                        seat: s,
+                                        hole_index: h,
+                                    } => s == seat && h == hole_index,
+                                    _ => false,
+                                })
+                                .unwrap_or(false)
+                    })
+            })
+            .copied()
+            .collect()
+    }
+
+    /// Get all deal indices where a specific shuffler has sent unblinding shares.
+    ///
+    /// Returns the set of deal_index values for which the given shuffler
+    /// has already submitted an unblinding share.
+    pub fn get_unblinding_shares_by_shuffler(
+        &self,
+        shuffler_key: &CanonicalKey<C>,
+    ) -> BTreeSet<u8> {
+        self.card_plan
+            .keys()
+            .filter(|&&deal_index| {
+                self.player_unblinding_shares
+                    .iter()
+                    .any(|((seat, hole_index), shares)| {
+                        shares.contains_key(shuffler_key)
+                            && self
+                                .card_plan
+                                .get(&deal_index)
+                                .map(|dest| match dest {
+                                    CardDestination::Hole {
+                                        seat: s,
+                                        hole_index: h,
+                                    } => s == seat && h == hole_index,
+                                    _ => false,
+                                })
+                                .unwrap_or(false)
+                    })
+            })
+            .copied()
+            .collect()
+    }
+
+    /// Get all deal indices for board cards that have been revealed.
+    ///
+    /// Returns the set of deal_index values corresponding to community cards
+    /// that have been decrypted and are now public.
+    pub fn get_revealed_board_cards(&self) -> BTreeSet<u8> {
+        self.community_cards.keys().copied().collect()
+    }
+
+    /// Get all (seat, hole_index) pairs for which player-accessible ciphertexts are ready.
+    ///
+    /// Returns the set of player positions that have completed the blinding phase
+    /// and now have a player-accessible ciphertext available.
+    pub fn get_ready_player_ciphertexts(&self) -> BTreeSet<(SeatId, u8)> {
+        self.player_ciphertexts.keys().copied().collect()
+    }
+}
+
 // ---- Betting --------------------------------------------------------------------------------
 
 type BettingStateNL = BettingState;
@@ -911,6 +1059,95 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
             AnyTableSnapshot::River(table) => table.status = status,
             AnyTableSnapshot::Showdown(table) => table.status = status,
             AnyTableSnapshot::Complete(table) => table.status = status,
+        }
+    }
+}
+
+// TryFrom implementations for extracting references to specific snapshot variants
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtShuffling<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Shuffling(table) => Ok(table),
+            _ => Err(anyhow!("Expected Shuffling snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtDealing<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Dealing(table) => Ok(table),
+            _ => Err(anyhow!("Expected Dealing snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtPreflop<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Preflop(table) => Ok(table),
+            _ => Err(anyhow!("Expected Preflop snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtFlop<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Flop(table) => Ok(table),
+            _ => Err(anyhow!("Expected Flop snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtTurn<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Turn(table) => Ok(table),
+            _ => Err(anyhow!("Expected Turn snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtRiver<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::River(table) => Ok(table),
+            _ => Err(anyhow!("Expected River snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtShowdown<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Showdown(table) => Ok(table),
+            _ => Err(anyhow!("Expected Showdown snapshot, got {:?}", snapshot.event_phase())),
+        }
+    }
+}
+
+impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtComplete<C> {
+    type Error = anyhow::Error;
+
+    fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
+        match snapshot {
+            AnyTableSnapshot::Complete(table) => Ok(table),
+            _ => Err(anyhow!("Expected Complete snapshot, got {:?}", snapshot.event_phase())),
         }
     }
 }

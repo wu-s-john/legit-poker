@@ -5,6 +5,7 @@ pub mod identity;
 pub mod lobby;
 pub mod messages;
 mod operator;
+pub mod player_hole_card;
 pub mod query;
 pub mod serialization;
 pub mod snapshot;
@@ -38,6 +39,7 @@ pub use messages::{
     PreflopStreet, RiverStreet, Street, TurnStreet,
 };
 pub use operator::LedgerOperator;
+pub use player_hole_card::PlayerHoleCard;
 pub use snapshot::{
     AnyTableSnapshot, TableAtComplete, TableAtDealing, TableAtFlop, TableAtPreflop, TableAtRiver,
     TableAtShowdown, TableAtShuffling, TableAtTurn, TableSnapshot,

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use ark_crypto_primitives::signature::SignatureScheme;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -617,7 +617,7 @@ where
         match self {
             AnyGameMessage::Shuffle(_) => EventPhase::Shuffling,
             AnyGameMessage::Blinding(_) => EventPhase::Dealing,
-            AnyGameMessage::PartialUnblinding(_) => EventPhase::Reveals,
+            AnyGameMessage::PartialUnblinding(_) => EventPhase::Dealing,
             AnyGameMessage::PlayerPreflop(_) => EventPhase::Betting,
             AnyGameMessage::PlayerFlop(_) => EventPhase::Betting,
             AnyGameMessage::PlayerTurn(_) => EventPhase::Betting,
@@ -1120,5 +1120,298 @@ mod tests {
 
     fn sample_public_key<C: CurveGroup>() -> C {
         C::generator()
+    }
+}
+
+// TryFrom implementations for converting AnyMessageEnvelope to specific EnvelopedMessage types
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GameShuffleMessage<C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
+            _ => return Err(anyhow!("expected shuffler actor for shuffle message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::Shuffle(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected shuffle message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GameBlindingDecryptionMessage<C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
+            _ => return Err(anyhow!("expected shuffler actor for blinding message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::Blinding(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected blinding message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>>
+    for EnvelopedMessage<C, GamePartialUnblindingShareMessage<C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Shuffler {
+                shuffler_id,
+                shuffler_key,
+            } => ShufflerActor {
+                shuffler_id: *shuffler_id,
+                shuffler_key: shuffler_key.clone(),
+            },
+            _ => return Err(anyhow!("expected shuffler actor for unblinding message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::PartialUnblinding(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected partial unblinding message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GamePlayerMessage<PreflopStreet, C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
+            _ => return Err(anyhow!("expected player actor for preflop message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::PlayerPreflop(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected player preflop message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GamePlayerMessage<FlopStreet, C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
+            _ => return Err(anyhow!("expected player actor for flop message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::PlayerFlop(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected player flop message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GamePlayerMessage<TurnStreet, C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
+            _ => return Err(anyhow!("expected player actor for turn message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::PlayerTurn(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected player turn message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GamePlayerMessage<RiverStreet, C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
+            _ => return Err(anyhow!("expected player actor for river message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::PlayerRiver(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected player river message variant")),
+        }
+    }
+}
+
+impl<C> TryFrom<&AnyMessageEnvelope<C>> for EnvelopedMessage<C, GameShowdownMessage<C>>
+where
+    C: CurveGroup,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(envelope: &AnyMessageEnvelope<C>) -> Result<Self> {
+        let actor = match &envelope.actor {
+            AnyActor::Player {
+                seat_id,
+                player_id,
+                player_key,
+            } => PlayerActor {
+                seat_id: *seat_id,
+                player_id: *player_id,
+                player_key: player_key.clone(),
+            },
+            _ => return Err(anyhow!("expected player actor for showdown message")),
+        };
+
+        match &envelope.message.value {
+            AnyGameMessage::Showdown(message) => Ok(EnvelopedMessage {
+                hand_id: envelope.hand_id,
+                game_id: envelope.game_id,
+                actor,
+                nonce: envelope.nonce,
+                public_key: envelope.public_key.clone(),
+                message: WithSignature {
+                    value: message.clone(),
+                    signature: envelope.message.signature.clone(),
+                },
+            }),
+            _ => Err(anyhow!("expected showdown message variant")),
+        }
     }
 }
