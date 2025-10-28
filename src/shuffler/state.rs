@@ -32,7 +32,7 @@ use crate::shuffling::{ElGamalCiphertext, DECK_SIZE};
 use crate::signing::SignatureBytes;
 use tracing::{debug, field::display, info, warn};
 
-use super::api::{ShufflerApi, ShufflerSigningSecret};
+use super::api::{ShufflerApi, ShufflerSigningParameters, ShufflerSigningSecret};
 
 const LOG_TARGET: &str = "legit_poker::game::shuffler::deal";
 
@@ -152,6 +152,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
         A: ShufflerApi<C, S>,
     {
         if self.shuffling.is_complete() || self.shuffling.acted {
@@ -218,6 +219,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
         A: ShufflerApi<C, S>,
     {
         if request.game_id != self.game_id || request.hand_id != self.hand_id {
@@ -271,6 +273,7 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
         A: ShufflerApi<C, S>,
     {
         if request.game_id != self.game_id || request.hand_id != self.hand_id {
@@ -510,8 +513,11 @@ impl<C: CurveGroup> ShufflerHandState<C> {
         };
 
         // Create dealing state from snapshot
-        let dealing =
-            DealingHandState::from_dealing_snapshot(&snapshot.dealing, &snapshot.shufflers, &shuffler_key);
+        let dealing = DealingHandState::from_dealing_snapshot(
+            &snapshot.dealing,
+            &snapshot.shufflers,
+            &shuffler_key,
+        );
 
         Ok(Self {
             game_id: snapshot.game_id,

@@ -1777,6 +1777,93 @@ mod tests {
     }
 
     #[test]
+    fn blinding_contribution_rejects_when_deal_index_mismatch() {
+        let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
+        let mut snapshot = fixture_dealing_snapshot(&ctx);
+        snapshot.dealing.player_ciphertexts.clear();
+        snapshot.dealing.player_unblinding_combined.clear();
+
+        let player_hole_cards = snapshot
+            .dealing
+            .get_player_hole_cards()
+            .expect("hole cards available");
+        let (seat, hole_card) = player_hole_cards
+            .into_iter()
+            .flat_map(|(seat, cards)| cards.into_iter().map(move |card| (seat, card)))
+            .find(|(_, card)| card.deal_index != card.hole_index)
+            .expect("fixture to yield a card where deal index differs from hole index");
+        let hole_index = hole_card.hole_index;
+        let actual_pos = hole_card.deal_index;
+
+        let plan_pos = snapshot
+            .dealing
+            .card_plan
+            .iter()
+            .find_map(|(&card_ref, destination)| match destination {
+                CardDestination::Hole {
+                    seat: dest_seat,
+                    hole_index: dest_hole,
+                } if *dest_seat == seat && *dest_hole == hole_index => Some(card_ref),
+                _ => None,
+            })
+            .expect("card plan entry for hole card");
+        assert_eq!(
+            actual_pos, plan_pos,
+            "deal index on PlayerHoleCard should match card plan"
+        );
+
+        let player_key = ctx
+            .seating
+            .get(&seat)
+            .and_then(|key| key.clone())
+            .expect("player key for seat");
+        let player_identity = ctx.players.get(&player_key).expect("player identity");
+        let player_pk = player_identity.public_key.clone();
+
+        let shuffler_id = 10;
+        let wrong_pos = hole_index;
+        assert_ne!(
+            wrong_pos, actual_pos,
+            "fixture should produce a card position distinct from the hole index"
+        );
+
+        let wrong_share =
+            generate_blinding_contribution(&ctx, shuffler_id, player_pk.clone(), 0xBADDEADu64);
+        let wrong_message =
+            GameBlindingDecryptionMessage::new(wrong_pos, wrong_share, player_pk.clone());
+        let wrong_envelope = build_blinding_envelope(&ctx, shuffler_id, wrong_message);
+
+        let err = GameBlindingDecryptionMessage::<Curve>::apply_transition(
+            snapshot.clone(),
+            &wrong_envelope,
+            &ctx.hasher,
+        )
+        .expect_err("mismatched deal index should be rejected");
+        let err_text = format!("{err}");
+        assert!(
+            err_text.contains("blinding contribution targets unexpected player key"),
+            "unexpected error text: {err_text}"
+        );
+
+        let correct_share =
+            generate_blinding_contribution(&ctx, shuffler_id, player_pk.clone(), 0xFEEDu64);
+        let correct_message =
+            GameBlindingDecryptionMessage::new(actual_pos, correct_share, player_pk);
+        let correct_envelope = build_blinding_envelope(&ctx, shuffler_id, correct_message);
+        let result = GameBlindingDecryptionMessage::<Curve>::apply_transition(
+            snapshot,
+            &correct_envelope,
+            &ctx.hasher,
+        )
+        .expect("correct deal index should succeed");
+
+        assert!(
+            matches!(result, AnyTableSnapshot::Dealing(_)),
+            "blinding transition should keep snapshot in dealing phase"
+        );
+    }
+
+    #[test]
     fn blinding_contribution_stays_in_dealing_until_hole_complete() {
         let ctx = FixtureContext::<Curve>::new(&[0, 1, 2], &[10, 11]);
         let mut snapshot = fixture_dealing_snapshot(&ctx);

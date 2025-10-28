@@ -346,10 +346,7 @@ where
                 .shufflers
                 .get(shuffler_id)
                 .ok_or_else(|| {
-                    anyhow!(
-                        "no shuffler configured for shuffler id  {:?}",
-                        shuffler_id
-                    )
+                    anyhow!("no shuffler configured for shuffler id  {:?}", shuffler_id)
                 })?
                 .clone();
             let subscription = shuffler
@@ -376,10 +373,7 @@ where
                 .shufflers
                 .get(shuffler_id)
                 .ok_or_else(|| {
-                    anyhow!(
-                        "no shuffler configured for shuffler id  {:?}",
-                        shuffler_id
-                    )
+                    anyhow!("no shuffler configured for shuffler id  {:?}", shuffler_id)
                 })?
                 .clone();
             first

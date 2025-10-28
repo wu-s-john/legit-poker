@@ -448,9 +448,7 @@ where
         let prepared_shufflers = prepare_shufflers::<C>(&shuffler_assignments)?;
 
         let result = async {
-            let hand_config_id = txn
-                .insert_hand_config(params.game_id, &hand_config)
-                .await?;
+            let hand_config_id = txn.insert_hand_config(params.game_id, &hand_config).await?;
 
             let hand_id = txn
                 .insert_hand(NewHand {
@@ -697,21 +695,8 @@ where
 {
     let message = C::ScalarField::from(index as u64);
     let randomness = C::ScalarField::rand(rng);
-    let ciphertext = ElGamalCiphertext::encrypt_scalar(message, randomness, aggregated_public_key.clone());
-
-    // Debug: verify the encryption for card 6
-    if index == 6 {
-        let generator = C::generator();
-        let expected_message_point = generator * message;
-        tracing::debug!(
-            target: "legit_poker::ledger::lobby",
-            card_index = index,
-            ?message,
-            ?expected_message_point,
-            c2 = ?ciphertext.c2,
-            "Initial encryption of card 6"
-        );
-    }
+    let ciphertext =
+        ElGamalCiphertext::encrypt_scalar(message, randomness, aggregated_public_key.clone());
 
     ciphertext
 }

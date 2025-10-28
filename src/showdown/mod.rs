@@ -40,7 +40,9 @@ pub struct Card {
 
 impl std::fmt::Display for Card {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        const RANKS: &[&str] = &["2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A"];
+        const RANKS: &[&str] = &[
+            "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A",
+        ];
         const SUITS: &[&str] = &["♣", "♦", "♥", "♠"];
         write!(
             f,

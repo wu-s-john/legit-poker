@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, DbErr, EntityTrait,
     PaginatorTrait, QueryFilter, QueryOrder, Set, TransactionTrait,
@@ -13,10 +13,10 @@ use crate::db::entity::{
     game_players, game_shufflers, games, hand_configs, hand_player, hand_shufflers, hands, players,
     shufflers,
 };
-use crate::engine::nl::types::Chips;
+use crate::engine::nl::types::{Chips, PlayerId, SeatId};
 use crate::ledger::serialization::{deserialize_curve_bytes, serialize_curve_bytes};
 use crate::ledger::store::snapshot::{persist_prepared_snapshot, PreparedSnapshot};
-use crate::ledger::types::{GameId, HandId};
+use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::CanonicalKey;
 
 use crate::ledger::lobby::error::GameSetupError;
@@ -77,8 +77,9 @@ where
         &mut self,
         key: &CanonicalKey<C>,
     ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
-        let public_key_bytes = serialize_curve_bytes(key.value())
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        let public_key_bytes = serialize_curve_bytes(key.value()).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let record = players::Entity::find()
             .filter(players::Column::PublicKey.eq(public_key_bytes))
@@ -87,8 +88,9 @@ where
 
         match record {
             Some(model) => {
-                let public_key = deserialize_curve_bytes::<C>(&model.public_key)
-                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize public key: {}", e)))?;
+                let public_key = deserialize_curve_bytes::<C>(&model.public_key).map_err(|e| {
+                    GameSetupError::validation(format!("failed to deserialize public key: {}", e))
+                })?;
                 Ok(Some(StoredPlayer {
                     display_name: model.display_name,
                     public_key,
@@ -100,7 +102,7 @@ where
 
     async fn load_player_by_id(
         &mut self,
-        id: crate::engine::nl::types::PlayerId,
+        id: PlayerId,
     ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
         let db_id = i64::try_from(id)
             .map_err(|_| GameSetupError::validation(format!("player id {} out of range", id)))?;
@@ -120,9 +122,13 @@ where
         }
     }
 
-    async fn insert_player(&mut self, player: NewPlayer<C>) -> Result<(crate::engine::nl::types::PlayerId, CanonicalKey<C>), GameSetupError> {
-        let public_key_bytes = serialize_curve_bytes(&player.public_key)
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+    async fn insert_player(
+        &mut self,
+        player: NewPlayer<C>,
+    ) -> Result<(PlayerId, CanonicalKey<C>), GameSetupError> {
+        let public_key_bytes = serialize_curve_bytes(&player.public_key).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let model = players::ActiveModel {
             display_name: Set(player.display_name),
@@ -130,8 +136,9 @@ where
             ..Default::default()
         };
         let inserted = model.insert(&self.txn).await?;
-        let player_id = u64::try_from(inserted.id)
-            .map_err(|_| GameSetupError::validation(format!("player id {} out of range", inserted.id)))?;
+        let player_id = u64::try_from(inserted.id).map_err(|_| {
+            GameSetupError::validation(format!("player id {} out of range", inserted.id))
+        })?;
         Ok((player_id, CanonicalKey::new(player.public_key)))
     }
 
@@ -139,8 +146,9 @@ where
         &mut self,
         key: &CanonicalKey<C>,
     ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
-        let public_key_bytes = serialize_curve_bytes(key.value())
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        let public_key_bytes = serialize_curve_bytes(key.value()).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let record = shufflers::Entity::find()
             .filter(shufflers::Column::PublicKey.eq(public_key_bytes))
@@ -149,8 +157,9 @@ where
 
         match record {
             Some(model) => {
-                let public_key = deserialize_curve_bytes::<C>(&model.public_key)
-                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize public key: {}", e)))?;
+                let public_key = deserialize_curve_bytes::<C>(&model.public_key).map_err(|e| {
+                    GameSetupError::validation(format!("failed to deserialize public key: {}", e))
+                })?;
                 Ok(Some(StoredShuffler {
                     display_name: model.display_name,
                     public_key,
@@ -162,7 +171,7 @@ where
 
     async fn load_shuffler_by_id(
         &mut self,
-        id: crate::ledger::types::ShufflerId,
+        id: ShufflerId,
     ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
         let record = shufflers::Entity::find_by_id(id).one(&self.txn).await?;
 
@@ -183,9 +192,10 @@ where
     async fn insert_shuffler(
         &mut self,
         shuffler: NewShuffler<C>,
-    ) -> Result<(crate::ledger::types::ShufflerId, CanonicalKey<C>), GameSetupError> {
-        let public_key_bytes = serialize_curve_bytes(&shuffler.public_key)
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+    ) -> Result<(ShufflerId, CanonicalKey<C>), GameSetupError> {
+        let public_key_bytes = serialize_curve_bytes(&shuffler.public_key).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let model = shufflers::ActiveModel {
             display_name: Set(shuffler.display_name),
@@ -201,8 +211,12 @@ where
         let small_blind = chips_to_i64(stakes.small_blind)?;
         let big_blind = chips_to_i64(stakes.big_blind)?;
         let ante = chips_to_i64(stakes.ante)?;
-        let host_player_id = i64::try_from(game.host_player_id)
-            .map_err(|_| GameSetupError::validation(format!("host player id {} out of range", game.host_player_id)))?;
+        let host_player_id = i64::try_from(game.host_player_id).map_err(|_| {
+            GameSetupError::validation(format!(
+                "host player id {} out of range",
+                game.host_player_id
+            ))
+        })?;
 
         let buy_in = chips_to_i64(game.config.buy_in)?;
         let action_time_limit_secs = game.config.action_time_limit.as_secs() as i32;
@@ -228,8 +242,9 @@ where
     }
 
     async fn insert_game_player(&mut self, row: NewGamePlayer) -> Result<(), GameSetupError> {
-        let player_id = i64::try_from(row.player_id)
-            .map_err(|_| GameSetupError::validation(format!("player id {} out of range", row.player_id)))?;
+        let player_id = i64::try_from(row.player_id).map_err(|_| {
+            GameSetupError::validation(format!("player id {} out of range", row.player_id))
+        })?;
         let model = game_players::ActiveModel {
             game_id: Set(row.game_id),
             player_id: Set(player_id),
@@ -249,10 +264,14 @@ where
             .map_err(|_| GameSetupError::validation("shuffler sequence exceeds supported range"))
     }
 
-    async fn insert_game_shuffler(&mut self, row: NewGameShuffler<C>) -> Result<(), GameSetupError> {
+    async fn insert_game_shuffler(
+        &mut self,
+        row: NewGameShuffler<C>,
+    ) -> Result<(), GameSetupError> {
         // Serialize the public_key field
-        let public_key_bytes = serialize_curve_bytes(&row.public_key)
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        let public_key_bytes = serialize_curve_bytes(&row.public_key).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let model = game_shufflers::ActiveModel {
             game_id: Set(row.game_id),
@@ -307,8 +326,9 @@ where
     }
 
     async fn insert_hand_player(&mut self, row: NewHandPlayer) -> Result<(), GameSetupError> {
-        let player_id = i64::try_from(row.player_id)
-            .map_err(|_| GameSetupError::validation(format!("player id {} out of range", row.player_id)))?;
+        let player_id = i64::try_from(row.player_id).map_err(|_| {
+            GameSetupError::validation(format!("player id {} out of range", row.player_id))
+        })?;
         let starting_stack = chips_to_i64(row.starting_stack)?;
         let model = hand_player::ActiveModel {
             game_id: Set(row.game_id),
@@ -343,7 +363,12 @@ where
     async fn load_game(
         &mut self,
         game_id: crate::ledger::types::GameId,
-    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<crate::ledger::types::GameId>>, GameSetupError> {
+    ) -> Result<
+        crate::ledger::lobby::types::GameRecord<
+            crate::ledger::typestate::Saved<crate::ledger::types::GameId>,
+        >,
+        GameSetupError,
+    > {
         use crate::engine::nl::types::TableStakes;
         use crate::ledger::lobby::types::GameRecord;
         use crate::ledger::typestate::Saved;
@@ -416,7 +441,7 @@ where
     async fn load_game_players(
         &mut self,
         game_id: crate::ledger::types::GameId,
-    ) -> Result<Vec<(crate::engine::nl::types::PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
+    ) -> Result<Vec<(PlayerId, Option<SeatId>, C)>, GameSetupError> {
         let records = game_players::Entity::find()
             .filter(game_players::Column::GameId.eq(game_id))
             .find_also_related(players::Entity)
@@ -435,8 +460,12 @@ where
 
                 let seat_preference = game_player.seat_preference.map(|s| s as u8);
 
-                let public_key = deserialize_curve_bytes::<C>(&player.public_key)
-                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize player public key: {}", e)))?;
+                let public_key = deserialize_curve_bytes::<C>(&player.public_key).map_err(|e| {
+                    GameSetupError::validation(format!(
+                        "failed to deserialize player public key: {}",
+                        e
+                    ))
+                })?;
 
                 Ok((player_id, seat_preference, public_key))
             })
@@ -446,7 +475,7 @@ where
     async fn load_game_shufflers(
         &mut self,
         game_id: crate::ledger::types::GameId,
-    ) -> Result<Vec<(crate::ledger::types::ShufflerId, u16, C)>, GameSetupError> {
+    ) -> Result<Vec<(ShufflerId, u16, C)>, GameSetupError> {
         let records = game_shufflers::Entity::find()
             .filter(game_shufflers::Column::GameId.eq(game_id))
             .order_by_asc(game_shufflers::Column::Sequence)
@@ -460,8 +489,12 @@ where
                 let sequence = u16::try_from(gs.sequence)
                     .map_err(|_| GameSetupError::validation("shuffler sequence out of range"))?;
 
-                let public_key = deserialize_curve_bytes::<C>(&gs.public_key)
-                    .map_err(|e| GameSetupError::validation(format!("failed to deserialize shuffler public key: {}", e)))?;
+                let public_key = deserialize_curve_bytes::<C>(&gs.public_key).map_err(|e| {
+                    GameSetupError::validation(format!(
+                        "failed to deserialize shuffler public key: {}",
+                        e
+                    ))
+                })?;
 
                 Ok((shuffler_id, sequence, public_key))
             })

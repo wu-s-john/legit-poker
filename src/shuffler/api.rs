@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Result};
+use ark_crypto_primitives::signature::schnorr::Parameters as SchnorrParameters;
 use ark_crypto_primitives::signature::SignatureScheme;
 use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::{AffineRepr, CurveConfig, CurveGroup};
 use ark_ff::{PrimeField, UniformRand, Zero};
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::Rng;
+use sha2::Sha256;
 use std::sync::Arc;
 
 use crate::curve_absorb::CurveAbsorb;
@@ -15,6 +17,7 @@ use crate::ledger::messages::{
     GameShuffleMessage, MetadataEnvelope,
 };
 use crate::shuffling::data_structures::ShuffleProof;
+use crate::shuffling::player_decryption::native::PlayerTargetedBlindingContribution;
 use crate::shuffling::{
     bayer_groth::decomposition::random_permutation as bg_random_permutation,
     shuffle_and_rerandomize_random, CommunityDecryptionShare, ElGamalCiphertext,
@@ -27,6 +30,16 @@ use super::Deck;
 
 pub trait ShufflerSigningSecret<C: CurveGroup> {
     fn as_scalar(&self) -> C::ScalarField;
+}
+
+pub trait ShufflerSigningParameters<C: CurveGroup> {
+    fn set_canonical_generator(&mut self);
+}
+
+impl<C: CurveGroup> ShufflerSigningParameters<C> for SchnorrParameters<C, Sha256> {
+    fn set_canonical_generator(&mut self) {
+        self.generator = C::generator().into_affine();
+    }
 }
 
 pub struct ShufflerEngine<C, S>
@@ -45,6 +58,7 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     /// Generate a new ShufflerEngine with random keys and signature parameters.
     ///
@@ -58,9 +72,10 @@ where
         S::Parameters: Clone,
     {
         // Setup signature scheme parameters
-        let signing_params = Arc::new(
-            S::setup(rng).map_err(|e| anyhow!("failed to setup signature scheme: {}", e))?,
-        );
+        let mut params =
+            S::setup(rng).map_err(|e| anyhow!("failed to setup signature scheme: {}", e))?;
+        params.set_canonical_generator();
+        let signing_params = Arc::new(params);
 
         // Generate keypair
         let (public_key_affine, secret_key) = S::keygen(&signing_params, rng)
@@ -86,6 +101,11 @@ where
             public_key,
             signing_params,
         }
+    }
+
+    /// Returns the scalar used for ElGamal encryption / committee operations.
+    pub fn encryption_scalar(&self) -> C::ScalarField {
+        self.secret_key.as_ref().as_scalar()
     }
 }
 
@@ -191,6 +211,7 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     fn shuffle<const N: usize, R: Rng>(
         &self,
@@ -236,9 +257,9 @@ where
         C::Affine: Absorb,
         C: CurveAbsorb<C::BaseField>,
     {
-        let delta_j = self.secret_scalar();
+        let delta_j = C::ScalarField::rand(rng);
 
-        let contribution = crate::shuffling::player_decryption::native::PlayerTargetedBlindingContribution::generate(
+        let contribution = PlayerTargetedBlindingContribution::generate(
             delta_j,
             aggregated_public_key.clone(),
             player_public_key,
@@ -361,9 +382,10 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     fn secret_scalar(&self) -> C::ScalarField {
-        self.secret_key.as_ref().as_scalar()
+        self.encryption_scalar()
     }
 
     fn sign_and_wrap<M, R>(

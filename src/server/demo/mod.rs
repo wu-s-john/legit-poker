@@ -1,6 +1,7 @@
-pub mod stream;
+pub mod in_memory_stream;
 pub mod stream_event;
 
+pub use in_memory_stream::{stream_demo_game_in_memory, DemoStreamQuery};
 pub use stream_event::DemoStreamEvent;
 
 use std::sync::Arc;
