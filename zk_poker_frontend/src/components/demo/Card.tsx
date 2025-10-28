@@ -4,10 +4,13 @@
 
 import React from 'react';
 import type { Card as CardType, Suit } from '~/types/poker';
+import { DecryptableBadge } from './DecryptableBadge';
 
 interface CardProps {
   card?: CardType;
   revealed: boolean;
+  decryptable?: boolean;
+  isViewer?: boolean;
   size?: 'small' | 'medium' | 'large' | 'xlarge';
   className?: string;
   onFlipComplete?: () => void;
@@ -37,6 +40,8 @@ const SUIT_COLORS: Record<Suit, string> = {
 export function Card({
   card,
   revealed,
+  decryptable = false,
+  isViewer = false,
   size = 'medium',
   className = '',
   onFlipComplete,
@@ -84,15 +89,29 @@ export function Card({
             height: '100%',
             backfaceVisibility: 'hidden',
             background: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)',
-            border: '2px solid rgba(255, 255, 255, 0.1)',
+            border: decryptable
+              ? isViewer
+                ? '2px solid rgba(251, 191, 36, 0.4)' // Gold for viewer
+                : '2px solid rgba(16, 185, 129, 0.4)' // Green for others
+              : '2px solid rgba(255, 255, 255, 0.1)',
             borderRadius: '8px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: `${dimensions.width * 0.5}px`,
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.5)',
+            boxShadow: decryptable
+              ? isViewer
+                ? '0 0 16px rgba(251, 191, 36, 0.6), 0 0 24px rgba(251, 191, 36, 0.3), 0 4px 6px rgba(0, 0, 0, 0.5)'
+                : '0 0 16px rgba(16, 185, 129, 0.6), 0 0 24px rgba(16, 185, 129, 0.3), 0 4px 6px rgba(0, 0, 0, 0.5)'
+              : '0 4px 6px rgba(0, 0, 0, 0.5)',
+            transition: 'all 0.3s ease-out',
           }}
         >
+          <DecryptableBadge
+            visible={decryptable && !revealed}
+            isViewer={isViewer}
+            size={size === 'xlarge' ? 'large' : size}
+          />
           <span style={{ opacity: 0.7 }}>🃏</span>
         </div>
 

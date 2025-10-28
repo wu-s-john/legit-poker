@@ -258,6 +258,7 @@ export function DemoScene() {
                   ? {
                       revealed: cardState.revealed,
                       displayCard: cardState.displayCard,
+                      decryptable: cardState.decryptable,
                     }
                   : undefined
               }

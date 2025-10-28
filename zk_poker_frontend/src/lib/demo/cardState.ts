@@ -15,6 +15,7 @@ export interface CardDecryptionState {
   requiredSharesPerType: number; // = player count
   revealed: boolean;
   displayCard?: Card;
+  decryptable: boolean; // Card has all shares and is ready to decrypt
   isFlying: boolean; // Card is currently animating
   hasArrived: boolean; // Card has landed at player position
 }
@@ -36,6 +37,7 @@ export function createCardState(
     partialUnblindingShares: new Map(),
     requiredSharesPerType,
     revealed: false,
+    decryptable: false,
     isFlying: false,
     hasArrived: false,
   };

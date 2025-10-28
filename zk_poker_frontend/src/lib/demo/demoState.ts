@@ -200,6 +200,7 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
             partialUnblindingShares: new Map(),
             requiredSharesPerType: state.playerCount,
             revealed: false,
+            decryptable: false,
             isFlying: false,
             hasArrived: false,
           });
@@ -298,8 +299,15 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         return state;
       }
 
+      const newCards = new Map(state.cards);
+      newCards.set(key, {
+        ...cardState,
+        decryptable: true,
+      });
+
       return {
         ...state,
+        cards: newCards,
         statusMessage:
           action.seat === state.viewerSeat
             ? `Your card ${action.cardIndex + 1} is ready to reveal!`
@@ -315,11 +323,14 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         return state;
       }
 
+      // Only reveal cards for the viewer - other players' cards stay face-down
+      const isViewerCard = action.seat === state.viewerSeat;
+
       const newCards = new Map(state.cards);
       newCards.set(key, {
         ...cardState,
-        revealed: true,
-        displayCard: action.card,
+        revealed: isViewerCard,
+        displayCard: isViewerCard ? action.card : undefined,
       });
 
       return {

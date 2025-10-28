@@ -22,6 +22,7 @@ interface FlyingCardProps {
   cardState?: {
     revealed: boolean;
     displayCard?: CardType;
+    decryptable?: boolean;
   };
 }
 
@@ -60,6 +61,8 @@ export function FlyingCard({
         <Card
           card={cardState.displayCard}
           revealed={cardState.revealed}
+          decryptable={cardState.decryptable}
+          isViewer={isForYou}
           size={isForYou ? 'medium' : 'small'}
         />
       </div>

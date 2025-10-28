@@ -291,6 +291,14 @@ export class DemoEventHandler {
   private handleHoleCardsDecrypted(
     event: Extract<DemoStreamEvent, { type: "hole_cards_decrypted" }>,
   ): void {
+    // First mark the card as decryptable (shows badge for non-viewer cards)
+    this.dispatch({
+      type: "CARD_DECRYPTABLE",
+      seat: event.seat,
+      cardIndex: event.card_position,
+    });
+
+    // Then reveal the card (only viewer cards will actually show face-up)
     this.dispatch({
       type: "CARD_REVEALED",
       seat: event.seat,
