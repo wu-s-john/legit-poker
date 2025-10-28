@@ -13,11 +13,13 @@ use anyhow::Result;
 use ark_bn254::G1Projective as Curve;
 use ark_crypto_primitives::crh::sha256::Sha256;
 use ark_crypto_primitives::signature::schnorr::Schnorr;
-use ark_ec::PrimeGroup;
+use ark_ec::{CurveGroup, PrimeGroup};
 use ark_ff::Zero;
 use ark_std::rand::{rngs::StdRng, RngCore, SeedableRng};
 use ark_std::UniformRand;
 use std::sync::Arc;
+use tracing_subscriber::fmt::time::Uptime;
+use tracing_subscriber::EnvFilter;
 
 use legit_poker::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
 use legit_poker::ledger::actor::ShufflerActor;
@@ -29,13 +31,14 @@ use legit_poker::ledger::lobby::types::{
 use legit_poker::ledger::messages::{
     AnyMessageEnvelope, GameBlindingDecryptionMessage, GamePartialUnblindingShareMessage,
 };
-use legit_poker::ledger::snapshot::{AnyTableSnapshot, CardDestination, TableAtDealing};
+use legit_poker::ledger::snapshot::{AnyTableSnapshot, TableAtDealing};
 use legit_poker::ledger::transition::apply_transition;
 use legit_poker::ledger::types::ShufflerId;
 use legit_poker::ledger::typestate::MaybeSaved;
 use legit_poker::ledger::CanonicalKey;
 use legit_poker::showdown::decode_card;
 use legit_poker::shuffler::{ShufflerApi, ShufflerEngine, ShufflerHandState};
+use legit_poker::shuffling::player_decryption::combine_unblinding_shares;
 use legit_poker::shuffling::recover_card_value;
 
 // Type aliases for clarity
@@ -47,10 +50,13 @@ const LOG_TARGET: &str = "example::game_launch_and_shuffle_flow";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing
+    // Initialize tracing - honor RUST_LOG if provided
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(env_filter)
         .with_target(true)
+        .with_timer(Uptime::default())
         .init();
 
     tracing::info!(target: LOG_TARGET, "🎰 Starting Complete Game Launch and Shuffle Flow Example");
@@ -489,6 +495,29 @@ fn execute_decryption_phase(
         "✅ Created shuffler hand states"
     );
 
+    let aggregated_secret = shuffler_engines
+        .iter()
+        .fold(<Curve as PrimeGroup>::ScalarField::zero(), |acc, engine| {
+            acc + engine.encryption_scalar()
+        });
+    for (idx, engine) in shuffler_engines.iter().enumerate() {
+        let reconstructed = Curve::generator() * engine.encryption_scalar();
+        tracing::debug!(
+            target: LOG_TARGET,
+            shuffler_index = idx,
+            ?reconstructed,
+            matches = (reconstructed == engine.public_key),
+            "Shuffler key consistency check"
+        );
+    }
+    let aggregated_public_from_secret = Curve::generator() * aggregated_secret;
+    tracing::debug!(
+        target: LOG_TARGET,
+        ?aggregated_public_from_secret,
+        matches = (aggregated_public_from_secret == *aggregated_shuffler_public_key),
+        "Aggregated secret/public key consistency check"
+    );
+
     // Step 12: Extract and decrypt player hole cards
     tracing::info!(target: LOG_TARGET, "🎴 Step 12: Extracting and decrypting player hole cards");
 
@@ -499,9 +528,48 @@ fn execute_decryption_phase(
         "✅ Found players with hole cards"
     );
 
+    // Create a map from seat ID to player public key for correct lookups
+    let seat_to_player: std::collections::HashMap<_, _> = joined_players
+        .iter()
+        .map(|(player, seat)| (*seat, player.public_key.clone()))
+        .collect();
+
+    tracing::debug!(
+        target: LOG_TARGET,
+        example_seat_map = ?seat_to_player.iter().collect::<Vec<_>>(),
+        snapshot_seating = ?current_snapshot
+            .seating
+            .iter()
+            .map(|(seat, key)| (*seat, key.clone()))
+            .collect::<Vec<_>>(),
+        "Debug seat mappings"
+    );
+
+    // Create a map from seat ID to player secret key for correct lookups
+    let seat_to_secret: std::collections::HashMap<_, _> = joined_players
+        .iter()
+        .enumerate()
+        .map(|(idx, (_, seat))| (*seat, player_secret_keys[idx].0))
+        .collect();
+
     for (seat, hole_cards) in &player_hole_cards {
-        let player_pk = joined_players[*seat as usize].0.public_key.clone();
-        let player_secret = player_secret_keys[*seat as usize].0;
+        let player_pk = seat_to_player
+            .get(seat)
+            .ok_or_else(|| anyhow::anyhow!("Player public key not found for seat {}", seat))?
+            .clone();
+        let player_secret = *seat_to_secret
+            .get(seat)
+            .ok_or_else(|| anyhow::anyhow!("Player secret key not found for seat {}", seat))?;
+
+        let derived_public = Curve::generator() * player_secret;
+        tracing::debug!(
+            target: LOG_TARGET,
+            seat = seat,
+            ?player_pk,
+            ?derived_public,
+            matches = (derived_public == player_pk),
+            "Player secret/public key consistency check"
+        );
 
         tracing::info!(target: LOG_TARGET, seat = seat, "👤 Processing player");
 
@@ -512,17 +580,36 @@ fn execute_decryption_phase(
                 "   🎴 Decrypting hole card"
             );
 
-            // Get deal_index from card_plan
-            let deal_index = current_snapshot
-                .dealing
-                .card_plan
-                .iter()
-                .find(|(_, dest)| {
-                    matches!(dest, CardDestination::Hole { seat: s, hole_index: h }
-                    if *s == hole_card.seat && *h == hole_card.hole_index)
-                })
-                .map(|(idx, _)| *idx)
-                .ok_or_else(|| anyhow::anyhow!("deal_index not found"))?;
+            // Use the snapshot-provided deal index, which encodes the global dealing order
+            let deal_index = hole_card.deal_index;
+            if deal_index != hole_card.hole_index {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    seat = hole_card.seat,
+                    hole_index = hole_card.hole_index,
+                    deal_index,
+                    "Hole card has non-trivial deal index"
+                );
+            }
+
+            let deck_cipher = &hole_card.cipher;
+            let deck_plain = (deck_cipher.c2 - (deck_cipher.c1 * aggregated_secret)).into_affine();
+            let mut expected_card_index = None;
+            for candidate in 0u8..52 {
+                let candidate_point = (Curve::generator()
+                    * <Curve as PrimeGroup>::ScalarField::from(candidate as u64))
+                .into_affine();
+                if candidate_point == deck_plain {
+                    expected_card_index = Some(candidate);
+                    break;
+                }
+            }
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?deck_plain,
+                expected_card_index = ?expected_card_index,
+                "Deck plaintext before blinding"
+            );
 
             // Phase A: Blinding contributions
             tracing::debug!(
@@ -572,6 +659,8 @@ fn execute_decryption_phase(
                 num_shufflers = NUM_SHUFFLERS,
                 "      🔓 Collecting unblinding shares"
             );
+            let mut collected_unblinding_shares = Vec::with_capacity(NUM_SHUFFLERS);
+            let mut advanced_past_dealing = false;
             for (idx, engine) in shuffler_engines.iter().enumerate() {
                 let state = &mut shuffler_states[idx];
                 let ctx = state.next_metadata_envelope();
@@ -588,32 +677,58 @@ fn execute_decryption_phase(
                     Curve,
                     GamePartialUnblindingShareMessage<Curve>,
                 > = (&any_envelope).try_into()?;
+                collected_unblinding_shares.push(unblinding_envelope.message.value.share.clone());
                 let any_snapshot =
                     apply_transition(current_snapshot.clone(), &unblinding_envelope, hasher)?;
-                let dealing_ref: &TableAtDealing<Curve> = (&any_snapshot).try_into()?;
-                *current_snapshot = dealing_ref.clone();
+                match any_snapshot {
+                    AnyTableSnapshot::Dealing(dealing_ref) => {
+                        *current_snapshot = dealing_ref.clone();
+                    }
+                    AnyTableSnapshot::Preflop(_) => {
+                        tracing::info!(
+                            target: LOG_TARGET,
+                            seat = hole_card.seat,
+                            hole_index = hole_card.hole_index,
+                            "Dealing phase complete after final unblinding share"
+                        );
+                        advanced_past_dealing = true;
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected snapshot variant during unblinding: {:?}",
+                            std::mem::discriminant(&other)
+                        ));
+                    }
+                }
 
                 tracing::debug!(
                     target: LOG_TARGET,
                     shuffler_index = idx,
                     "         ✅ Shuffler unblinding applied"
                 );
+
+                if advanced_past_dealing {
+                    break;
+                }
             }
 
             // Decrypt from snapshot shares
-            let unblinding_shares: Vec<_> = current_snapshot
-                .dealing
-                .player_unblinding_shares
-                .get(&(hole_card.seat, hole_card.hole_index))
-                .ok_or_else(|| anyhow::anyhow!("unblinding shares not found"))?
-                .values()
-                .cloned()
-                .collect();
+            let expected_mu = (player_ciphertext.blinded_base * aggregated_secret).into_affine();
+            let combined_unblinding_debug =
+                combine_unblinding_shares(&collected_unblinding_shares, NUM_SHUFFLERS)
+                    .map_err(|e| anyhow::anyhow!(e))?
+                    .into_affine();
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?expected_mu,
+                ?combined_unblinding_debug,
+                "Committee share comparison (expected vs combined)"
+            );
 
             let decrypted_card = recover_card_value::<Curve>(
                 &player_ciphertext,
                 player_secret,
-                unblinding_shares,
+                collected_unblinding_shares,
                 NUM_SHUFFLERS,
             )
             .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -624,6 +739,10 @@ fn execute_decryption_phase(
                 card = %decode_card(decrypted_card),
                 "      🎯 Decrypted card"
             );
+
+            if advanced_past_dealing {
+                return Ok(());
+            }
         }
     }
 

@@ -13,5 +13,7 @@ use crate::shuffling::ElGamalCiphertext;
 pub struct PlayerHoleCard<C: CurveGroup> {
     pub seat: SeatId,
     pub hole_index: u8,
+    #[serde(default)]
+    pub deal_index: u8,
     pub cipher: ElGamalCiphertext<C>,
 }

@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId};
 use crate::ledger::store::snapshot::PreparedSnapshot;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::typestate::Saved;
 use crate::ledger::CanonicalKey;
 
 use crate::ledger::lobby::error::GameSetupError;
-use crate::ledger::lobby::types::GameLobbyConfig;
+use crate::ledger::lobby::types::{GameLobbyConfig, GameRecord};
 
 #[async_trait]
 pub trait LobbyStorage<C>: Send + Sync
@@ -79,7 +80,7 @@ where
     async fn load_game(
         &mut self,
         game_id: GameId,
-    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<GameId>>, GameSetupError>;
+    ) -> Result<GameRecord<Saved<GameId>>, GameSetupError>;
 
     async fn load_game_config(
         &mut self,

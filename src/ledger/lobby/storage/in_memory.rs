@@ -1,15 +1,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use ark_ec::CurveGroup;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use async_trait::async_trait;
 use parking_lot::RwLock;
 
-use crate::engine::nl::types::HandConfig;
+use crate::engine::nl::types::{HandConfig, PlayerId};
+use crate::ledger::lobby::types::GameRecord;
 use crate::ledger::serialization::serialize_curve_bytes;
 use crate::ledger::store::snapshot::PreparedSnapshot;
-use crate::ledger::types::{GameId, HandId};
+use crate::ledger::types::{GameId, HandId, ShufflerId};
+use crate::ledger::typestate::Saved;
 use crate::ledger::CanonicalKey;
 
 use crate::ledger::lobby::error::GameSetupError;
@@ -21,10 +23,10 @@ use super::{
 
 struct Inner<C: CurveGroup> {
     // Use serialized public key bytes as HashMap keys for lookup
-    players: HashMap<Vec<u8>, crate::engine::nl::types::PlayerId>,
-    players_by_id: HashMap<crate::engine::nl::types::PlayerId, StoredPlayer<C>>,
-    shufflers: HashMap<Vec<u8>, crate::ledger::types::ShufflerId>,
-    shufflers_by_id: HashMap<crate::ledger::types::ShufflerId, StoredShuffler<C>>,
+    players: HashMap<Vec<u8>, PlayerId>,
+    players_by_id: HashMap<PlayerId, StoredPlayer<C>>,
+    shufflers: HashMap<Vec<u8>, ShufflerId>,
+    shufflers_by_id: HashMap<ShufflerId, StoredShuffler<C>>,
     games: HashMap<GameId, StoredGame>,
     game_players: Vec<NewGamePlayer>,
     game_shufflers: Vec<NewGameShuffler<C>>,
@@ -33,8 +35,8 @@ struct Inner<C: CurveGroup> {
     hand_players: Vec<NewHandPlayer>,
     hand_shufflers: Vec<NewHandShuffler>,
     snapshots: Vec<PreparedSnapshot>,
-    next_player_id: crate::engine::nl::types::PlayerId,
-    next_shuffler_id: crate::ledger::types::ShufflerId,
+    next_player_id: PlayerId,
+    next_shuffler_id: ShufflerId,
     next_game_id: GameId,
     next_hand_id: HandId,
     next_hand_config_id: i64,
@@ -67,7 +69,7 @@ impl<C: CurveGroup> Default for Inner<C> {
 #[allow(dead_code)]
 #[derive(Clone)]
 struct StoredGame {
-    host_player_id: crate::engine::nl::types::PlayerId,
+    host_player_id: PlayerId,
     config: crate::ledger::lobby::types::GameLobbyConfig,
 }
 
@@ -100,13 +102,13 @@ where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
 {
     inner: Arc<RwLock<Inner<C>>>,
-    next_player_id: crate::engine::nl::types::PlayerId,
-    next_shuffler_id: crate::ledger::types::ShufflerId,
+    next_player_id: PlayerId,
+    next_shuffler_id: ShufflerId,
     next_game_id: GameId,
     next_hand_id: HandId,
     next_hand_config_id: i64,
-    players: Vec<(Vec<u8>, crate::engine::nl::types::PlayerId, StoredPlayer<C>)>,
-    shufflers: Vec<(Vec<u8>, crate::ledger::types::ShufflerId, StoredShuffler<C>)>,
+    players: Vec<(Vec<u8>, PlayerId, StoredPlayer<C>)>,
+    shufflers: Vec<(Vec<u8>, ShufflerId, StoredShuffler<C>)>,
     games: Vec<(GameId, StoredGame)>,
     game_players: Vec<NewGamePlayer>,
     game_shufflers: Vec<NewGameShuffler<C>>,
@@ -151,13 +153,13 @@ impl<C> InMemoryLobbyTxn<C>
 where
     C: CurveGroup + CanonicalSerialize + CanonicalDeserialize + Send + Sync + 'static,
 {
-    fn next_player_id(&mut self) -> crate::engine::nl::types::PlayerId {
+    fn next_player_id(&mut self) -> PlayerId {
         let id = self.next_player_id;
         self.next_player_id += 1;
         id
     }
 
-    fn next_shuffler_id(&mut self) -> crate::ledger::types::ShufflerId {
+    fn next_shuffler_id(&mut self) -> ShufflerId {
         let id = self.next_shuffler_id;
         self.next_shuffler_id += 1;
         id
@@ -182,7 +184,12 @@ where
     }
 
     fn lookup_player(&self, key_bytes: &[u8]) -> Option<StoredPlayer<C>> {
-        if let Some((_, _, stored)) = self.players.iter().rev().find(|(k, _, _)| k.as_slice() == key_bytes) {
+        if let Some((_, _, stored)) = self
+            .players
+            .iter()
+            .rev()
+            .find(|(k, _, _)| k.as_slice() == key_bytes)
+        {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
@@ -190,7 +197,7 @@ where
         inner.players_by_id.get(player_id).cloned()
     }
 
-    fn lookup_player_by_id(&self, id: crate::engine::nl::types::PlayerId) -> Option<StoredPlayer<C>> {
+    fn lookup_player_by_id(&self, id: PlayerId) -> Option<StoredPlayer<C>> {
         if let Some((_, _pid, stored)) = self.players.iter().rev().find(|(_, pid, _)| *pid == id) {
             return Some(stored.clone());
         }
@@ -199,7 +206,12 @@ where
     }
 
     fn lookup_shuffler(&self, key_bytes: &[u8]) -> Option<StoredShuffler<C>> {
-        if let Some((_, _, stored)) = self.shufflers.iter().rev().find(|(k, _, _)| k.as_slice() == key_bytes) {
+        if let Some((_, _, stored)) = self
+            .shufflers
+            .iter()
+            .rev()
+            .find(|(k, _, _)| k.as_slice() == key_bytes)
+        {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
@@ -207,8 +219,9 @@ where
         inner.shufflers_by_id.get(shuffler_id).cloned()
     }
 
-    fn lookup_shuffler_by_id(&self, id: crate::ledger::types::ShufflerId) -> Option<StoredShuffler<C>> {
-        if let Some((_, _sid, stored)) = self.shufflers.iter().rev().find(|(_, sid, _)| *sid == id) {
+    fn lookup_shuffler_by_id(&self, id: ShufflerId) -> Option<StoredShuffler<C>> {
+        if let Some((_, _sid, stored)) = self.shufflers.iter().rev().find(|(_, sid, _)| *sid == id)
+        {
             return Some(stored.clone());
         }
         let inner = self.inner.read();
@@ -225,21 +238,26 @@ where
         &mut self,
         key: &CanonicalKey<C>,
     ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
-        let key_bytes = serialize_curve_bytes(key.value())
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        let key_bytes = serialize_curve_bytes(key.value()).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
         Ok(self.lookup_player(&key_bytes))
     }
 
     async fn load_player_by_id(
         &mut self,
-        id: crate::engine::nl::types::PlayerId,
+        id: PlayerId,
     ) -> Result<Option<StoredPlayer<C>>, GameSetupError> {
         Ok(self.lookup_player_by_id(id))
     }
 
-    async fn insert_player(&mut self, player: NewPlayer<C>) -> Result<(crate::engine::nl::types::PlayerId, CanonicalKey<C>), GameSetupError> {
-        let key_bytes = serialize_curve_bytes(&player.public_key)
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+    async fn insert_player(
+        &mut self,
+        player: NewPlayer<C>,
+    ) -> Result<(PlayerId, CanonicalKey<C>), GameSetupError> {
+        let key_bytes = serialize_curve_bytes(&player.public_key).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let id = self.next_player_id();
         self.players.push((
@@ -257,14 +275,15 @@ where
         &mut self,
         key: &CanonicalKey<C>,
     ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
-        let key_bytes = serialize_curve_bytes(key.value())
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+        let key_bytes = serialize_curve_bytes(key.value()).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
         Ok(self.lookup_shuffler(&key_bytes))
     }
 
     async fn load_shuffler_by_id(
         &mut self,
-        id: crate::ledger::types::ShufflerId,
+        id: ShufflerId,
     ) -> Result<Option<StoredShuffler<C>>, GameSetupError> {
         Ok(self.lookup_shuffler_by_id(id))
     }
@@ -272,9 +291,10 @@ where
     async fn insert_shuffler(
         &mut self,
         shuffler: NewShuffler<C>,
-    ) -> Result<(crate::ledger::types::ShufflerId, CanonicalKey<C>), GameSetupError> {
-        let key_bytes = serialize_curve_bytes(&shuffler.public_key)
-            .map_err(|e| GameSetupError::validation(format!("failed to serialize public key: {}", e)))?;
+    ) -> Result<(ShufflerId, CanonicalKey<C>), GameSetupError> {
+        let key_bytes = serialize_curve_bytes(&shuffler.public_key).map_err(|e| {
+            GameSetupError::validation(format!("failed to serialize public key: {}", e))
+        })?;
 
         let id = self.next_shuffler_id();
         self.shufflers.push((
@@ -322,7 +342,10 @@ where
             .map_err(|_| GameSetupError::validation("shuffler sequence exceeds supported range"))
     }
 
-    async fn insert_game_shuffler(&mut self, row: NewGameShuffler<C>) -> Result<(), GameSetupError> {
+    async fn insert_game_shuffler(
+        &mut self,
+        row: NewGameShuffler<C>,
+    ) -> Result<(), GameSetupError> {
         self.game_shufflers.push(row);
         Ok(())
     }
@@ -397,7 +420,7 @@ where
     async fn load_game(
         &mut self,
         game_id: GameId,
-    ) -> Result<crate::ledger::lobby::types::GameRecord<crate::ledger::typestate::Saved<GameId>>, GameSetupError> {
+    ) -> Result<GameRecord<Saved<GameId>>, GameSetupError> {
         use crate::ledger::lobby::types::GameRecord;
         use crate::ledger::typestate::Saved;
 
@@ -434,7 +457,7 @@ where
     async fn load_game_players(
         &mut self,
         game_id: GameId,
-    ) -> Result<Vec<(crate::engine::nl::types::PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
+    ) -> Result<Vec<(PlayerId, Option<crate::engine::nl::types::SeatId>, C)>, GameSetupError> {
         let inner = self.inner.read();
 
         let mut result = Vec::new();
@@ -444,7 +467,10 @@ where
                     .players_by_id
                     .get(&game_player.player_id)
                     .ok_or_else(|| {
-                        GameSetupError::validation(format!("player {} not found", game_player.player_id))
+                        GameSetupError::validation(format!(
+                            "player {} not found",
+                            game_player.player_id
+                        ))
                     })?;
                 result.push((
                     game_player.player_id,
@@ -460,7 +486,7 @@ where
     async fn load_game_shufflers(
         &mut self,
         game_id: GameId,
-    ) -> Result<Vec<(crate::ledger::types::ShufflerId, u16, C)>, GameSetupError> {
+    ) -> Result<Vec<(ShufflerId, u16, C)>, GameSetupError> {
         let inner = self.inner.read();
 
         let mut result = Vec::new();

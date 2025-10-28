@@ -15,9 +15,7 @@ use crate::db::entity::{
 use crate::engine::nl::actions::PlayerBetAction;
 use crate::engine::nl::engine::{BettingEngineNL, EngineNL};
 use crate::engine::nl::state::BettingState;
-use crate::engine::nl::types::{
-    HandConfig, PlayerState, PlayerStatus, Pot, Pots, SeatId, Street,
-};
+use crate::engine::nl::types::{HandConfig, PlayerState, PlayerStatus, Pot, Pots, SeatId, Street};
 use crate::ledger::hash::{chain_hash, initial_snapshot_hash, message_hash, LedgerHasher};
 use crate::ledger::messages::{
     EnvelopedMessage, FlopStreet, GameMessage, GamePlayerMessage, PreflopStreet, RiverStreet,
@@ -628,9 +626,7 @@ impl<C: CurveGroup> DealingSnapshot<C> {
     ///
     /// Returns a map of seat -> Vec<PlayerHoleCard> for all hole cards
     /// assigned to players in the card plan.
-    pub fn get_player_hole_cards(
-        &self,
-    ) -> Result<BTreeMap<SeatId, Vec<PlayerHoleCard<C>>>> {
+    pub fn get_player_hole_cards(&self) -> Result<BTreeMap<SeatId, Vec<PlayerHoleCard<C>>>> {
         let mut player_hole_cards: BTreeMap<SeatId, Vec<PlayerHoleCard<C>>> = BTreeMap::new();
 
         for (&deal_index, destination) in &self.card_plan {
@@ -640,10 +636,7 @@ impl<C: CurveGroup> DealingSnapshot<C> {
                     .get(&deal_index)
                     .map(|dealt| dealt.cipher.clone())
                     .ok_or_else(|| {
-                        anyhow!(
-                            "missing hole card assignment for deal_index {}",
-                            deal_index
-                        )
+                        anyhow!("missing hole card assignment for deal_index {}", deal_index)
                     })?;
 
                 player_hole_cards
@@ -652,6 +645,7 @@ impl<C: CurveGroup> DealingSnapshot<C> {
                     .push(PlayerHoleCard {
                         seat: *seat,
                         hole_index: *hole_index,
+                        deal_index,
                         cipher: card_cipher,
                     });
             }
@@ -989,7 +983,6 @@ impl<C: CurveGroup> AnyTableSnapshot<C> {
         }
     }
 
-
     pub fn previous_hash(&self) -> Option<StateHash> {
         match self {
             AnyTableSnapshot::Shuffling(table) => table.previous_hash,
@@ -1070,7 +1063,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtShufflin
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Shuffling(table) => Ok(table),
-            _ => Err(anyhow!("Expected Shuffling snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Shuffling snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1081,7 +1077,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtDealing<
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Dealing(table) => Ok(table),
-            _ => Err(anyhow!("Expected Dealing snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Dealing snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1092,7 +1091,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtPreflop<
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Preflop(table) => Ok(table),
-            _ => Err(anyhow!("Expected Preflop snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Preflop snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1103,7 +1105,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtFlop<C> 
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Flop(table) => Ok(table),
-            _ => Err(anyhow!("Expected Flop snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Flop snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1114,7 +1119,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtTurn<C> 
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Turn(table) => Ok(table),
-            _ => Err(anyhow!("Expected Turn snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Turn snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1125,7 +1133,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtRiver<C>
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::River(table) => Ok(table),
-            _ => Err(anyhow!("Expected River snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected River snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1136,7 +1147,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtShowdown
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Showdown(table) => Ok(table),
-            _ => Err(anyhow!("Expected Showdown snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Showdown snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }
@@ -1147,7 +1161,10 @@ impl<'a, C: CurveGroup> TryFrom<&'a AnyTableSnapshot<C>> for &'a TableAtComplete
     fn try_from(snapshot: &'a AnyTableSnapshot<C>) -> Result<Self, Self::Error> {
         match snapshot {
             AnyTableSnapshot::Complete(table) => Ok(table),
-            _ => Err(anyhow!("Expected Complete snapshot, got {:?}", snapshot.event_phase())),
+            _ => Err(anyhow!(
+                "Expected Complete snapshot, got {:?}",
+                snapshot.event_phase()
+            )),
         }
     }
 }

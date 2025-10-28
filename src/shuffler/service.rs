@@ -24,7 +24,7 @@ use crate::ledger::snapshot::{AnyTableSnapshot, Shared, TableAtShuffling};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::CanonicalKey;
 
-use super::api::{ShufflerEngine, ShufflerSigningSecret};
+use super::api::{ShufflerEngine, ShufflerSigningParameters, ShufflerSigningSecret};
 use super::state::{
     BoardCardShufflerRequest, DealShufflerRequest, HandResources, HandSubscription,
     PlayerBlindingRequest, PlayerUnblindingRequest,
@@ -57,6 +57,8 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     shuffler_id: ShufflerId,
     public_key: C,
@@ -78,6 +80,7 @@ where
     C::ScalarField: PrimeField + Absorb,
     S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
     S::SecretKey: ShufflerSigningSecret<C> + Send + Sync + 'static,
+    S::Parameters: ShufflerSigningParameters<C>,
     S::Signature: SignatureBytes + Send + Sync + 'static,
     S::Parameters: Send + Sync + 'static,
     S::SecretKey: Send + Sync + 'static,
@@ -778,6 +781,7 @@ where
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
     {
         loop {
             tokio::select! {
@@ -886,6 +890,7 @@ where
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
     {
         match request {
             DealShufflerRequest::PlayerBlinding(req) => {
@@ -915,6 +920,8 @@ where
         S: ark_crypto_primitives::signature::SignatureScheme<PublicKey = C::Affine>,
         S::Signature: SignatureBytes,
         S::SecretKey: ShufflerSigningSecret<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
+        S::Parameters: ShufflerSigningParameters<C>,
     {
         let envelope = {
             let mut state = runtime.state.lock();
@@ -994,6 +1001,7 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     service.submit.clone()
 }
@@ -1004,6 +1012,7 @@ where
     C: CurveGroup,
     S: SignatureScheme<PublicKey = C::Affine>,
     S::SecretKey: ShufflerSigningSecret<C>,
+    S::Parameters: ShufflerSigningParameters<C>,
 {
     Arc::clone(&service.engine)
 }
@@ -1025,6 +1034,7 @@ where
     C::Affine: Absorb,
     S: SignatureScheme<PublicKey = C::Affine> + Send + Sync + 'static,
     S::SecretKey: ShufflerSigningSecret<C> + Send + Sync + 'static,
+    S::Parameters: ShufflerSigningParameters<C>,
     S::Signature: SignatureBytes + Send + Sync + 'static,
 {
     ShufflerService::<C, S>::spawn_dealing_request_worker(

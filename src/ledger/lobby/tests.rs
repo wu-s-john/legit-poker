@@ -2,8 +2,7 @@
 
 use super::types::{
     CommenceGameOutcome, CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord,
-    RegisterShufflerOutput, ShufflerRecord,
-    ShufflerRegistrationConfig,
+    RegisterShufflerOutput, ShufflerRecord, ShufflerRegistrationConfig,
 };
 use super::GameSetupError;
 use crate::curve_absorb::CurveAbsorb;
@@ -11,11 +10,11 @@ use crate::db::entity::{game_players, game_shufflers, games, hand_player, hand_s
 use crate::db::{connect_to_postgres_db, postgres_test_url};
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
 use crate::ledger::hash::LedgerHasher;
+use crate::ledger::lobby::storage::{LobbyStorage, SeaOrmLobbyStorage};
 use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::state::LedgerState;
 use crate::ledger::store::snapshot::{PreparedSnapshot, SeaOrmSnapshotStore};
 use crate::ledger::store::{EventStore, SeaOrmEventStore, SnapshotStore};
-use crate::ledger::lobby::storage::{LobbyStorage, SeaOrmLobbyStorage};
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::{MaybeSaved, Saved};
 use crate::ledger::verifier::LedgerVerifier;
@@ -778,7 +777,9 @@ async fn commence_game_curve(
     operator: &LedgerOperator<TestCurve>,
     params: CommenceGameParams,
 ) -> Result<CommenceGameOutcome<TestCurve>, GameSetupError> {
-    let outcome = lobby.commence_game(&operator.state().hasher(), params).await?;
+    let outcome = lobby
+        .commence_game(&operator.state().hasher(), params)
+        .await?;
 
     // Seed the initial snapshot into the operator's state
     operator.state().upsert_snapshot(
@@ -892,7 +893,7 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     let mut all_players = vec![host_player];
 
     for (idx, keys) in player_keys.iter().enumerate() {
-        let seat = (idx + 1) as u8;  // Seats 1, 2, 3, 4
+        let seat = (idx + 1) as u8; // Seats 1, 2, 3, 4
         let player = PlayerRecord {
             display_name: format!("Player{}", idx + 1),
             public_key: keys.player.point,
@@ -919,9 +920,10 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
             &metadata.record,
             shuffler,
             ShufflerRegistrationConfig {
-                sequence: Some(seq as u16)
+                sequence: Some(seq as u16),
             },
-        ).await?;
+        )
+        .await?;
 
         all_shufflers.push(output.shuffler);
         assert_eq!(output.assigned_sequence, seq as u16);
@@ -957,7 +959,11 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
         .all(&conn)
         .await?;
 
-    assert_eq!(shuffler_records.len(), 7, "all 7 shufflers should be persisted");
+    assert_eq!(
+        shuffler_records.len(),
+        7,
+        "all 7 shufflers should be persisted"
+    );
 
     // Verify sequences are 0..6
     for (idx, rec) in shuffler_records.iter().enumerate() {
@@ -996,14 +1002,8 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     assert_eq!(recovered_players.len(), 5, "should recover 5 players");
 
     // Verify player IDs match
-    let recovered_player_ids: HashSet<_> = recovered_players
-        .iter()
-        .map(|(id, _, _)| *id)
-        .collect();
-    let original_player_ids: HashSet<_> = all_players
-        .iter()
-        .map(|p| p.state.id)
-        .collect();
+    let recovered_player_ids: HashSet<_> = recovered_players.iter().map(|(id, _, _)| *id).collect();
+    let original_player_ids: HashSet<_> = all_players.iter().map(|p| p.state.id).collect();
     assert_eq!(recovered_player_ids, original_player_ids);
 
     // Load all shufflers for this game
@@ -1080,7 +1080,10 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     let outcome = commence_game_curve(&lobby_recovered, &operator, params).await?;
 
     assert_eq!(outcome.hand.hand_no, 1);
-    assert_eq!(outcome.hand.state.id, outcome.initial_snapshot.hand_id.unwrap());
+    assert_eq!(
+        outcome.hand.state.id,
+        outcome.initial_snapshot.hand_id.unwrap()
+    );
 
     // =============================================================================
     // PHASE 6: Validate Commenced Hand State
@@ -1107,8 +1110,7 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     // Verify each player has correct stack
     for hp in &hand_players {
         assert_eq!(
-            hp.starting_stack,
-            config.buy_in as i64,
+            hp.starting_stack, config.buy_in as i64,
             "player starting stack should equal buy-in"
         );
     }
@@ -1120,7 +1122,11 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
         .all(&conn)
         .await?;
 
-    assert_eq!(hand_shufflers_records.len(), 7, "all 7 shufflers should be in hand");
+    assert_eq!(
+        hand_shufflers_records.len(),
+        7,
+        "all 7 shufflers should be in hand"
+    );
 
     // Verify sequences match original shuffler order
     for (idx, hs) in hand_shufflers_records.iter().enumerate() {
@@ -1140,7 +1146,11 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     match &snapshot {
         AnyTableSnapshot::Shuffling(table) => {
             assert_eq!(table.hand_id, Some(outcome.hand.state.id));
-            assert_eq!(table.shufflers.len(), 7, "should have 7 shufflers in roster");
+            assert_eq!(
+                table.shufflers.len(),
+                7,
+                "should have 7 shufflers in roster"
+            );
 
             // Verify shuffling expected_order contains all 7 shuffler keys
             assert_eq!(
@@ -1151,10 +1161,15 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
 
             // Verify each registered shuffler is in the roster
             for shuffler_rec in &all_shufflers {
-                let found = table.shufflers.iter().any(|(_, identity)| {
-                    identity.shuffler_id == shuffler_rec.state.id
-                });
-                assert!(found, "shuffler {} should be in roster", shuffler_rec.state.id);
+                let found = table
+                    .shufflers
+                    .iter()
+                    .any(|(_, identity)| identity.shuffler_id == shuffler_rec.state.id);
+                assert!(
+                    found,
+                    "shuffler {} should be in roster",
+                    shuffler_rec.state.id
+                );
             }
         }
         other => panic!("expected Shuffling snapshot, got {:?}", other),
@@ -1208,11 +1223,12 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     let hasher = fresh_state.hasher();
     let catchup_result = catchup_hand_from_db(
         outcome.hand.state.id,
-        None,  // Start from latest snapshot
+        None, // Start from latest snapshot
         &snapshot_store,
         &conn,
         &hasher,
-    ).await?;
+    )
+    .await?;
 
     // Verify catchup returned the correct snapshot
     assert_eq!(
@@ -1222,11 +1238,7 @@ async fn test_persist_and_recover_large_game_then_commence() -> Result<()> {
     );
 
     // Seed the catchup result into fresh state
-    fresh_state.upsert_snapshot(
-        outcome.hand.state.id,
-        catchup_result.clone(),
-        true,
-    );
+    fresh_state.upsert_snapshot(outcome.hand.state.id, catchup_result.clone(), true);
 
     // Verify fresh state now has the snapshot
     let (recovered_hash, _recovered_snapshot) = fresh_state

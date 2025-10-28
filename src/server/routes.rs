@@ -7,7 +7,7 @@ use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use axum::extract::{Path, Query};
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::get;
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -19,12 +19,8 @@ use crate::ledger::snapshot::SnapshotSeq;
 use crate::ledger::types::{GameId, HandId};
 use crate::ledger::LobbyService;
 
-use super::demo::stream::{stream_demo_game, DemoStreamQuery};
-use super::demo::{parse_viewer_public_key, rehydrate_commence_outcome, seed_demo_hand};
-use super::dto::{
-    DemoCreateRequest, DemoCreateResponse, DemoStartResponse, HandMessagesResponse,
-    LatestSnapshotResponse,
-};
+use super::demo::{stream_demo_game_in_memory, DemoStreamQuery};
+use super::dto::{HandMessagesResponse, LatestSnapshotResponse};
 use super::error::ApiError;
 
 #[derive(Clone)]
@@ -238,7 +234,7 @@ where
     C::BaseField: PrimeField + Send + Sync,
     C::Affine: Absorb,
 {
-    stream_demo_game(ctx, query).await
+    stream_demo_game_in_memory(ctx, query).await
 }
 
 #[inline]
