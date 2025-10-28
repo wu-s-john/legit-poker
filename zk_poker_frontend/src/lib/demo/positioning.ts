@@ -71,20 +71,28 @@ export function getDeckPosition(
  * @param playerPosition The player's center position
  * @param cardIndex Index of the card (0 or 1)
  * @param isViewer Whether this is the viewer's position (affects card size)
+ * @param tableCenter Center point of the table {x, y}
  * @returns Position for the specific card
  */
 export function getCardPosition(
   playerPosition: Position,
   cardIndex: number,
-  isViewer: boolean
+  isViewer: boolean,
+  tableCenter: { x: number; y: number } = { x: 960, y: 400 }
 ): Position {
   // Card dimensions and spacing (must match CSS in demo.css)
   const cardWidth = isViewer ? 60 : 60; // Both use same width for now
   const cardGap = 8; // var(--space-2) = 8px
 
-  // Offset for the player's card slot container
-  // Cards are below the player avatar/name
-  const cardSlotOffsetY = isViewer ? 130 : 110; // Based on avatar size + badge + margin
+  // Offset distance for the player's card slot container
+  // Cards should be positioned between the player and the table center
+  const cardSlotOffset = isViewer ? 130 : 110; // Based on avatar size + badge + margin
+
+  // Determine direction: cards should be offset TOWARD the table center
+  // For players below table center (large Y), offset should be negative (cards go up)
+  // For players above table center (small Y), offset should be positive (cards go down)
+  const isBottomHalf = playerPosition.y > tableCenter.y;
+  const cardSlotOffsetY = isBottomHalf ? -cardSlotOffset : cardSlotOffset;
 
   // Calculate horizontal offset for each card
   // Two cards centered around the player position
