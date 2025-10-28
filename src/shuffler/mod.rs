@@ -1,6 +1,20 @@
+use crate::curve_absorb::CurveAbsorb;
+use crate::server::demo::DemoStreamEvent;
 use crate::tokio_tools::spawn_named_task;
+use anyhow::Result;
 use ark_crypto_primitives::signature::schnorr::{Schnorr, SecretKey as SchnorrSecretKey};
+use ark_crypto_primitives::signature::SignatureScheme;
+use ark_crypto_primitives::sponge::Absorb;
+use ark_ec::{CurveConfig, CurveGroup, PrimeGroup};
+use ark_ff::{PrimeField, UniformRand};
+use ark_serialize::CanonicalSerialize;
+use rand::rngs::StdRng;
+use rand::RngCore;
 use sha2::Sha256;
+
+use std::collections::HashMap;
+use std::convert::TryInto;
+use tracing::{debug, info};
 
 mod api;
 mod service;
@@ -13,6 +27,9 @@ pub use state::{
     ShufflingHandState,
 };
 
+use crate::engine::nl::types::SeatId;
+use crate::ledger::lobby::types::PlayerRecord;
+use crate::shuffling::player_decryption::recover_card_value;
 use crate::shuffling::ElGamalCiphertext;
 
 pub use api::{ShufflerApi, ShufflerEngine};
@@ -47,6 +64,444 @@ where
 
 const LOG_TARGET: &str = "legit_poker::game::shuffler";
 const DEAL_CHANNEL_CAPACITY: usize = 1024;
+
+use crate::ledger::hash::LedgerHasher;
+use crate::ledger::messages::{
+    EnvelopedMessage, FinalizedAnyMessageEnvelope, GameBlindingDecryptionMessage,
+    GamePartialUnblindingShareMessage, GameShuffleMessage,
+};
+use crate::ledger::snapshot::{
+    clone_snapshot_for_failure, AnyTableSnapshot, SnapshotStatus, TableAtDealing, TableAtShuffling,
+};
+use crate::ledger::transition::apply_transition;
+use crate::ledger::typestate::Saved;
+use crate::showdown::decode_card;
+use crate::signing::SignatureBytes;
+use tokio::sync::mpsc;
+
+/// Execute the shuffling phase by iterating over all shufflers and applying their
+/// produced shuffle messages to the provided snapshot.
+///
+/// The helper updates each [`ShufflerHandState`] in `shuffler_states` with the latest
+/// deck and buffered messages, mirroring the behaviour used in integration examples.
+pub fn run_shuffling_phase<C, S>(
+    mut current_snapshot: TableAtShuffling<C>,
+    shuffler_engines: &[ShufflerEngine<C, S>],
+    shuffler_states: &mut [ShufflerHandState<C>],
+    hasher: &dyn LedgerHasher,
+    event_tx: &mpsc::Sender<DemoStreamEvent<C>>,
+) -> Result<TableAtDealing<C>>
+where
+    C: CurveGroup + CanonicalSerialize,
+    C::ScalarField: PrimeField + UniformRand + CanonicalSerialize + Clone,
+    C::BaseField: PrimeField,
+    C::Affine: CanonicalSerialize,
+    C::Config: CurveConfig<ScalarField = C::ScalarField>,
+    S: SignatureScheme<PublicKey = C::Affine>,
+    S::Signature: SignatureBytes,
+    S::SecretKey: api::ShufflerSigningSecret<C>,
+    S::Parameters: api::ShufflerSigningParameters<C>,
+{
+    let expected_shuffles = shuffler_engines.len();
+
+    for index in 0..expected_shuffles {
+        let actor = {
+            let state = &shuffler_states[index];
+            state.actor()
+        };
+
+        let any_envelope = {
+            let state = &mut shuffler_states[index];
+            state.try_emit_shuffle::<S, _>(&shuffler_engines[index], &actor)?
+        }
+        .ok_or_else(|| anyhow::anyhow!("shuffler {index} was unable to emit its shuffle"))?;
+
+        info!(
+            target: LOG_TARGET,
+            shuffler_index = index,
+            shuffle_number = index + 1,
+            total_shuffles = expected_shuffles,
+            "🎯 Shuffler performing shuffle"
+        );
+
+        let shuffle_envelope: EnvelopedMessage<C, GameShuffleMessage<C>> =
+            (&any_envelope).try_into()?;
+
+        let current_snapshot_any = AnyTableSnapshot::Shuffling(current_snapshot.clone());
+        match apply_transition(current_snapshot.clone(), &shuffle_envelope, hasher) {
+            Ok(next_snapshot) => {
+                let finalized = FinalizedAnyMessageEnvelope::new(
+                    any_envelope,
+                    SnapshotStatus::Success,
+                    next_snapshot.event_phase(),
+                    next_snapshot.sequence(),
+                );
+                let _ = event_tx.try_send(DemoStreamEvent::GameEvent {
+                    envelope: finalized,
+                });
+
+                match next_snapshot {
+                    AnyTableSnapshot::Shuffling(snapshot) => {
+                        debug!(
+                            target: LOG_TARGET,
+                            sequence = snapshot.sequence,
+                            steps_completed = snapshot.shuffling.steps.len(),
+                            total_steps = expected_shuffles,
+                            "✅ Shuffle applied"
+                        );
+
+                        for state in shuffler_states.iter_mut() {
+                            state.shuffling.latest_deck = snapshot.shuffling.final_deck.clone();
+                            state.shuffling.buffered.push(shuffle_envelope.clone());
+                        }
+
+                        current_snapshot = snapshot;
+                    }
+                    AnyTableSnapshot::Dealing(dealing_snapshot) => {
+                        info!(
+                            target: LOG_TARGET,
+                            sequence = dealing_snapshot.sequence,
+                            card_plan_size = dealing_snapshot.dealing.card_plan.len(),
+                            assignments = dealing_snapshot.dealing.assignments.len(),
+                            total_shuffle_steps = dealing_snapshot.shuffling.steps.len(),
+                            "🎉 Shuffling phase complete; transitioned to dealing phase"
+                        );
+                        return Ok(dealing_snapshot);
+                    }
+                    other => {
+                        return Err(anyhow::anyhow!(
+                            "unexpected snapshot variant after shuffle: {:?}",
+                            std::mem::discriminant(&other)
+                        ));
+                    }
+                }
+            }
+            Err(err) => {
+                let reason = err.to_string();
+                let failure_snapshot =
+                    clone_snapshot_for_failure(&current_snapshot_any, hasher, reason.clone());
+                let finalized = FinalizedAnyMessageEnvelope::new(
+                    any_envelope,
+                    SnapshotStatus::Failure(reason),
+                    failure_snapshot.event_phase(),
+                    failure_snapshot.sequence(),
+                );
+                let _ = event_tx.try_send(DemoStreamEvent::GameEvent {
+                    envelope: finalized,
+                });
+                return Err(anyhow::anyhow!(err));
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "shuffle phase completed without reaching the dealing phase"
+    ))
+}
+
+/// Execute the dealing/decryption phase used in demos and examples.
+///
+/// This function progresses the `current_snapshot` in-place by collecting blinding
+/// and unblinding contributions from every shuffler and decrypting player hole cards.
+///
+/// If `event_tx` is provided, emits `DemoStreamEvent`s for each transition and card decryption.
+pub fn run_dealing_phase<C, S>(
+    current_snapshot: &mut TableAtDealing<C>,
+    shuffler_engines: &[ShufflerEngine<C, S>],
+    joined_players: &[(PlayerRecord<C, Saved<u64>>, SeatId)],
+    player_secret_keys: &[(C::ScalarField, C)],
+    aggregated_shuffler_public_key: &C,
+    rng: &mut StdRng,
+    hasher: &dyn LedgerHasher,
+    event_tx: Option<&mpsc::Sender<DemoStreamEvent<C>>>,
+) -> Result<()>
+where
+    C: CurveGroup + CanonicalSerialize + CurveAbsorb<C::BaseField> + PrimeGroup,
+    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Clone,
+    C::BaseField: PrimeField,
+    C::Affine: Absorb + CanonicalSerialize,
+    C::Config: CurveConfig<ScalarField = C::ScalarField>,
+    S: SignatureScheme<PublicKey = C::Affine>,
+    S::Signature: SignatureBytes,
+    S::SecretKey: api::ShufflerSigningSecret<C>,
+    S::Parameters: api::ShufflerSigningParameters<C>,
+{
+    let num_shufflers = shuffler_engines.len();
+
+    let mut shuffler_states: Vec<ShufflerHandState<C>> = shuffler_engines
+        .iter()
+        .map(|engine| {
+            let mut rng_seed = [0u8; 32];
+            rng.fill_bytes(&mut rng_seed);
+            ShufflerHandState::from_dealing_snapshot(current_snapshot, &engine.public_key, rng_seed)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    debug!(
+        target: LOG_TARGET,
+        num_states = shuffler_states.len(),
+        "✅ Created shuffler hand states for dealing phase"
+    );
+
+    let player_hole_cards = current_snapshot.dealing.get_player_hole_cards()?;
+    debug!(
+        target: LOG_TARGET,
+        num_players = player_hole_cards.len(),
+        "Dealing snapshot hole cards snapshot"
+    );
+
+    let mut seat_to_secret = HashMap::new();
+    for (idx, (_, seat)) in joined_players.iter().enumerate() {
+        seat_to_secret.insert(*seat, player_secret_keys[idx].0);
+    }
+
+    for (seat, hole_cards) in &player_hole_cards {
+        let player_pk = joined_players
+            .iter()
+            .find(|(_, s)| s == seat)
+            .map(|(player, _)| player.public_key.clone())
+            .ok_or_else(|| anyhow::anyhow!("player public key not found for seat {}", seat))?;
+        let player_secret = *seat_to_secret
+            .get(seat)
+            .ok_or_else(|| anyhow::anyhow!("player secret key not found for seat {}", seat))?;
+
+        info!(target: LOG_TARGET, seat = seat, "👤 Processing player");
+
+        for hole_card in hole_cards {
+            info!(
+                target: LOG_TARGET,
+                hole_index = hole_card.hole_index,
+                "   🎴 Decrypting hole card"
+            );
+
+            let deal_index = hole_card.deal_index;
+
+            for (idx, engine) in shuffler_engines.iter().enumerate() {
+                let state = &mut shuffler_states[idx];
+                let ctx = state.next_metadata_envelope();
+
+                let (_, any_envelope) = engine.player_blinding_and_sign(
+                    aggregated_shuffler_public_key,
+                    &ctx,
+                    deal_index,
+                    &player_pk,
+                    rng,
+                )?;
+
+                let blinding_envelope: EnvelopedMessage<C, GameBlindingDecryptionMessage<C>> =
+                    (&any_envelope).try_into()?;
+
+                if let Some(tx) = event_tx {
+                    let current_snapshot_any = AnyTableSnapshot::Dealing(current_snapshot.clone());
+                    match apply_transition(current_snapshot.clone(), &blinding_envelope, hasher) {
+                        Ok(next_snapshot) => {
+                            let finalized = FinalizedAnyMessageEnvelope::new(
+                                any_envelope,
+                                SnapshotStatus::Success,
+                                next_snapshot.event_phase(),
+                                next_snapshot.sequence(),
+                            );
+                            let _ = tx.try_send(DemoStreamEvent::GameEvent {
+                                envelope: finalized,
+                            });
+
+                            let dealing_ref: &TableAtDealing<C> = (&next_snapshot).try_into()?;
+                            *current_snapshot = dealing_ref.clone();
+                        }
+                        Err(err) => {
+                            let reason = err.to_string();
+                            let failure_snapshot = clone_snapshot_for_failure(
+                                &current_snapshot_any,
+                                hasher,
+                                reason.clone(),
+                            );
+                            let finalized = FinalizedAnyMessageEnvelope::new(
+                                any_envelope,
+                                SnapshotStatus::Failure(reason.clone()),
+                                failure_snapshot.event_phase(),
+                                failure_snapshot.sequence(),
+                            );
+                            let _ = tx.try_send(DemoStreamEvent::GameEvent {
+                                envelope: finalized,
+                            });
+                            return Err(anyhow::anyhow!("Blinding failed: {}", reason));
+                        }
+                    }
+                } else {
+                    let any_snapshot =
+                        apply_transition(current_snapshot.clone(), &blinding_envelope, hasher)?;
+                    let dealing_ref: &TableAtDealing<C> = (&any_snapshot).try_into()?;
+                    *current_snapshot = dealing_ref.clone();
+                }
+
+                debug!(
+                    target: LOG_TARGET,
+                    shuffler_index = idx,
+                    "         ✅ Shuffler blinding applied"
+                );
+            }
+
+            let player_ciphertext = current_snapshot
+                .dealing
+                .player_ciphertexts
+                .get(&(*seat, hole_card.hole_index))
+                .ok_or_else(|| anyhow::anyhow!("player ciphertext not found"))?
+                .clone();
+
+            let mut collected_unblinding_shares = Vec::with_capacity(num_shufflers);
+            let mut advanced_past_dealing = false;
+
+            for (idx, engine) in shuffler_engines.iter().enumerate() {
+                let state = &mut shuffler_states[idx];
+                let ctx = state.next_metadata_envelope();
+
+                let (_, any_envelope) = engine.player_unblinding_and_sign(
+                    &ctx,
+                    deal_index,
+                    &player_pk,
+                    &player_ciphertext,
+                    rng,
+                )?;
+
+                let unblinding_envelope: EnvelopedMessage<C, GamePartialUnblindingShareMessage<C>> =
+                    (&any_envelope).try_into()?;
+                collected_unblinding_shares.push(unblinding_envelope.message.value.share.clone());
+
+                if let Some(tx) = event_tx {
+                    let current_snapshot_any = AnyTableSnapshot::Dealing(current_snapshot.clone());
+                    match apply_transition(current_snapshot.clone(), &unblinding_envelope, hasher) {
+                        Ok(next_snapshot) => {
+                            let finalized = FinalizedAnyMessageEnvelope::new(
+                                any_envelope,
+                                SnapshotStatus::Success,
+                                next_snapshot.event_phase(),
+                                next_snapshot.sequence(),
+                            );
+                            let _ = tx.try_send(DemoStreamEvent::GameEvent {
+                                envelope: finalized,
+                            });
+
+                            match next_snapshot {
+                                AnyTableSnapshot::Dealing(dealing_ref) => {
+                                    *current_snapshot = dealing_ref.clone();
+                                }
+                                AnyTableSnapshot::Preflop(_) => {
+                                    info!(
+                                        target: LOG_TARGET,
+                                        seat = hole_card.seat,
+                                        hole_index = hole_card.hole_index,
+                                        "Dealing phase complete after final unblinding share"
+                                    );
+                                    // Don't send HandCompleted yet - wait until final card is processed
+                                    advanced_past_dealing = true;
+                                }
+                                other => {
+                                    return Err(anyhow::anyhow!(
+                                        "unexpected snapshot variant during unblinding: {:?}",
+                                        std::mem::discriminant(&other)
+                                    ));
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let reason = err.to_string();
+                            let failure_snapshot = clone_snapshot_for_failure(
+                                &current_snapshot_any,
+                                hasher,
+                                reason.clone(),
+                            );
+                            let finalized = FinalizedAnyMessageEnvelope::new(
+                                any_envelope,
+                                SnapshotStatus::Failure(reason.clone()),
+                                failure_snapshot.event_phase(),
+                                failure_snapshot.sequence(),
+                            );
+                            let _ = tx.try_send(DemoStreamEvent::GameEvent {
+                                envelope: finalized,
+                            });
+                            return Err(anyhow::anyhow!("Unblinding failed: {}", reason));
+                        }
+                    }
+                } else {
+                    let any_snapshot =
+                        apply_transition(current_snapshot.clone(), &unblinding_envelope, hasher)?;
+                    match any_snapshot {
+                        AnyTableSnapshot::Dealing(dealing_ref) => {
+                            *current_snapshot = dealing_ref.clone();
+                        }
+                        AnyTableSnapshot::Preflop(_) => {
+                            info!(
+                                target: LOG_TARGET,
+                                seat = hole_card.seat,
+                                hole_index = hole_card.hole_index,
+                                "Dealing phase complete after final unblinding share"
+                            );
+                            advanced_past_dealing = true;
+                        }
+                        other => {
+                            return Err(anyhow::anyhow!(
+                                "unexpected snapshot variant during unblinding: {:?}",
+                                std::mem::discriminant(&other)
+                            ));
+                        }
+                    }
+                }
+
+                debug!(
+                    target: LOG_TARGET,
+                    shuffler_index = idx,
+                    "         ✅ Shuffler unblinding applied"
+                );
+
+                if advanced_past_dealing {
+                    break;
+                }
+            }
+
+            let decrypted_card = recover_card_value::<C>(
+                &player_ciphertext,
+                player_secret,
+                collected_unblinding_shares.clone(),
+                num_shufflers,
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            info!(
+                target: LOG_TARGET,
+                card_index = decrypted_card,
+                card = %decode_card(decrypted_card),
+                "      🎯 Decrypted card"
+            );
+
+            // Emit event BEFORE checking early return
+            if let Some(tx) = event_tx {
+                let _ = tx.try_send(DemoStreamEvent::HoleCardsDecrypted {
+                    game_id: current_snapshot.game_id,
+                    hand_id: current_snapshot.hand_id.unwrap(),
+                    seat: *seat,
+                    card_position: hole_card.hole_index as usize,
+                    hole_id: hole_card.hole_index,
+                    player_public_key: player_pk.clone(),
+                    card: decode_card(decrypted_card),
+                });
+            }
+
+            // Exit immediately if we've advanced past dealing phase
+            // This ensures HandCompleted is the last event emitted
+            if advanced_past_dealing {
+                if let Some(tx) = event_tx {
+                    let _ = tx.try_send(DemoStreamEvent::HandCompleted {
+                        game_id: current_snapshot.game_id,
+                        hand_id: current_snapshot.hand_id.unwrap(),
+                    });
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

@@ -204,7 +204,6 @@ export type AnyGameMessage = z.infer<typeof anyGameMessageSchema>;
 export const withSignatureSchema = z.object({
   value: anyGameMessageSchema,
   signature: hexString,
-  transcript: byteVector,
 });
 export type WithSignature = z.infer<typeof withSignatureSchema>;
 

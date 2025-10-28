@@ -6,18 +6,20 @@ use std::sync::Arc;
 
 use ark_bn254::G1Projective as Curve;
 use hex;
+use legit_poker::db;
+use legit_poker::debugging_tools::fetch_hand_archive;
+use legit_poker::ledger::actor::AnyActor;
+use legit_poker::ledger::messages::{
+    AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope,
+};
+use legit_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
+use legit_poker::ledger::snapshot::{rehydrate_snapshot, SnapshotSeq, SnapshotStatus};
+use legit_poker::ledger::store::SeaOrmEventStore;
+use legit_poker::ledger::types::{EventPhase, StateHash};
+use legit_poker::ledger::{GameId, HandId, SignatureBytes};
+use legit_poker::signing::WithSignature;
 use serde_json;
 use sha2::{Digest, Sha256};
-use zk_poker::db;
-use zk_poker::debugging_tools::fetch_hand_archive;
-use zk_poker::ledger::actor::AnyActor;
-use zk_poker::ledger::messages::{AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope};
-use zk_poker::ledger::query::{HandMessagesQuery, SequenceBounds};
-use zk_poker::ledger::snapshot::{rehydrate_snapshot, SnapshotSeq, SnapshotStatus};
-use zk_poker::ledger::store::SeaOrmEventStore;
-use zk_poker::ledger::types::{EventPhase, StateHash};
-use zk_poker::ledger::{GameId, HandId, SignatureBytes};
-use zk_poker::signing::WithSignature;
 
 #[derive(Parser)]
 #[command(author, version, about = "Ledger debugging utilities", long_about = None)]
@@ -77,7 +79,7 @@ struct ArchiveOutput<T> {
 
 #[derive(Serialize, Deserialize)]
 struct LatestSnapshotOutput {
-    snapshot: zk_poker::ledger::snapshot::AnyTableSnapshot<Curve>,
+    snapshot: legit_poker::ledger::snapshot::AnyTableSnapshot<Curve>,
     #[serde(skip_serializing_if = "Option::is_none")]
     messages: Option<Vec<FinalizedEnvelopeDisplay>>,
 }
@@ -182,7 +184,7 @@ struct MessageEnvelopeDisplay {
     game_id: GameId,
     actor: AnyActor<Curve>,
     nonce: u64,
-    #[serde(with = "zk_poker::crypto_serde::curve")]
+    #[serde(with = "legit_poker::crypto_serde::curve")]
     public_key: Curve,
     message: MessageWithSignatureDisplay,
 }
@@ -212,7 +214,7 @@ impl From<WithSignature<SignatureBytes, AnyGameMessage<Curve>>> for MessageWithS
     fn from(with_sig: WithSignature<SignatureBytes, AnyGameMessage<Curve>>) -> Self {
         let signature_hash = sha256_hex(&with_sig.signature);
         // Transcript is now computed on-demand via signing_bytes()
-        let transcript_hex = match zk_poker::signing::signing_bytes(&with_sig.value) {
+        let transcript_hex = match legit_poker::signing::signing_bytes(&with_sig.value) {
             Ok(bytes) if !bytes.is_empty() => Some(format!("0x{}", hex::encode(&bytes))),
             _ => None,
         };
@@ -230,23 +232,23 @@ mod tests {
     use super::LatestSnapshotOutput;
     use ark_bn254::G1Projective;
     use ark_ec::PrimeGroup;
-    use serde_json;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-    use zk_poker::engine::nl::actions::PlayerBetAction;
-    use zk_poker::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
-    use zk_poker::ledger::messages::{
+    use legit_poker::engine::nl::actions::PlayerBetAction;
+    use legit_poker::engine::nl::types::{HandConfig, PlayerStatus, TableStakes};
+    use legit_poker::ledger::messages::{
         AnyGameMessage, AnyMessageEnvelope, FinalizedAnyMessageEnvelope, GamePlayerMessage,
         PreflopStreet,
     };
-    use zk_poker::ledger::snapshot::{
+    use legit_poker::ledger::snapshot::{
         phases::PhaseShuffling, AnyTableSnapshot, PlayerIdentity, PlayerStackInfo,
         ShufflerIdentity, ShufflingSnapshot, SnapshotStatus, TableSnapshot,
     };
-    use zk_poker::ledger::types::{EventPhase, StateHash};
-    use zk_poker::ledger::{actor::AnyActor, CanonicalKey};
-    use zk_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
-    use zk_poker::signing::WithSignature;
+    use legit_poker::ledger::types::{EventPhase, StateHash};
+    use legit_poker::ledger::{actor::AnyActor, CanonicalKey};
+    use legit_poker::shuffling::data_structures::{ElGamalCiphertext, DECK_SIZE};
+    use legit_poker::signing::WithSignature;
+    use serde_json;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     type Curve = G1Projective;
 

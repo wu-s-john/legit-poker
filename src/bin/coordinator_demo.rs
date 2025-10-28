@@ -14,23 +14,25 @@ use tracing::{debug, info, warn};
 use tracing_subscriber::{fmt::time::Uptime, EnvFilter};
 use url::Url;
 
-use zk_poker::db::connect_to_postgres_db;
-use zk_poker::engine::nl::types::{Chips, HandConfig, SeatId, TableStakes};
-use zk_poker::game::coordinator::{
+use legit_poker::db::connect_to_postgres_db;
+use legit_poker::engine::nl::types::{Chips, HandConfig, SeatId, TableStakes};
+use legit_poker::game::coordinator::{
     GameCoordinator, GameCoordinatorConfig, ShufflerSecretConfig, SupabaseRealtimeClientConfig,
 };
-use zk_poker::ledger::lobby::types::{
+use legit_poker::ledger::lobby::types::{
     CommenceGameParams, GameLobbyConfig, GameMetadata, PlayerRecord, PlayerSeatSnapshot,
     RegisterShufflerOutput, ShufflerRecord, ShufflerRegistrationConfig,
 };
-use zk_poker::ledger::snapshot::AnyTableSnapshot;
-use zk_poker::ledger::state::LedgerState;
-use zk_poker::ledger::store::{EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore};
-use zk_poker::ledger::typestate::MaybeSaved;
-use zk_poker::ledger::verifier::{LedgerVerifier, Verifier};
-use zk_poker::ledger::HandId;
-use zk_poker::ledger::{LobbyService, LobbyServiceFactory};
-use zk_poker::shuffling::{draw_shuffler_public_key, make_global_public_keys};
+use legit_poker::ledger::snapshot::AnyTableSnapshot;
+use legit_poker::ledger::state::LedgerState;
+use legit_poker::ledger::store::{
+    EventStore, SeaOrmEventStore, SeaOrmSnapshotStore, SnapshotStore,
+};
+use legit_poker::ledger::typestate::MaybeSaved;
+use legit_poker::ledger::verifier::{LedgerVerifier, Verifier};
+use legit_poker::ledger::{CanonicalKey, HandId};
+use legit_poker::ledger::{LobbyService, LobbyServiceFactory};
+use legit_poker::shuffling::{draw_shuffler_public_key, make_global_public_keys};
 
 const LOG_TARGET: &str = "bin::coordinator_demo";
 const DEFAULT_SUPABASE_URL: &str = "http://127.0.0.1:54321";
@@ -185,7 +187,7 @@ async fn run_demo(config: Config) -> Result<()> {
         "game hosted"
     );
 
-    let mut seated_players =
+    let seated_players =
         seat_players(&lobby, &metadata, &player_specs, lobby_config.buy_in).await?;
     let registered_shufflers = register_shufflers(&lobby, &metadata, &shuffler_materials).await?;
 
@@ -379,7 +381,7 @@ async fn register_shufflers(
 async fn monitor_shuffle_progress(
     state: Arc<LedgerState<Curve>>,
     hand_id: HandId,
-    expected_order: Vec<zk_poker::ledger::CanonicalKey<Curve>>,
+    expected_order: Vec<CanonicalKey<Curve>>,
 ) -> Result<()> {
     let mut observed = 0usize;
     let total = expected_order.len();

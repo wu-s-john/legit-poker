@@ -10,16 +10,19 @@ use ark_ff::{PrimeField, UniformRand};
 use ark_r1cs_std::groups::{CurveVar, GroupOpsBounds};
 use ark_std::rand::{rngs::StdRng, CryptoRng, Rng, RngCore, SeedableRng};
 
-use zk_poker::shuffling::{
-    community_decryption::{decrypt_community_card, CommunityDecryptionShare},
-    curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
-    data_structures::ElGamalCiphertext,
-    permutation_proof::PermutationGroth16,
-    player_decryption::{
-        combine_blinding_contributions_for_player, generate_committee_decryption_share,
-        recover_card_value, PlayerTargetedBlindingContribution,
+use legit_poker::{
+    ledger::CanonicalKey,
+    shuffling::{
+        community_decryption::{decrypt_community_card, CommunityDecryptionShare},
+        curve_absorb::{CurveAbsorb, CurveAbsorbGadget},
+        data_structures::ElGamalCiphertext,
+        permutation_proof::PermutationGroth16,
+        player_decryption::{
+            combine_blinding_contributions_for_player, generate_committee_decryption_share,
+            recover_card_value, PlayerTargetedBlindingContribution,
+        },
+        shuffling_proof::{prove_shuffling, verify_shuffling, ShufflingConfig, ShufflingProof},
     },
-    shuffling_proof::{prove_shuffling, verify_shuffling, ShufflingConfig, ShufflingProof},
 };
 
 // ============================================================================
@@ -246,7 +249,7 @@ where
         .iter()
         .map(|&secret| {
             let public_key = generator * secret;
-            let member_key = zk_poker::ledger::CanonicalKey::new(public_key);
+            let member_key = CanonicalKey::new(public_key);
             generate_committee_decryption_share(&player_ciphertext, secret, member_key)
         })
         .collect();
@@ -316,7 +319,7 @@ where
         .iter()
         .zip(shuffler_public_keys.iter())
         .map(|(&secret, &public_key)| {
-            let member_key = zk_poker::ledger::CanonicalKey::new(public_key);
+            let member_key = CanonicalKey::new(public_key);
             CommunityDecryptionShare::generate(encrypted_card, secret, member_key, rng)
         })
         .collect();
