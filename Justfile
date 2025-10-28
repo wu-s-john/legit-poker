@@ -114,6 +114,12 @@ reset-backend:
     # Uses seed configured in supabase/config.toml if present
     supabase db reset --local --yes
 
+# --- Frontend ---
+
+# Start the frontend development server (Next.js)
+watch-frontend-server:
+    cd zk_poker_frontend && npm run dev
+
 # --- Database / Supabase (replaces Makefile) ---
 
 # Start local Supabase stack

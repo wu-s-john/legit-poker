@@ -84,7 +84,7 @@ export function getCardPosition(
 
   // Offset for the player's card slot container
   // Cards are below the player avatar/name
-  const cardSlotOffsetY = isViewer ? 100 : 80; // Based on avatar size + badge + margin
+  const cardSlotOffsetY = isViewer ? 130 : 110; // Based on avatar size + badge + margin
 
   // Calculate horizontal offset for each card
   // Two cards centered around the player position

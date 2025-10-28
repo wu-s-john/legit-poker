@@ -44,12 +44,6 @@ export function PlayerSeat({ seat: _seat, position, isViewer, name, isActive }: 
         {isViewer && <span className="viewer-star">⭐ </span>}
         {name}
       </div>
-
-      {/* Card slots (rendered by parent) */}
-      <div className="card-slots">
-        <div className="card-placeholder" />
-        <div className="card-placeholder" />
-      </div>
     </div>
   );
 }
