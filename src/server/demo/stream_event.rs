@@ -51,14 +51,6 @@ where
         cards: Vec<Card>,
     },
 
-    /// A player can now decrypt their card (has all unblinding shares).
-    CardDecryptable {
-        game_id: GameId,
-        hand_id: HandId,
-        seat: SeatId,
-        card_position: usize,
-    },
-
     /// Single hole card decrypted (revealed card value).
     /// Emitted once per card for real-time reveals.
     HoleCardsDecrypted {
@@ -66,6 +58,9 @@ where
         hand_id: HandId,
         seat: SeatId,
         card_position: usize,
+        hole_id: u8,
+        #[serde(with = "crate::crypto_serde::curve")]
+        player_public_key: C,
         card: Card,
     },
 
@@ -83,7 +78,6 @@ where
             DemoStreamEvent::HandCreated { .. } => "hand_created",
             DemoStreamEvent::GameEvent { .. } => "game_event",
             DemoStreamEvent::CommunityDecrypted { .. } => "community_decrypted",
-            DemoStreamEvent::CardDecryptable { .. } => "card_decryptable",
             DemoStreamEvent::HoleCardsDecrypted { .. } => "hole_cards_decrypted",
             DemoStreamEvent::HandCompleted { .. } => "hand_completed",
         }

@@ -17,7 +17,6 @@ use crate::ledger::messages::{
     GameShuffleMessage, MetadataEnvelope,
 };
 use crate::shuffling::data_structures::ShuffleProof;
-use crate::shuffling::player_decryption::native::PlayerTargetedBlindingContribution;
 use crate::shuffling::{
     bayer_groth::decomposition::random_permutation as bg_random_permutation,
     shuffle_and_rerandomize_random, CommunityDecryptionShare, ElGamalCiphertext,

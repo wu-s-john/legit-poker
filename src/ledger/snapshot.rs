@@ -925,6 +925,34 @@ where
     P: HandPhase<C>,
     C: CurveGroup,
 {
+    pub fn game_id(&self) -> GameId {
+        self.game_id
+    }
+
+    pub fn hand_id(&self) -> Option<HandId> {
+        self.hand_id
+    }
+
+    pub fn sequence(&self) -> SnapshotSeq {
+        self.sequence
+    }
+
+    pub fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
+        &self.shufflers
+    }
+
+    pub fn players(&self) -> &Shared<PlayerRoster<C>> {
+        &self.players
+    }
+
+    pub fn seating(&self) -> &Shared<SeatingMap<C>> {
+        &self.seating
+    }
+
+    pub fn dealing(&self) -> &P::DealingS {
+        &self.dealing
+    }
+
     pub fn initialize_hash(&mut self, hasher: &dyn LedgerHasher) {
         self.sequence = 0;
         self.previous_hash = None;

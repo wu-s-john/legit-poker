@@ -19,7 +19,7 @@ use common::{
     perform_shuffle_with_proof, setup_game_config, setup_player, setup_shuffler,
 };
 
-use zk_poker::shuffling::data_structures::ElGamalCiphertext;
+use legit_poker::shuffling::data_structures::ElGamalCiphertext;
 
 // Constants for demo
 const N: usize = 52; // Standard deck of cards

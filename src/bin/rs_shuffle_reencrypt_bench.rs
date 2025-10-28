@@ -13,16 +13,17 @@ use ark_serialize::{CanonicalSerialize, Compress};
 use ark_snark::SNARK;
 use ark_std::rand::{rngs::StdRng, SeedableRng};
 use clap::{Parser, ValueEnum};
+use legit_poker::shuffling::{
+    data_structures::{scalar_to_base_field, ElGamalCiphertext},
+    encryption::generate_randomization_array,
+    rs_shuffle::{
+        circuit::RSShuffleWithReencryptionCircuit, native::run_rs_shuffle_permutation, LEVELS, N,
+    },
+};
 use std::time::{Duration, Instant};
 use tracing_subscriber::{
     filter, fmt::format::FmtSpan, fmt::writer::TestWriter, layer::SubscriberExt,
     util::SubscriberInitExt,
-};
-use zk_poker::shuffling::{
-    data_structures::{scalar_to_base_field, ElGamalCiphertext},
-    rs_shuffle::{
-        circuit::RSShuffleWithReencryptionCircuit, native::run_rs_shuffle_permutation, LEVELS, N,
-    },
 };
 
 // Import specific curve implementations
@@ -199,7 +200,7 @@ fn generate_test_data<E, C, const N: usize, const LEVELS: usize>(
     [E::ScalarField; N],
     E::ScalarField,
     E::ScalarField,
-    zk_poker::shuffling::rs_shuffle::data_structures::PermutationWitnessTrace<N, LEVELS>,
+    legit_poker::shuffling::rs_shuffle::data_structures::PermutationWitnessTrace<N, LEVELS>,
     usize,
 )
 where
@@ -231,7 +232,7 @@ where
 
     // Generate re-encryption randomizations (as curve's scalar field)
     let rerandomizations_scalar: [<C::Config as CurveConfig>::ScalarField; N] =
-        zk_poker::shuffling::encryption::generate_randomization_array::<C::Config, N>(rng);
+        generate_randomization_array::<C::Config, N>(rng);
 
     // Convert curve scalar field values to pairing's scalar field for the circuit
     let rerandomizations: [E::ScalarField; N] = std::array::from_fn(|i| {
@@ -507,8 +508,8 @@ fn run_grumpkin_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
          -> Result<Proof<Bn254>, anyhow::Error> {
-            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
-                zk_poker::gpu::groth16_gpu::BN254GPUProver,
+            legit_poker::gpu::groth16_gpu::prove_with_gpu::<
+                legit_poker::gpu::groth16_gpu::BN254GPUProver,
                 _,
                 _,
             >(&pk, circuit, rng)
@@ -556,8 +557,8 @@ fn run_babyjubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
          -> Result<Proof<Bn254>, anyhow::Error> {
-            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
-                zk_poker::gpu::groth16_gpu::BN254GPUProver,
+            legit_poker::gpu::groth16_gpu::prove_with_gpu::<
+                legit_poker::gpu::groth16_gpu::BN254GPUProver,
                 _,
                 _,
             >(&pk, circuit, rng)
@@ -605,8 +606,8 @@ fn run_bandersnatch_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
          -> Result<Proof<Bls12_381>, anyhow::Error> {
-            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
-                zk_poker::gpu::groth16_gpu::BLS12_381GPUProver,
+            legeit_poker::gpu::groth16_gpu::prove_with_gpu::<
+                legeit_poker::gpu::groth16_gpu::BLS12_381GPUProver,
                 _,
                 _,
             >(&pk, circuit, rng)
@@ -654,8 +655,8 @@ fn run_jubjub_benchmark(config: &BenchmarkConfig) -> BenchmarkStats {
          circuit: RSShuffleWithReencryptionCircuit<_, C2, CV, N, LEVELS>,
          rng: &mut StdRng|
          -> Result<Proof<Bls12_381>, anyhow::Error> {
-            zk_poker::gpu::groth16_gpu::prove_with_gpu::<
-                zk_poker::gpu::groth16_gpu::BLS12_381GPUProver,
+            legit_poker::gpu::groth16_gpu::prove_with_gpu::<
+                legit_poker::gpu::groth16_gpu::BLS12_381GPUProver,
                 _,
                 _,
             >(&pk, circuit, rng)
@@ -704,7 +705,7 @@ fn main() {
     // Initialize GPU if requested
     #[cfg(feature = "gpu")]
     if cli.gpu {
-        match zk_poker::gpu::init_gpu_device() {
+        match legit_poker::gpu::init_gpu_device() {
             Ok(_) => eprintln!("✅ GPU device initialized successfully"),
             Err(e) => {
                 eprintln!("❌ Failed to initialize GPU: {}", e);

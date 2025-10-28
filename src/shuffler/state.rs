@@ -20,9 +20,10 @@ use crate::ledger::hash::default_poseidon_hasher;
 use crate::ledger::messages::{
     AnyMessageEnvelope, EnvelopedMessage, GameShuffleMessage, MetadataEnvelope,
 };
+use crate::ledger::snapshot::phases::HandPhase;
 use crate::ledger::snapshot::{
-    CardDestination, CardPlan, DealingSnapshot, DealtCard, PlayerRoster, SeatingMap, Shared,
-    ShufflerRoster, SnapshotSeq, TableAtDealing, TableAtPreflop, TableAtShuffling,
+    CardDestination, CardPlan, DealingSnapshot, DealtCard, Shared, ShufflerRoster, TableAtDealing,
+    TableAtShuffling, TableSnapshot,
 };
 use crate::ledger::store::snapshot::compute_dealing_hash;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
@@ -638,12 +639,12 @@ impl<C: CurveGroup> ShufflerHandState<C> {
             dealing_hash = tracing::field::Empty
         )
     )]
-    pub fn process_snapshot_and_make_responses<T>(
+    pub fn process_snapshot_and_make_responses<P>(
         &mut self,
-        table: &T,
+        table: &TableSnapshot<P, C>,
     ) -> Result<Vec<DealShufflerRequest<C>>>
     where
-        T: DealingTableView<C>,
+        P: HandPhase<C, DealingS = DealingSnapshot<C>>,
         C: CanonicalSerialize + CurveAbsorb<C::BaseField> + Send + Sync + 'static,
         C::BaseField: PrimeField + CanonicalSerialize,
         C::ScalarField: PrimeField + Absorb + CanonicalSerialize,
@@ -885,79 +886,6 @@ impl<C: CurveGroup> ShufflingHandState<C> {
 }
 
 // ============================================================================
-// Dealing State and Types
-// ============================================================================
-
-pub trait DealingTableView<C: CurveGroup> {
-    fn game_id(&self) -> GameId;
-    fn hand_id(&self) -> Option<HandId>;
-    fn sequence(&self) -> SnapshotSeq;
-    fn shufflers(&self) -> &Shared<ShufflerRoster<C>>;
-    fn dealing(&self) -> &DealingSnapshot<C>;
-    fn players(&self) -> &Shared<PlayerRoster<C>>;
-    fn seating(&self) -> &Shared<SeatingMap<C>>;
-}
-
-impl<C: CurveGroup> DealingTableView<C> for TableAtDealing<C> {
-    fn game_id(&self) -> GameId {
-        self.game_id
-    }
-
-    fn hand_id(&self) -> Option<HandId> {
-        self.hand_id
-    }
-
-    fn sequence(&self) -> SnapshotSeq {
-        self.sequence
-    }
-
-    fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
-        &self.shufflers
-    }
-
-    fn dealing(&self) -> &DealingSnapshot<C> {
-        &self.dealing
-    }
-
-    fn players(&self) -> &Shared<PlayerRoster<C>> {
-        &self.players
-    }
-
-    fn seating(&self) -> &Shared<SeatingMap<C>> {
-        &self.seating
-    }
-}
-
-impl<C: CurveGroup> DealingTableView<C> for TableAtPreflop<C> {
-    fn game_id(&self) -> GameId {
-        self.game_id
-    }
-
-    fn hand_id(&self) -> Option<HandId> {
-        self.hand_id
-    }
-
-    fn sequence(&self) -> SnapshotSeq {
-        self.sequence
-    }
-
-    fn shufflers(&self) -> &Shared<ShufflerRoster<C>> {
-        &self.shufflers
-    }
-
-    fn dealing(&self) -> &DealingSnapshot<C> {
-        &self.dealing
-    }
-
-    fn players(&self) -> &Shared<PlayerRoster<C>> {
-        &self.players
-    }
-
-    fn seating(&self) -> &Shared<SeatingMap<C>> {
-        &self.seating
-    }
-}
-
 /// Request emitted to shufflers when they must contribute shares for a specific card.
 #[derive(Clone, Debug)]
 pub enum DealShufflerRequest<C: CurveGroup> {
@@ -1067,9 +995,12 @@ impl<C: CurveGroup> DealingHandState<C> {
     }
 }
 
-fn player_public_key_for_seat<C: CurveGroup, T>(table: &T, seat: SeatId) -> Result<C>
+fn player_public_key_for_seat<C: CurveGroup, P>(
+    table: &TableSnapshot<P, C>,
+    seat: SeatId,
+) -> Result<C>
 where
-    T: DealingTableView<C>,
+    P: HandPhase<C, DealingS = DealingSnapshot<C>>,
 {
     let player_key = table
         .seating()

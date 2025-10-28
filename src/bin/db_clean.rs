@@ -3,7 +3,7 @@ use sea_orm::EntityTrait;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use zk_poker::db::{self, entity::test};
+use legit_poker::db::{self, entity::test};
 
 #[tokio::main]
 async fn main() -> Result<()> {
