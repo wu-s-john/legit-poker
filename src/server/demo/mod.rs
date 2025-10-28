@@ -32,7 +32,7 @@ use crate::shuffling::draw_shuffler_public_key;
 
 use crate::engine::nl::types::{SeatId, TableStakes};
 
-pub(crate) const DEMO_PLAYER_COUNT: usize = 8;
+pub(crate) const DEMO_PLAYER_COUNT: usize = 7;
 pub(crate) const NPC_COUNT: usize = DEMO_PLAYER_COUNT - 1;
 pub(crate) const NPC_NAMES: [&str; NPC_COUNT] = [
     "demo-npc-1",
@@ -41,7 +41,6 @@ pub(crate) const NPC_NAMES: [&str; NPC_COUNT] = [
     "demo-npc-4",
     "demo-npc-5",
     "demo-npc-6",
-    "demo-npc-7",
 ];
 pub(crate) const LOBBY_NAME: &str = "Coordinator Demo Table";
 pub(crate) const LOBBY_CURRENCY: &str = "chips";

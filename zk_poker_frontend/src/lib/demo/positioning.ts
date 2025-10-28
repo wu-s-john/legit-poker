@@ -63,3 +63,38 @@ export function getDeckPosition(
     angle: 0,
   };
 }
+
+/**
+ * Calculate card positions for a player's hole cards
+ * Each player has 2 card slots positioned side by side
+ *
+ * @param playerPosition The player's center position
+ * @param cardIndex Index of the card (0 or 1)
+ * @param isViewer Whether this is the viewer's position (affects card size)
+ * @returns Position for the specific card
+ */
+export function getCardPosition(
+  playerPosition: Position,
+  cardIndex: number,
+  isViewer: boolean
+): Position {
+  // Card dimensions and spacing (must match CSS in demo.css)
+  const cardWidth = isViewer ? 60 : 60; // Both use same width for now
+  const cardGap = 8; // var(--space-2) = 8px
+
+  // Offset for the player's card slot container
+  // Cards are below the player avatar/name
+  const cardSlotOffsetY = isViewer ? 100 : 80; // Based on avatar size + badge + margin
+
+  // Calculate horizontal offset for each card
+  // Two cards centered around the player position
+  const totalWidth = cardWidth * 2 + cardGap;
+  const leftCardX = playerPosition.x - totalWidth / 2 + cardWidth / 2;
+  const rightCardX = playerPosition.x + totalWidth / 2 - cardWidth / 2;
+
+  return {
+    x: cardIndex === 0 ? leftCardX : rightCardX,
+    y: playerPosition.y + cardSlotOffsetY,
+    angle: playerPosition.angle,
+  };
+}
