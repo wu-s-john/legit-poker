@@ -248,7 +248,7 @@ export default function LandingPage() {
       {/* Built Different - Feature Cards */}
       <section
         id="why-different"
-        className="bg-primary-900 py-12 md:py-20 lg:py-32"
+        className="bg-primary-950 py-12 md:py-20 lg:py-32"
       >
         <div
           ref={featuresAnimation.ref}
@@ -313,7 +313,7 @@ export default function LandingPage() {
       {/* Competitive Moat - Table */}
       <section
         id="investors"
-        className="bg-primary-950 py-12 md:py-20 lg:py-32"
+        className="bg-primary-900 py-12 md:py-20 lg:py-32"
       >
         <div
           ref={competitiveAnimation.ref}
@@ -462,7 +462,7 @@ export default function LandingPage() {
       {/* How It Works Section - Interactive Accordions */}
       <section
         id="whitepaper"
-        className="bg-primary-900 py-12 md:py-20 lg:py-32"
+        className="bg-primary-950 py-12 md:py-20 lg:py-32"
       >
         <div
           ref={technicalAnimation.ref}
@@ -490,7 +490,7 @@ export default function LandingPage() {
       </section>
 
       {/* Team Section */}
-      <section className="bg-primary-950 py-12 md:py-20 lg:py-32">
+      <section className="bg-primary-900 py-12 md:py-20 lg:py-32">
         <div
           ref={teamAnimation.ref}
           className={`mx-auto max-w-5xl px-4 transition-all duration-1000 sm:px-6 ${
