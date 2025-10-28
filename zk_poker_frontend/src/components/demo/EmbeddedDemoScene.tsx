@@ -12,7 +12,7 @@
 
 import React, { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { connectDemoStream } from '~/lib/demo/stream';
-import { calculatePlayerPositions, getDeckPosition } from '~/lib/demo/positioning';
+import { calculatePlayerPositions, getDeckPosition, getCardPosition, type Position } from '~/lib/demo/positioning';
 import { demoReducer, initialDemoState, getCardsForSeat, getShuffleProgress } from '~/lib/demo/demoState';
 import { DemoEventHandler } from '~/lib/demo/eventHandlers';
 import { GapDetector } from '~/lib/demo/gapRecovery';
@@ -21,20 +21,16 @@ import type { DemoStreamEvent } from '~/lib/demo/events';
 import { PokerTable } from './PokerTable';
 import { PlayerSeat } from './PlayerSeat';
 import { ShuffleOverlay } from './ShuffleOverlay';
-import { DealingOverlay } from './DealingOverlay';
 import { CompletionOverlay } from './CompletionOverlay';
-import { CornerProgress } from './CornerProgress';
 import { FlyingCard } from './FlyingCard';
-import { Card } from './Card';
-import { StatusText } from './StatusText';
 import './demo.css';
 
 interface FlyingCardAnimation {
   id: string;
   seat: number;
   cardIndex: number;
-  startPosition: { x: number; y: number };
-  endPosition: { x: number; y: number };
+  startPosition: Position;
+  endPosition: Position;
 }
 
 export interface EmbeddedDemoSceneProps {
@@ -205,12 +201,16 @@ export function EmbeddedDemoScene({
 
     if (!playerPos) return;
 
+    // Calculate the specific card position (left or right card slot)
+    const isViewer = seat === state.viewerSeat;
+    const cardPosition = getCardPosition(playerPos.position, cardIndex, isViewer);
+
     const animation: FlyingCardAnimation = {
       id: `card_${seat}_${cardIndex}_${Date.now()}`,
       seat,
       cardIndex,
       startPosition: deckPos,
-      endPosition: playerPos.position,
+      endPosition: cardPosition,
     };
 
     setFlyingCards((prev) => [...prev, animation]);
@@ -246,8 +246,6 @@ export function EmbeddedDemoScene({
 
   // Calculate progress
   const shuffleProgress = getShuffleProgress(state);
-  const totalCards = state.playerCount * 2;
-  const cardsDealt = Array.from(state.cards.values()).filter((c) => c.hasArrived).length;
 
   // Container class names
   const containerClasses = ['demo-scene', 'embedded'].filter(Boolean).join(' ');
@@ -381,22 +379,13 @@ export function EmbeddedDemoScene({
         totalShufflers={state.totalShuffleSteps > 0 ? state.totalShuffleSteps : undefined}
       />
 
-      <DealingOverlay
-        isVisible={state.currentPhase === 'dealing'}
-        currentPlayer={undefined}
-        playerName={undefined}
-      />
+      {/* DealingOverlay removed to allow unobstructed view of card animations */}
 
       <CompletionOverlay
         isVisible={state.currentPhase === 'complete'}
         viewerCards={viewerRevealedCards}
         onNewHand={handleNewHand}
       />
-
-      {/* Corner Progress (visible during dealing) */}
-      {state.currentPhase === 'dealing' && (
-        <CornerProgress totalCards={totalCards} cardsDealt={cardsDealt} />
-      )}
 
       {/* Error display */}
       {state.errorMessage && (
