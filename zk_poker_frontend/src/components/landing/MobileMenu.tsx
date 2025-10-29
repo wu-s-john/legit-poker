@@ -51,35 +51,7 @@ export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
           <nav className="flex-1 overflow-y-auto p-6">
             <div className="space-y-1">
               <Link
-                href="#play"
-                onClick={onClose}
-                className="block rounded-lg px-4 py-3 text-base font-medium text-white transition-colors hover:bg-primary-800"
-              >
-                Play
-              </Link>
-              <Link
-                href="#why-different"
-                onClick={onClose}
-                className="block rounded-lg px-4 py-3 text-base font-medium text-white transition-colors hover:bg-primary-800"
-              >
-                Why different
-              </Link>
-              <Link
-                href="#why-now"
-                onClick={onClose}
-                className="block rounded-lg px-4 py-3 text-base font-medium text-white transition-colors hover:bg-primary-800"
-              >
-                Why now
-              </Link>
-              <Link
-                href="#whitepaper"
-                onClick={onClose}
-                className="block rounded-lg px-4 py-3 text-base font-medium text-white transition-colors hover:bg-primary-800"
-              >
-                Whitepaper
-              </Link>
-              <Link
-                href="#investors"
+                href="/investor"
                 onClick={onClose}
                 className="block rounded-lg px-4 py-3 text-base font-medium text-white transition-colors hover:bg-primary-800"
               >
@@ -93,18 +65,11 @@ export function MobileMenu({ isOpen, onClose }: MobileMenuProps) {
             {/* Auth Links */}
             <div className="space-y-3">
               <Link
-                href="/login"
-                onClick={onClose}
-                className="block rounded-lg px-4 py-3 text-center text-base font-medium text-white transition-colors hover:bg-primary-800"
-              >
-                Login
-              </Link>
-              <Link
-                href="/signup"
+                href="/docs/LegitPoker_Shuffle_and_Deal_Whitepaper.pdf"
                 onClick={onClose}
                 className="block rounded-lg border-2 border-primary-400 px-4 py-3 text-center text-base font-semibold text-primary-400 transition-colors hover:bg-primary-400/10"
               >
-                Sign up
+                White paper
               </Link>
               <Link
                 href="/demo"

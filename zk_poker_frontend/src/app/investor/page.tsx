@@ -2,26 +2,29 @@
 
 import Link from "next/link";
 import { Spade, Lock, GitMerge, Link2, Users } from "lucide-react";
-import { AnnouncementRibbon } from "~/components/landing/AnnouncementRibbon";
-import { PlayerHeroSection } from "~/components/landing/PlayerHeroSection";
-import { ThreePillarsSection } from "~/components/landing/ThreePillarsSection";
-import { FeaturesGridSection } from "~/components/landing/FeaturesGridSection";
+import { InvestorHeroSection } from "~/components/investor/InvestorHeroSection";
+import { MarketOpportunitySection } from "~/components/investor/MarketOpportunitySection";
+import { BuiltDifferentSection } from "~/components/investor/BuiltDifferentSection";
+import { CompetitiveMoatSection } from "~/components/investor/CompetitiveMoatSection";
+import { TeamSection } from "~/components/investor/TeamSection";
+import { InvestorCTASection } from "~/components/investor/InvestorCTASection";
 import { TechnicalAccordion } from "~/components/landing/TechnicalAccordion";
 import { DemoSection } from "~/components/landing/DemoSection";
-import { FinalCTASection } from "~/components/landing/FinalCTASection";
 import { useSmoothScroll } from "~/hooks/useSmoothScroll";
 import { useScrollAnimation } from "~/hooks/useScrollAnimation";
 
-export default function LandingPage() {
+export default function InvestorPage() {
   // Enable smooth scrolling for anchor links
   useSmoothScroll();
 
   // Scroll animations for sections
   const heroAnimation = useScrollAnimation();
-  const pillarsAnimation = useScrollAnimation();
-  const featuresAnimation = useScrollAnimation();
   const demoAnimation = useScrollAnimation();
+  const marketAnimation = useScrollAnimation();
   const technicalAnimation = useScrollAnimation();
+  const builtDifferentAnimation = useScrollAnimation();
+  const competitiveAnimation = useScrollAnimation();
+  const teamAnimation = useScrollAnimation();
   const ctaAnimation = useScrollAnimation();
 
   // Technical accordion content
@@ -124,11 +127,9 @@ export default function LandingPage() {
 
   return (
     <div className="bg-primary-950 min-h-screen">
-      <AnnouncementRibbon />
-
-      {/* Player Hero Section */}
+      {/* Investor Hero Section */}
       <div ref={heroAnimation.ref}>
-        <PlayerHeroSection isVisible={heroAnimation.isVisible} />
+        <InvestorHeroSection isVisible={heroAnimation.isVisible} />
       </div>
 
       {/* Interactive Poker Demo Section */}
@@ -138,20 +139,15 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Three Pillars Section */}
-      <div ref={pillarsAnimation.ref}>
-        <ThreePillarsSection isVisible={pillarsAnimation.isVisible} />
-      </div>
-
-      {/* Features Grid Section */}
-      <div ref={featuresAnimation.ref}>
-        <FeaturesGridSection isVisible={featuresAnimation.isVisible} />
+      {/* Market Opportunity Section */}
+      <div ref={marketAnimation.ref}>
+        <MarketOpportunitySection isVisible={marketAnimation.isVisible} />
       </div>
 
       {/* How It Works Section - Interactive Accordions */}
       <section
         id="whitepaper"
-        className="bg-primary-950 py-12 md:py-20 lg:py-32"
+        className="bg-primary-900 py-12 md:py-20 lg:py-32"
       >
         <div
           ref={technicalAnimation.ref}
@@ -162,7 +158,7 @@ export default function LandingPage() {
           }`}
         >
           <h2 className="mb-8 text-center text-2xl font-bold text-white sm:text-3xl md:mb-12 md:text-4xl">
-            How It Works
+            HOW IT WORKS (Technical)
           </h2>
 
           <TechnicalAccordion items={technicalItems} />
@@ -178,9 +174,24 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Final CTA Section */}
+      {/* Built Different Section */}
+      <div ref={builtDifferentAnimation.ref}>
+        <BuiltDifferentSection isVisible={builtDifferentAnimation.isVisible} />
+      </div>
+
+      {/* Competitive Moat Section */}
+      <div ref={competitiveAnimation.ref}>
+        <CompetitiveMoatSection isVisible={competitiveAnimation.isVisible} />
+      </div>
+
+      {/* Team Section */}
+      <div ref={teamAnimation.ref}>
+        <TeamSection isVisible={teamAnimation.isVisible} />
+      </div>
+
+      {/* Investor CTA Section */}
       <div ref={ctaAnimation.ref}>
-        <FinalCTASection isVisible={ctaAnimation.isVisible} />
+        <InvestorCTASection isVisible={ctaAnimation.isVisible} />
       </div>
 
       {/* Footer */}

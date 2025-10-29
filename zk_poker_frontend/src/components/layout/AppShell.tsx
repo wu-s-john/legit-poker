@@ -13,13 +13,13 @@ interface AppShellProps {
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const isLandingPage = pathname === '/';
+  const isInvestorPage = pathname === '/investor';
   const isDebugPage = pathname?.startsWith('/debug');
 
-  // Show LandingNav only on landing page
+  // Show LandingNav on landing page, investor page, and debug pages
   // Show TopBar on app pages (lobby, room, etc.) but not on debug pages
-  // Show LandingNav on debug pages for consistent navigation
-  const showLandingNav = isLandingPage || isDebugPage;
-  const showTopBar = !isLandingPage && !isDebugPage;
+  const showLandingNav = isLandingPage || isInvestorPage || isDebugPage;
+  const showTopBar = !isLandingPage && !isInvestorPage && !isDebugPage;
 
   return (
     <div className="min-h-screen bg-primary-950">

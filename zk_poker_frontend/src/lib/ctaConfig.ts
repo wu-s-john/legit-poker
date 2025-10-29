@@ -17,14 +17,14 @@ export interface AnnouncementRibbonConfig {
 
 export const announcementRibbon: AnnouncementRibbonConfig = {
   id: 'launch-announcements',
-  badge: 'New',
-  teaser: 'Sign up for launch announcements →',
+  badge: 'Beta',
+  teaser: 'Get early access to LegitPoker →',
   href: '/launch-updates',
   analyticsEvent: 'announcement_ribbon_click',
   page: {
-    title: 'Be first to join the ProofPlay launch',
+    title: 'Join the LegitPoker waitlist',
     description:
-      'Get an email the moment we open private tables, share tournament invites, and publish the technical breakdown for investors.',
+      'Be the first to know when we open tables. Get early access to cryptographically fair, bot-free poker with 2.5% rake.',
     ctaLabel: 'Continue to Typeform',
     typeformUrl: 'https://typeform.com/to/proofplay-launch',
     analyticsEvent: 'launch_updates_typeform_click',
