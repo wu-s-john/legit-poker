@@ -38,8 +38,8 @@ export function PokerTableSection({
       style={{
         background: "linear-gradient(135deg, #0a4d3c 0%, #084a38 50%, #063d2f 100%)",
         borderColor: "var(--color-table-border)", // #1e3a5f
-        // Let content dictate height - table uses aspect-ratio now
-        minHeight: isDemoActive ? 'auto' : '300px', // Only enforce min-height when showing button
+        height: '600px', // Fixed height to match logs panel
+        position: 'relative', // Positioning context for absolute overlays
       }}
     >
       {!isDemoActive ? (
@@ -94,17 +94,21 @@ export function PokerTableSection({
         </div>
       ) : (
         /* Active State: Live Demo Scene */
-        <div className="w-full">
-          <EmbeddedDemoScene
-            isActive={isDemoActive}
-            onEvent={onEvent}
-            showBackground={false}
-            autoScale={true}
-            containerStyle={{
-              width: '100%',
-            }}
-          />
-        </div>
+        <EmbeddedDemoScene
+          isActive={isDemoActive}
+          onEvent={onEvent}
+          showBackground={false}
+          autoScale={true}
+          containerStyle={{
+            width: '100%',
+            // Fill the entire felt area (including padding) for overlays
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+          }}
+        />
       )}
     </div>
   );
