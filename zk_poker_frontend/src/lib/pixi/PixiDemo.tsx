@@ -9,6 +9,7 @@ import { PixiCard, type Suit, type Rank } from './PixiCard';
 import { AnimationManager } from './AnimationManager';
 import { PhysicsManager } from './PhysicsManager';
 import { InputManager } from './InputManager';
+import { loadCardAssets } from './CardAssets';
 import type { DemoState } from '../demo/demoState';
 
 export interface PixiDemoProps {
@@ -89,6 +90,11 @@ const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, playerCo
 
       host.appendChild(app.canvas);
       appRef.current = app;
+
+      // Preload all card assets before creating world
+      console.log('[PixiDemo] Loading card assets...');
+      await loadCardAssets();
+      console.log('[PixiDemo] Card assets loaded successfully');
 
       // Create world container for all game objects
       const world = new Container();

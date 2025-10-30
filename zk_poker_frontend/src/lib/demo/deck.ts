@@ -101,3 +101,21 @@ export function decodeCard(value: number): Card | undefined {
     rank: RANKS[rankIndex],
   };
 }
+
+/**
+ * Convert numeric rank (2-14) to string rank ('2'-'A')
+ * Backend sends ranks as numbers where 11=J, 12=Q, 13=K, 14=A
+ */
+export function rankToString(rank: number | string): Rank {
+  // If already a string, return as-is
+  if (typeof rank === 'string') {
+    return rank as Rank;
+  }
+
+  // Convert numeric rank (2-14) to string
+  if (rank < 2 || rank > 14) {
+    throw new Error(`Invalid rank: ${rank}. Must be between 2 and 14.`);
+  }
+
+  return RANKS[rank - 2];
+}

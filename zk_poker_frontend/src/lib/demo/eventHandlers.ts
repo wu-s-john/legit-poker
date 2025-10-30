@@ -6,7 +6,7 @@ import type { DemoStreamEvent } from "./events";
 import type { AnyActor } from "../schemas/finalizedEnvelopeSchema";
 import type { DemoAction } from "./demoState";
 import type { Card } from "~/types/poker";
-import { generateOrderedDeck, shuffleDeck } from "./deck";
+import { generateOrderedDeck, shuffleDeck, rankToString } from "./deck";
 
 export interface EventHandlerCallbacks {
   onShuffleProgress?: (current: number, total: number) => void;
@@ -299,11 +299,17 @@ export class DemoEventHandler {
     });
 
     // Then reveal the card (only viewer cards will actually show face-up)
+    // Convert numeric rank to string format for display
+    const card: Card = {
+      suit: event.card.suit,
+      rank: rankToString(event.card.rank),
+    };
+
     this.dispatch({
       type: "CARD_REVEALED",
       seat: event.seat,
       cardIndex: event.card_position,
-      card: event.card,
+      card,
     });
 
     this.callbacks.onCardReveal?.(event.seat, event.card_position);
@@ -312,7 +318,7 @@ export class DemoEventHandler {
       type: "UPDATE_STATUS",
       message:
         event.seat === 0
-          ? `Your ${event.card.rank}${this.getSuitSymbol(event.card.suit)} revealed!`
+          ? `Your ${card.rank}${this.getSuitSymbol(card.suit)} revealed!`
           : `Player ${event.seat} card revealed`,
     });
   }

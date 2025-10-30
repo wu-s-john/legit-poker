@@ -25,18 +25,15 @@ const CARD_SIZES = {
   xlarge: { vw: 3.5, minWidth: 55 }, // ~67px at 1920px, min 55px
 };
 
-const SUIT_SYMBOLS: Record<Suit, string> = {
-  spades: '♠',
-  hearts: '♥',
-  diamonds: '♦',
-  clubs: '♣',
-};
-
-const SUIT_COLORS: Record<Suit, string> = {
-  spades: '#000000',
-  hearts: '#c41e3a',
-  diamonds: '#c41e3a',
-  clubs: '#000000',
+// Map suit names to SVG file naming convention
+const getSuitFileName = (suit: Suit): string => {
+  const suitMap: Record<Suit, string> = {
+    hearts: 'Heart',
+    diamonds: 'Diamond',
+    clubs: 'Club',
+    spades: 'Spade',
+  };
+  return suitMap[suit];
 };
 
 export function Card({
@@ -91,12 +88,11 @@ export function Card({
             width: '100%',
             height: '100%',
             backfaceVisibility: 'hidden',
-            background: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)',
             border: decryptable
               ? isViewer
                 ? '2px solid rgba(251, 191, 36, 0.4)' // Gold for viewer
                 : '2px solid rgba(16, 185, 129, 0.4)' // Green for others
-              : '2px solid rgba(255, 255, 255, 0.1)',
+              : 'none',
             borderRadius: '8px',
             display: 'flex',
             alignItems: 'center',
@@ -107,14 +103,25 @@ export function Card({
                 : '0 0 16px rgba(16, 185, 129, 0.6), 0 0 24px rgba(16, 185, 129, 0.3), 0 4px 6px rgba(0, 0, 0, 0.5)'
               : '0 4px 6px rgba(0, 0, 0, 0.5)',
             transition: 'all 0.3s ease-out',
+            overflow: 'hidden',
           }}
         >
+          {/* SVG Card Back Image */}
+          <img
+            src="/cards/card_back.svg"
+            alt="Card back"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              display: 'block',
+            }}
+          />
           <DecryptableBadge
             visible={decryptable && !revealed}
             isViewer={isViewer}
             size={size === 'xlarge' ? 'large' : size}
           />
-          <span className="card-back-emoji" style={{ opacity: 0.7 }}>🃏</span>
         </div>
 
         {/* Card Front */}
@@ -127,60 +134,22 @@ export function Card({
               height: '100%',
               backfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
-              background: '#ffffff',
-              border: '2px solid #d1d5db',
               borderRadius: '8px',
               boxShadow: '0 8px 16px rgba(0, 0, 0, 0.5)',
-              color: SUIT_COLORS[card.suit],
-              fontFamily: 'serif',
-              fontWeight: 'bold',
+              overflow: 'hidden',
             }}
           >
-            {/* Top-left corner */}
-            <div
+            {/* SVG Card Image */}
+            <img
+              src={`/cards/${getSuitFileName(card.suit)}_${card.rank}.svg`}
+              alt={`${card.rank} of ${card.suit}`}
               style={{
-                position: 'absolute',
-                top: '6px',
-                left: '6px',
-                lineHeight: 1,
-                textAlign: 'center',
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: 'block',
               }}
-            >
-              <div className="card-corner">{card.rank}</div>
-              <div className="card-corner" style={{ fontSize: '1em' }}>
-                {SUIT_SYMBOLS[card.suit]}
-              </div>
-            </div>
-
-            {/* Center suit */}
-            <div
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                lineHeight: 1,
-              }}
-            >
-              <span className="card-center-suit">{SUIT_SYMBOLS[card.suit]}</span>
-            </div>
-
-            {/* Bottom-right corner (rotated 180°) */}
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '6px',
-                right: '6px',
-                lineHeight: 1,
-                textAlign: 'center',
-                transform: 'rotate(180deg)',
-              }}
-            >
-              <div className="card-corner">{card.rank}</div>
-              <div className="card-corner" style={{ fontSize: '1em' }}>
-                {SUIT_SYMBOLS[card.suit]}
-              </div>
-            </div>
+            />
           </div>
         )}
       </div>
