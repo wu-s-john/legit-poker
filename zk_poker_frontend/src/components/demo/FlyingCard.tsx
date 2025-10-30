@@ -51,8 +51,8 @@ export function FlyingCard({
       <div
         style={{
           position: 'absolute',
-          left: `${endPosition.x}px`,
-          top: `${endPosition.y}px`,
+          left: `${endPosition.x}%`,
+          top: `${endPosition.y}%`,
           transform: 'translate(-50%, -50%)',
           pointerEvents: 'none',
           zIndex: 10,
@@ -69,20 +69,25 @@ export function FlyingCard({
     );
   }
 
+  // Card sizes using viewport width (vw) matching Card component
+  const cardVw = isForYou ? 2.8 : 2.3; // Slightly smaller during flight
+  const minWidth = isForYou ? 42 : 35;
+
   // During animation: show card back emoji with Framer Motion
+  // Note: Framer Motion animates left/top as percentages when positions are percentages
   return (
     <motion.div
       className="flying-card"
       initial={{
-        left: startPosition.x,
-        top: startPosition.y,
+        left: `${startPosition.x}%`,
+        top: `${startPosition.y}%`,
         rotate: 0,
         scale: 0.8,
         opacity: 1,
       }}
       animate={{
-        left: [startPosition.x, midX, endPosition.x],
-        top: [startPosition.y, midY, endPosition.y],
+        left: [`${startPosition.x}%`, `${midX}%`, `${endPosition.x}%`],
+        top: [`${startPosition.y}%`, `${midY}%`, `${endPosition.y}%`],
         rotate: [0, 120, 360],
         scale: [0.8, 1.1, 1],
         opacity: 1,
@@ -101,21 +106,21 @@ export function FlyingCard({
         position: 'absolute',
         x: '-50%',
         y: '-50%',
-        width: isForYou ? '56px' : '48px',
-        height: isForYou ? '80px' : '64px',
+        width: `${cardVw}vw`,
+        minWidth: `${minWidth}px`,
+        aspectRatio: '5 / 7', // Standard playing card ratio
         background: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)',
         border: '2px solid rgba(255, 255, 255, 0.1)',
         borderRadius: '8px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: isForYou ? '28px' : '24px',
         pointerEvents: 'none',
         zIndex: hasLanded ? 10 : 100,
         boxShadow: `0 0 20px ${glowColor}`,
       }}
     >
-      <span style={{ opacity: 0.7 }}>🃏</span>
+      <span className={isForYou ? 'flying-card-emoji-viewer' : 'flying-card-emoji'}>🃏</span>
     </motion.div>
   );
 }

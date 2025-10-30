@@ -51,9 +51,9 @@ build-gpu:
 build-legit-server:
     cargo build --bin legit_poker_server
 
-# Run the legit poker server (passthrough args after `--`)
+# Run the legit poker server in release mode (passthrough args after `--`)
 run-legit-server *ARGS:
-    RUST_LOG={{ RUST_LOG }} cargo run --bin legit_poker_server -- {{ ARGS }}
+    RUST_LOG={{ RUST_LOG }} RUST_MIN_STACK=33554432 cargo run --release --bin legit_poker_server -- {{ ARGS }}
 
 # Run the legit poker server with hot reloading (watches for file changes)
 watch-legit-server *ARGS:

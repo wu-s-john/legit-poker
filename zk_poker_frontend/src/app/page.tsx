@@ -190,7 +190,10 @@ export default function LandingPage() {
             <Link href="/about" className="hover:text-primary-100 py-1">
               About
             </Link>
-            <Link href="/docs/LegitPoker_Shuffle_and_Deal_Whitepaper.pdf" className="hover:text-primary-100 py-1">
+            <Link
+              href="/docs/LegitPoker_Shuffle_and_Deal_Whitepaper.pdf"
+              className="hover:text-primary-100 py-1"
+            >
               Whitepaper
             </Link>
             <Link href="/terms" className="hover:text-primary-100 py-1">

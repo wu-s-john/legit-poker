@@ -140,7 +140,7 @@ export default function PrivateTablePage() {
                 onChange={handleChange}
                 className="w-full rounded-lg border border-primary-700 bg-primary-800 px-4 py-3 text-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/50"
               >
-                <option value="NLHE">No-Limit Hold'em (NLHE)</option>
+                <option value="NLHE">No-Limit Hold&apos;em (NLHE)</option>
                 <option value="PLO">Pot-Limit Omaha (PLO)</option>
               </select>
             </div>
@@ -261,7 +261,7 @@ export default function PrivateTablePage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary-400">2.</span>
-              <span>You'll be redirected to the table lobby</span>
+              <span>You&apos;ll be redirected to the table lobby</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary-400">3.</span>

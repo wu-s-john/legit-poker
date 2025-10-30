@@ -15,8 +15,11 @@ export function PokerTable({ children }: PokerTableProps) {
         {/* Table felt */}
         <div className="table-felt" />
 
-        {/* Children (players, deck, etc.) */}
-        {children}
+        {/* Inner content area - positioning reference within padding safe zone */}
+        <div className="poker-content">
+          {/* Children (players, deck, etc.) */}
+          {children}
+        </div>
       </div>
     </div>
   );

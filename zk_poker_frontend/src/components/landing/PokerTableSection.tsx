@@ -34,10 +34,12 @@ export function PokerTableSection({
 
   return (
     <div
-      className="rounded-xl md:rounded-2xl border-2 md:border-4 p-8 min-h-[400px] md:min-h-[600px] flex items-center justify-center overflow-hidden"
+      className="rounded-xl md:rounded-2xl border-2 md:border-4 p-4 md:p-8 flex items-center justify-center overflow-hidden"
       style={{
         background: "linear-gradient(135deg, #0a4d3c 0%, #084a38 50%, #063d2f 100%)",
         borderColor: "var(--color-table-border)", // #1e3a5f
+        // Let content dictate height - table uses aspect-ratio now
+        minHeight: isDemoActive ? 'auto' : '300px', // Only enforce min-height when showing button
       }}
     >
       {!isDemoActive ? (
@@ -92,14 +94,14 @@ export function PokerTableSection({
         </div>
       ) : (
         /* Active State: Live Demo Scene */
-        <div className="h-full">
+        <div className="w-full">
           <EmbeddedDemoScene
             isActive={isDemoActive}
             onEvent={onEvent}
             showBackground={false}
             autoScale={true}
             containerStyle={{
-              height: '100%'
+              width: '100%',
             }}
           />
         </div>

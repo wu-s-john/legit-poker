@@ -261,6 +261,9 @@ export function EmbeddedDemoScene({
   // Show loading state while initializing
   const isLoading = isActive && !hasInitialized && !state.errorMessage;
 
+  // Only show table elements after demo has initialized
+  const shouldShowTable = isActive && hasInitialized;
+
   return (
     <div className={containerClasses} style={finalContainerStyle}>
       {/* Loading state */}
@@ -295,32 +298,31 @@ export function EmbeddedDemoScene({
         </div>
       )}
 
-      <PokerTable>
+      {/* Only render table when demo is active and initialized */}
+      {shouldShowTable && (
+        <PokerTable>
         {/* Deck visualization */}
         <div
           className="deck-indicator"
           style={{
             position: 'absolute',
-            left: `${deckPosition.x}px`,
-            top: `${deckPosition.y}px`,
+            left: `${deckPosition.x}%`,
+            top: `${deckPosition.y}%`,
             transform: 'translate(-50%, -50%)',
           }}
         >
           <div
             className="deck-icon"
             style={{
-              width: '80px',
-              height: '112px',
               background: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)',
               borderRadius: '8px',
               border: '2px solid rgba(255, 255, 255, 0.1)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '32px',
             }}
           >
-            🃏
+            <span className="deck-emoji">🃏</span>
           </div>
         </div>
 
@@ -371,8 +373,11 @@ export function EmbeddedDemoScene({
           );
         })}
       </PokerTable>
+      )}
 
-      {/* Phase Overlays */}
+      {/* Phase Overlays - always render if active to show loading/error states */}
+      {isActive && (
+        <>
       <ShuffleOverlay
         progress={shuffleProgress}
         isVisible={state.currentPhase === 'shuffling'}
@@ -387,6 +392,8 @@ export function EmbeddedDemoScene({
         viewerCards={viewerRevealedCards}
         onNewHand={handleNewHand}
       />
+        </>
+      )}
 
       {/* Error display */}
       {state.errorMessage && (

@@ -14,15 +14,19 @@ interface PlayerSeatProps {
 }
 
 export function PlayerSeat({ seat: _seat, position, isViewer, name, isActive }: PlayerSeatProps) {
-  const avatarSize = isViewer ? 100 : 80;
+  // Avatar sizes using viewport width (vw) for consistent scaling
+  // Min/max bounds prevent too small or too large avatars
+  const avatarVw = isViewer ? 5 : 4; // ~96px viewer, ~77px others at 1920px viewport
+  const minSize = isViewer ? 70 : 60; // Minimum pixel size
+  const maxSize = isViewer ? 110 : 90; // Maximum pixel size
 
   return (
     <div
       className="player-seat"
       style={{
         position: 'absolute',
-        left: `${position.x}px`,
-        top: `${position.y}px`,
+        left: `${position.x}%`,
+        top: `${position.y}%`,
         transform: 'translate(-50%, -50%)',
       }}
     >
@@ -30,8 +34,10 @@ export function PlayerSeat({ seat: _seat, position, isViewer, name, isActive }: 
       <div
         className={`player-avatar ${isViewer ? 'you' : ''} ${isActive ? 'active' : ''}`}
         style={{
-          width: `${avatarSize}px`,
-          height: `${avatarSize}px`,
+          width: `${avatarVw}vw`,
+          minWidth: `${minSize}px`,
+          maxWidth: `${maxSize}px`,
+          aspectRatio: '1', // Square avatar
         }}
       >
         <div className="avatar-placeholder">

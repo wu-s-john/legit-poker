@@ -71,7 +71,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
 
   return (
     <div
-      className={`mx-auto max-w-6xl px-4 transition-all duration-1000 sm:px-6 ${
+      className={`mx-auto max-w-[1600px] px-4 transition-all duration-1000 sm:px-6 ${
         isVisible ? "translate-y-0 opacity-100" : "translate-y-10 opacity-0"
       }`}
     >
@@ -81,8 +81,8 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
 
       {/* Desktop/Tablet: Side-by-side layout */}
       <div className="flex flex-col gap-6 lg:flex-row">
-        {/* Left: Poker Table - 1600px desktop, 67% tablet */}
-        <div className="flex-1 lg:max-w-[1600px]">
+        {/* Left: Poker Table - 2/3 width on desktop */}
+        <div className="w-full lg:w-2/3">
           <PokerTableSection
             isDemoActive={isDemoActive}
             onStartDemo={handleStartDemo}
@@ -91,9 +91,9 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
           />
         </div>
 
-        {/* Right: Protocol Logs - 340px desktop (26%), 33% tablet */}
+        {/* Right: Protocol Logs - 1/3 width on desktop */}
         {/* Hidden on mobile */}
-        <div className="hidden md:block md:w-1/3 lg:w-[340px]">
+        <div className="hidden md:block w-full lg:w-1/3">
           {isDemoActive ? (
             <CompactTableLogsPanel
               variant="embedded"

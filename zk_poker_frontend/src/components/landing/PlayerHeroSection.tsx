@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Play } from "lucide-react";
+import { Play, Shield } from "lucide-react";
 
 interface PlayerHeroSectionProps {
   isVisible: boolean;
@@ -17,6 +17,8 @@ export function PlayerHeroSection({ isVisible }: PlayerHeroSectionProps) {
             : "translate-y-10 opacity-0"
         }`}
       >
+        <Shield className="text-primary-400 mx-auto mb-6 h-10 w-10 md:h-12 md:w-12" />
+
         <h1 className="mb-6 text-3xl leading-tight font-bold text-white sm:text-4xl md:text-5xl lg:text-6xl">
           Online Poker You Can Actually Trust
         </h1>

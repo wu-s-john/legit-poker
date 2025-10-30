@@ -83,28 +83,36 @@
 /* ============================================
    Poker Table Container
    ============================================ */
+
+/* Outer wrapper for centering the entire table */
+.poker-table-scale-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+/* Main container with padding safe zone */
 .poker-table-container {
   position: relative;
-  width: 1920px;
-  height: 800px;
+  width: 100%;
+  aspect-ratio: 2.4 / 1; /* 1920:800 = 2.4:1 */
   margin: 0 auto;
+  /* max-width removed to allow full expansion */
   overflow: visible;
+  padding: 40px 20px; /* Reduced padding - still provides safe zone but less wasteful */
+  box-sizing: border-box;
 }
 
-/* Scale-aware wrapper - constrains layout space to scaled dimensions */
-.poker-table-scale-wrapper {
-  position: relative;
-  margin: 0 auto;
-  max-width: 100%; /* Never exceed parent container width */
-  /* Dimensions set per breakpoint below */
-}
-
-/* Position the container absolutely within wrapper to prevent offset */
-.demo-scene.embedded .poker-table-scale-wrapper .poker-table-container {
+/* Inner content area - true positioning reference that respects padding */
+.poker-content {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform-origin: center center;
+  top: 40px;
+  left: 20px;
+  right: 20px;
+  bottom: 40px;
+  /* This creates the actual positioning reference for children */
+  /* All percentage-based positions will be relative to this container */
 }
 
 .table-felt {
@@ -112,20 +120,22 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 1200px;
-  height: 600px;
+  width: 85%; /* Container-relative - scales with poker-table-container */
+  height: 35%; /* Maintains elliptical proportion relative to container height */
+  min-width: 400px; /* Prevents too small on mobile */
+  min-height: 200px;
+  /* max-width/max-height removed to allow full expansion */
   background: radial-gradient(
     ellipse at center,
     var(--poker-felt-highlight) 0%,
     var(--poker-felt-mid) 40%,
     var(--poker-felt-base) 100%
   );
-  border-radius: 300px;
+  border-radius: 50%; /* Creates perfect ellipse */
   box-shadow:
     inset 0 0 80px rgba(0, 0, 0, 0.5),
     inset 0 0 160px rgba(0, 0, 0, 0.2),
     0 8px 32px rgba(0, 0, 0, 0.4);
-  position: relative;
 }
 
 /* Inner felt texture overlay */
@@ -144,7 +154,7 @@
       rgba(255, 255, 255, 0.02) 0%,
       transparent 40%
     );
-  border-radius: 300px;
+  border-radius: 25%; /* Match parent felt border-radius */
   pointer-events: none;
 }
 
@@ -187,8 +197,26 @@
 }
 
 .avatar-placeholder {
-  font-size: 40px;
+  font-size: 40px; /* Desktop default */
   opacity: 0.7;
+}
+
+@media (max-width: 1280px) {
+  .avatar-placeholder {
+    font-size: 35px;
+  }
+}
+
+@media (max-width: 768px) {
+  .avatar-placeholder {
+    font-size: 28px;
+  }
+}
+
+@media (max-width: 640px) {
+  .avatar-placeholder {
+    font-size: 24px;
+  }
 }
 
 .player-name-badge {
@@ -197,7 +225,7 @@
   backdrop-filter: blur(16px) saturate(130%);
   border: 2px solid var(--color-border-emphasis);
   border-radius: var(--radius-md);
-  font-size: 18px;
+  font-size: 18px; /* Desktop default */
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
@@ -205,6 +233,27 @@
     0 3px 12px rgba(0, 0, 0, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
   letter-spacing: 0.01em;
+}
+
+@media (max-width: 1280px) {
+  .player-name-badge {
+    font-size: 16px;
+    padding: 5px 10px;
+  }
+}
+
+@media (max-width: 768px) {
+  .player-name-badge {
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .player-name-badge {
+    font-size: 12px;
+    padding: 3px 6px;
+  }
 }
 
 .viewer-badge {
@@ -217,7 +266,154 @@
 }
 
 .viewer-star {
-  font-size: 18px;
+  font-size: 18px; /* Desktop default */
+}
+
+@media (max-width: 1280px) {
+  .viewer-star {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .viewer-star {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .viewer-star {
+    font-size: 12px;
+  }
+}
+
+/* Card font sizes - scale with card component size */
+.card-back-emoji {
+  font-size: 1.5em; /* Desktop default - scales with card */
+}
+
+.card-center-suit {
+  font-size: 2.1em; /* Desktop default - 70% of card width equivalent */
+}
+
+.card-corner {
+  font-size: 0.75em; /* Desktop default - 25% of card width equivalent */
+}
+
+@media (max-width: 1280px) {
+  .card-back-emoji {
+    font-size: 1.4em;
+  }
+  .card-center-suit {
+    font-size: 2em;
+  }
+  .card-corner {
+    font-size: 0.7em;
+  }
+}
+
+@media (max-width: 768px) {
+  .card-back-emoji {
+    font-size: 1.3em;
+  }
+  .card-center-suit {
+    font-size: 1.9em;
+  }
+  .card-corner {
+    font-size: 0.65em;
+  }
+}
+
+@media (max-width: 640px) {
+  .card-back-emoji {
+    font-size: 1.2em;
+  }
+  .card-center-suit {
+    font-size: 1.8em;
+  }
+  .card-corner {
+    font-size: 0.6em;
+  }
+}
+
+/* Deck icon sizing - scales with viewport */
+.deck-icon {
+  width: 4.2vw; /* Desktop default - ~80px at 1920px */
+  min-width: 60px;
+  max-width: 90px;
+  aspect-ratio: 5 / 7; /* Standard card ratio */
+}
+
+.deck-emoji {
+  font-size: 32px; /* Desktop default */
+}
+
+@media (max-width: 1280px) {
+  .deck-icon {
+    min-width: 55px;
+    max-width: 80px;
+  }
+  .deck-emoji {
+    font-size: 28px;
+  }
+}
+
+@media (max-width: 768px) {
+  .deck-icon {
+    min-width: 50px;
+    max-width: 70px;
+  }
+  .deck-emoji {
+    font-size: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .deck-icon {
+    min-width: 45px;
+    max-width: 60px;
+  }
+  .deck-emoji {
+    font-size: 20px;
+  }
+}
+
+/* Flying card emoji sizing - scales with card during animation */
+.flying-card-emoji-viewer {
+  font-size: 1.4em; /* Desktop default - larger for viewer */
+  opacity: 0.7;
+}
+
+.flying-card-emoji {
+  font-size: 1.2em; /* Desktop default - for other players */
+  opacity: 0.7;
+}
+
+@media (max-width: 1280px) {
+  .flying-card-emoji-viewer {
+    font-size: 1.35em;
+  }
+  .flying-card-emoji {
+    font-size: 1.15em;
+  }
+}
+
+@media (max-width: 768px) {
+  .flying-card-emoji-viewer {
+    font-size: 1.3em;
+  }
+  .flying-card-emoji {
+    font-size: 1.1em;
+  }
+}
+
+@media (max-width: 640px) {
+  .flying-card-emoji-viewer {
+    font-size: 1.25em;
+  }
+  .flying-card-emoji {
+    font-size: 1.05em;
+  }
 }
 
 .card-slots {
@@ -642,73 +838,45 @@
   position: absolute; /* Instead of fixed */
 }
 
-/* Responsive scaling for embedded poker table (1920px base → fit container) */
+/* Responsive breakpoints for embedded poker table */
 
-/* Desktop: Scale 0.8 for medium-large screens */
-/* Parent: 1600px max-width - 64px padding = 1536px available */
-/* Scale: 1536 ÷ 1920 = 0.8 → wrapper: 1536px × 640px */
-@media (min-width: 1281px) and (max-width: 1535px) {
-  .demo-scene.embedded .poker-table-scale-wrapper {
-    width: 100%;
-    max-width: 1536px;
-    height: 640px;
-  }
-
-  .demo-scene.embedded .poker-table-container {
-    transform: translate(-50%, -50%) scale(0.8);
-  }
-}
-
-/* XL Desktop: Scale 0.4 for fullscreen to fit viewport height */
-/* Scale: 1920 × 0.4 = 768px, 800 × 0.4 = 320px */
-@media (min-width: 1536px) {
-  .demo-scene.embedded .poker-table-scale-wrapper {
-    width: 100%;
-    max-width: 768px;
-    height: 320px;
-  }
-
-  .demo-scene.embedded .poker-table-container {
-    transform: translate(-50%, -50%) scale(0.4);
-  }
-}
-
-/* Tablet: 1920 × 800 scaled to 0.4 = 768 × 320 */
+/* Tablet and smaller - reduce padding proportionally */
 @media (max-width: 1280px) {
-  .demo-scene.embedded .poker-table-scale-wrapper {
-    width: 100%;
-    max-width: 768px;
-    height: 320px;
+  .poker-table-container {
+    /* max-width removed - allows full expansion */
+    padding: 30px 15px; /* Proportionally reduced */
   }
-
-  .demo-scene.embedded .poker-table-container {
-    transform: translate(-50%, -50%) scale(0.4);
-  }
-}
-
-/* Mobile landscape: 1920 × 800 scaled to 0.35 = 672 × 280 */
-@media (max-width: 920px) {
-  .demo-scene.embedded .poker-table-scale-wrapper {
-    width: 100%;
-    max-width: 672px;
-    height: 280px;
-  }
-
-  .demo-scene.embedded .poker-table-container {
-    transform: translate(-50%, -50%) scale(0.35);
+  .poker-content {
+    top: 30px;
+    left: 15px;
+    right: 15px;
+    bottom: 30px;
   }
 }
 
-/* Mobile portrait: 1920 × 800 scaled to 0.3 = 576 × 240 */
+@media (max-width: 768px) {
+  .poker-table-container {
+    /* max-width removed */
+    padding: 25px 12px; /* Even less padding on small tablet */
+  }
+  .poker-content {
+    top: 25px;
+    left: 12px;
+    right: 12px;
+    bottom: 25px;
+  }
+}
+
 @media (max-width: 640px) {
-  .demo-scene.embedded .poker-table-scale-wrapper {
-    width: 100%;
-    max-width: 576px;
-    height: 240px;
+  .poker-table-container {
+    /* max-width removed */
+    padding: 20px 10px; /* Minimal padding on mobile */
   }
-
-  .demo-scene.embedded .poker-table-container {
-    transform: translate(-50%, -50%) scale(0.3);
+  .poker-content {
+    top: 20px;
+    left: 10px;
+    right: 10px;
+    bottom: 20px;
   }
 }
 
