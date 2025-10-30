@@ -218,7 +218,7 @@ const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, playerCo
         if (!card) return;
 
         // Update decryptable state
-        if (cardState.decryptable && !card.getContainer().filters) {
+        if (cardState.decryptable) {
           card.setState('decryptable');
         }
 

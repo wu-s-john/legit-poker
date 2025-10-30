@@ -1,4 +1,4 @@
-import { Graphics, Container, Text, TextStyle, BlurFilter, Rectangle } from 'pixi.js';
+import { Graphics, Container, Text, TextStyle, Rectangle } from 'pixi.js';
 import type { Point } from './utils';
 
 export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades';
@@ -23,9 +23,10 @@ export class PixiCard {
   private config: CardConfig;
   private state: CardState = 'face_down';
   private isFlipping = false;
-  private glowFilter: BlurFilter | null = null;
   private rankText: Text | null = null;
   private suitText: Text | null = null;
+  private keyBadge: Text | null = null;
+  private decryptableBorder: Graphics | null = null;
 
   constructor(config: CardConfig) {
     this.container = new Container();
@@ -44,6 +45,9 @@ export class PixiCard {
     // Initially show only the back
     this.backCard.visible = true;
     this.frontCard.visible = false;
+
+    // Create key badge for decryptable state indicator
+    this.createKeyBadge();
 
     // Position card
     this.container.position.set(config.position.x, config.position.y);
@@ -172,7 +176,40 @@ export class PixiCard {
     }
   }
 
-  private onHover(isHovered: boolean): void {
+  private createKeyBadge(): void {
+    const { width, height } = this.config;
+
+    this.keyBadge = new Text({
+      text: '🔑',
+      style: new TextStyle({
+        fontSize: width * 0.25, // Scale with card size
+        align: 'center',
+      }),
+    });
+
+    // Position in top-right corner (4px padding from edges)
+    this.keyBadge.anchor.set(1, 0); // Anchor at top-right of text
+    this.keyBadge.position.set(width / 2 - 4, -height / 2 + 4);
+    this.keyBadge.visible = false; // Hidden by default
+
+    // No blur filter on badge (border provides enough emphasis)
+
+    this.container.addChild(this.keyBadge);
+  }
+
+  private createDecryptableBorder(): Graphics {
+    const { width, height } = this.config;
+    const color = this.config.seatIndex === 0 ? 0xffd700 : 0x90ee90; // Gold or green
+
+    const border = new Graphics();
+    border.stroke({ color, width: 4, alpha: 0.9 });
+    border.roundRect(-width / 2 - 2, -height / 2 - 2, width + 4, height + 4, 10);
+    border.stroke();
+
+    return border;
+  }
+
+  private onHover(isHovered: boolean): void{
     if (this.state === 'decryptable' && isHovered) {
       this.container.alpha = 0.9;
     } else {
@@ -184,19 +221,30 @@ export class PixiCard {
     this.state = state;
 
     if (state === 'decryptable') {
-      // Add glow effect for decryptable cards
-      this.glowFilter ??= new BlurFilter({ strength: 8, quality: 4 });
-      this.container.filters = [this.glowFilter];
-
-      // Change tint based on viewer
-      if (this.config.seatIndex === 0) {
-        this.backCard.tint = 0xffd700; // Gold for viewer
-      } else {
-        this.backCard.tint = 0x90ee90; // Light green for others
+      // Create and show border (if not already created)
+      if (!this.decryptableBorder) {
+        this.decryptableBorder = this.createDecryptableBorder();
+        this.container.addChildAt(this.decryptableBorder, 1); // Behind card back but above table
       }
+      this.decryptableBorder.visible = true;
+
+      // Show key badge
+      if (this.keyBadge) {
+        this.keyBadge.visible = true;
+      }
+
+      // NO blur filter
+      // NO tint changes (keep cards natural color)
     } else {
-      this.container.filters = [];
-      this.backCard.tint = 0xffffff; // Reset tint
+      // Hide border
+      if (this.decryptableBorder) {
+        this.decryptableBorder.visible = false;
+      }
+
+      // Hide key badge
+      if (this.keyBadge) {
+        this.keyBadge.visible = false;
+      }
     }
   }
 
@@ -226,6 +274,16 @@ export class PixiCard {
           if (this.backCard.visible) {
             this.backCard.visible = false;
             this.frontCard.visible = true;
+
+            // Hide key badge when revealing card
+            if (this.keyBadge) {
+              this.keyBadge.visible = false;
+            }
+
+            // Hide border when revealing card
+            if (this.decryptableBorder) {
+              this.decryptableBorder.visible = false;
+            }
           }
           const scaleProgress = (progress - 0.5) * 2;
           this.container.scale.x = startScaleX * scaleProgress;
@@ -278,6 +336,18 @@ export class PixiCard {
   }
 
   public destroy(): void {
+    // Clean up key badge
+    if (this.keyBadge) {
+      this.keyBadge.destroy();
+      this.keyBadge = null;
+    }
+
+    // Clean up decryptable border
+    if (this.decryptableBorder) {
+      this.decryptableBorder.destroy();
+      this.decryptableBorder = null;
+    }
+
     this.container.destroy({ children: true });
   }
 }
