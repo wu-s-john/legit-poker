@@ -89,6 +89,26 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
             sseStatus={status}
             onEvent={handleDemoEvent}
           />
+
+          {/* Mobile: "View Logs" Button - directly under table */}
+          {isDemoActive && (
+            <button
+              onClick={() => setShowLogModal(true)}
+              className="mx-auto mt-4 flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg md:hidden"
+              style={{
+                backgroundColor: "#3b82f6",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = "#2563eb";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "#3b82f6";
+              }}
+            >
+              <span>📋</span>
+              <span>Logs ({messages.length})</span>
+            </button>
+          )}
         </div>
 
         {/* Right: Protocol Logs - 1/3 width on desktop */}
@@ -123,26 +143,6 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
           )}
         </div>
       </div>
-
-      {/* Mobile: Floating "View Logs" Button */}
-      {isDemoActive && (
-        <button
-          onClick={() => setShowLogModal(true)}
-          className="fixed right-6 bottom-6 z-50 flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-lg md:hidden"
-          style={{
-            backgroundColor: "#3b82f6",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "#2563eb";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "#3b82f6";
-          }}
-        >
-          <span>📋</span>
-          <span>Logs ({messages.length})</span>
-        </button>
-      )}
 
       {/* Mobile: Logs Modal */}
       <AnimatePresence>
