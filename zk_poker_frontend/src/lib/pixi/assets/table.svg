@@ -1,0 +1,93 @@
+<svg viewBox="0 0 1400 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Drop shadow for floating effect -->
+    <filter id="dropShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dx="0" dy="8" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.3"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Leather texture gradient (subtle dark gradient) -->
+    <radialGradient id="leatherGradient" cx="50%" cy="50%">
+      <stop offset="0%" style="stop-color:#2a2a2a;stop-opacity:1" />
+      <stop offset="70%" style="stop-color:#1a1a1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d0d0d;stop-opacity:1" />
+    </radialGradient>
+
+    <!-- Wood rail metallic gradient (copper to bronze) -->
+    <radialGradient id="woodRailGradient" cx="50%" cy="50%">
+      <stop offset="0%" style="stop-color:#CD7F32;stop-opacity:1" />
+      <stop offset="40%" style="stop-color:#B8733A;stop-opacity:1" />
+      <stop offset="70%" style="stop-color:#8B4513;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#704214;stop-opacity:1" />
+    </radialGradient>
+
+    <!-- Inner bevel highlight -->
+    <radialGradient id="bevelHighlight" cx="50%" cy="40%">
+      <stop offset="0%" style="stop-color:#F5C88F;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#E6A85C;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D4983D;stop-opacity:1" />
+    </radialGradient>
+
+    <!-- Felt surface gradient (bright center to dark edges) -->
+    <radialGradient id="feltGradient" cx="50%" cy="50%">
+      <stop offset="0%" style="stop-color:#1a6b3f;stop-opacity:1" />
+      <stop offset="60%" style="stop-color:#155a34;stop-opacity:1" />
+      <stop offset="85%" style="stop-color:#104a2a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d3a22;stop-opacity:1" />
+    </radialGradient>
+
+    <!-- Subtle noise texture for leather (optional enhancement) -->
+    <filter id="noiseTexture">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="1"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncA type="discrete" tableValues="0 0 0 0 1"/>
+      </feComponentTransfer>
+      <feBlend mode="overlay" in2="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <!-- Layer 1: Outer leather rail with drop shadow -->
+  <ellipse
+    cx="700"
+    cy="400"
+    rx="660"
+    ry="360"
+    fill="url(#leatherGradient)"
+    filter="url(#dropShadow)"
+  />
+
+  <!-- Layer 2: Middle metallic wood rail -->
+  <ellipse
+    cx="700"
+    cy="400"
+    rx="642"
+    ry="342"
+    fill="url(#woodRailGradient)"
+  />
+
+  <!-- Layer 3: Inner bevel highlight -->
+  <ellipse
+    cx="700"
+    cy="400"
+    rx="624"
+    ry="324"
+    fill="url(#bevelHighlight)"
+  />
+
+  <!-- Layer 4: Felt surface -->
+  <ellipse
+    cx="700"
+    cy="400"
+    rx="618"
+    ry="318"
+    fill="url(#feltGradient)"
+  />
+</svg>

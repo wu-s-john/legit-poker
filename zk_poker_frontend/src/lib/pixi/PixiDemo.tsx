@@ -136,9 +136,12 @@ const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, playerCo
         },
       });
 
-      // Initialize table
+      // Initialize table (async loading)
+      // Note: High-resolution rendering is handled internally by PixiTable
       tableRef.current = new PixiTable();
       world.addChild(tableRef.current.getContainer());
+      // Wait for table texture to load before proceeding
+      await tableRef.current.waitForLoad();
 
       // Initialize player seats with dynamic player count
       const playerPositions = calculatePlayerPositions(playerCount);
