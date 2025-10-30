@@ -2,7 +2,7 @@
  * Demo Page - Live visualization of zero-knowledge poker protocol
  */
 
-import { DemoScene } from '~/components/demo/DemoScene';
+import { EmbeddedDemoScene } from '~/components/demo/EmbeddedDemoScene';
 
 export const metadata = {
   title: 'Live Demo | LegitPoker',
@@ -10,5 +10,26 @@ export const metadata = {
 };
 
 export default function DemoPage() {
-  return <DemoScene />;
+  return (
+    <div
+      style={{
+        width: '100vw',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#0a0e14',
+        overflow: 'hidden',
+      }}
+    >
+      <EmbeddedDemoScene
+        isActive={true}
+        showBackground={true}
+        containerStyle={{
+          width: '100%',
+          height: '100%',
+        }}
+      />
+    </div>
+  );
 }

@@ -12,26 +12,15 @@
 
 import React, { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { connectDemoStream } from '~/lib/demo/stream';
-import { calculatePlayerPositions, getDeckPosition, getCardPosition, type Position } from '~/lib/demo/positioning';
 import { demoReducer, initialDemoState, getCardsForSeat, getShuffleProgress } from '~/lib/demo/demoState';
 import { DemoEventHandler } from '~/lib/demo/eventHandlers';
 import { GapDetector } from '~/lib/demo/gapRecovery';
 import { fetchDemoEvents } from '~/lib/api/demoApi';
 import type { DemoStreamEvent } from '~/lib/demo/events';
-import { PokerTable } from './PokerTable';
-import { PlayerSeat } from './PlayerSeat';
+import PixiDemo, { type PixiDemoAPI } from '~/lib/pixi/PixiDemo';
 import { ShuffleOverlay } from './ShuffleOverlay';
 import { CompletionOverlay } from './CompletionOverlay';
-import { FlyingCard } from './FlyingCard';
 import './demo.css';
-
-interface FlyingCardAnimation {
-  id: string;
-  seat: number;
-  cardIndex: number;
-  startPosition: Position;
-  endPosition: Position;
-}
 
 export interface EmbeddedDemoSceneProps {
   /** Control when demo initializes and starts */
@@ -60,8 +49,8 @@ export function EmbeddedDemoScene({
   // State management
   const [state, dispatch] = useReducer(demoReducer, initialDemoState);
 
-  // Flying card animations
-  const [flyingCards, setFlyingCards] = useState<FlyingCardAnimation[]>([]);
+  // Pixi demo ref
+  const pixiDemoRef = useRef<PixiDemoAPI | null>(null);
 
   // Gap detection
   const gapDetectorRef = useRef(new GapDetector());
@@ -72,6 +61,13 @@ export function EmbeddedDemoScene({
   // Track initialization
   const [hasInitialized, setHasInitialized] = useState(false);
 
+  // Sync state with Pixi whenever state changes
+  useEffect(() => {
+    if (pixiDemoRef.current && isActive) {
+      pixiDemoRef.current.updateState(state);
+    }
+  }, [state, isActive]);
+
   // Initialize event handler
   useEffect(() => {
     // Guard: prevent recreation on Strict Mode remounts
@@ -81,11 +77,11 @@ export function EmbeddedDemoScene({
       onShuffleProgress: (_current, _total) => {
         // Already handled in reducer
       },
-      onCardDealt: (seat, cardIndex, _deckPosition) => {
-        triggerCardAnimation(seat, cardIndex);
+      onCardDealt: (_seat, _cardIndex, _deckPosition) => {
+        // Card animation now handled by Pixi
       },
       onCardReveal: (_seat, _cardIndex) => {
-        // Card revealed - animation handled by Card component
+        // Card revealed - handled by Pixi
       },
       onPhaseChange: (phase) => {
         console.log('Phase changed:', phase);
@@ -193,31 +189,6 @@ export function EmbeddedDemoScene({
     }
   }
 
-  // Trigger card dealing animation
-  function triggerCardAnimation(seat: number, cardIndex: number): void {
-    const deckPos = getDeckPosition();
-    const playerPositions = calculatePlayerPositions(state.playerCount);
-    const playerPos = playerPositions.find((p) => p.seat === seat);
-
-    if (!playerPos) return;
-
-    // Calculate the specific card position (left or right card slot)
-    const isViewer = seat === state.viewerSeat;
-    const cardPosition = getCardPosition(playerPos.position, cardIndex, isViewer);
-
-    const animation: FlyingCardAnimation = {
-      id: `card_${seat}_${cardIndex}_${Date.now()}`,
-      seat,
-      cardIndex,
-      startPosition: deckPos,
-      endPosition: cardPosition,
-    };
-
-    setFlyingCards((prev) => [...prev, animation]);
-
-    // FlyingCard now stays permanent after animation completes
-  }
-
   // Handle new hand request
   async function handleNewHand(): Promise<void> {
     try {
@@ -233,10 +204,6 @@ export function EmbeddedDemoScene({
       console.error('Failed to start new hand:', error);
     }
   }
-
-  // Calculate positions
-  const playerPositions = calculatePlayerPositions(state.playerCount);
-  const deckPosition = getDeckPosition();
 
   // Get viewer cards
   const viewerCards = getCardsForSeat(state, state.viewerSeat);
@@ -298,81 +265,16 @@ export function EmbeddedDemoScene({
         </div>
       )}
 
-      {/* Only render table when demo is active and initialized */}
+      {/* Pixi Demo Canvas */}
       {shouldShowTable && (
-        <PokerTable>
-        {/* Deck visualization */}
-        <div
-          className="deck-indicator"
-          style={{
-            position: 'absolute',
-            left: `${deckPosition.x}%`,
-            top: `${deckPosition.y}%`,
-            transform: 'translate(-50%, -50%)',
+        <PixiDemo
+          ref={pixiDemoRef}
+          playerCount={state.playerCount}
+          onCardClick={(seatIndex, cardIndex) => {
+            console.log('Card clicked:', seatIndex, cardIndex);
+            // Handle card clicks (e.g., trigger decryption)
           }}
-        >
-          <div
-            className="deck-icon"
-            style={{
-              background: 'linear-gradient(135deg, #1e40af 0%, #1e3a8a 100%)',
-              borderRadius: '8px',
-              border: '2px solid rgba(255, 255, 255, 0.1)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <span className="deck-emoji">🃏</span>
-          </div>
-        </div>
-
-        {/* Players */}
-        {playerPositions.map((playerPos) => {
-          const isViewer = playerPos.seat === state.viewerSeat;
-
-          return (
-            <PlayerSeat
-              key={playerPos.seat}
-              seat={playerPos.seat}
-              position={playerPos.position}
-              isViewer={isViewer}
-              name={`Player ${playerPos.seat + 1}`}
-              isActive={false}
-            >
-              {/* Cards are now shown via FlyingCard components */}
-            </PlayerSeat>
-          );
-        })}
-
-        {/* Flying card animations */}
-        {flyingCards.map((anim) => {
-          // Get card state for this flying card
-          const playerCards = getCardsForSeat(state, anim.seat);
-          const cardState = playerCards.find((c) => c.position === anim.cardIndex);
-
-          return (
-            <FlyingCard
-              key={anim.id}
-              startPosition={anim.startPosition}
-              endPosition={anim.endPosition}
-              isForYou={anim.seat === state.viewerSeat}
-              duration={400}
-              cardState={
-                cardState
-                  ? {
-                      revealed: cardState.revealed,
-                      displayCard: cardState.displayCard,
-                      decryptable: cardState.decryptable,
-                    }
-                  : undefined
-              }
-              onComplete={() => {
-                // Animation complete
-              }}
-            />
-          );
-        })}
-      </PokerTable>
+        />
       )}
 
       {/* Phase Overlays - always render if active to show loading/error states */}

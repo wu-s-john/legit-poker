@@ -189,28 +189,54 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
     case 'START_DEALING': {
       // Initialize card state for all players (2 cards each)
       const newCards = new Map<string, CardDecryptionState>();
+      const dealQueue: Array<{ seat: number; cardIndex: number; deckPosition: number }> = [];
+      let deckPosition = 0;
+
+      // First card to each player
       for (let seat = 0; seat < state.playerCount; seat++) {
-        for (let cardIndex = 0; cardIndex < 2; cardIndex++) {
-          const key = getCardKey(seat, cardIndex);
-          newCards.set(key, {
-            position: cardIndex,
-            targetPlayerPublicKey: state.viewerPublicKey ?? '', // Will be updated with actual keys
-            targetPlayerSeat: seat,
-            blindingShares: new Map(),
-            partialUnblindingShares: new Map(),
-            requiredSharesPerType: state.playerCount,
-            revealed: false,
-            decryptable: false,
-            isFlying: false,
-            hasArrived: false,
-          });
-        }
+        const key = getCardKey(seat, 0);
+        newCards.set(key, {
+          position: 0,
+          targetPlayerPublicKey: state.viewerPublicKey ?? '', // Will be updated with actual keys
+          targetPlayerSeat: seat,
+          blindingShares: new Map(),
+          partialUnblindingShares: new Map(),
+          requiredSharesPerType: state.playerCount,
+          revealed: false,
+          decryptable: false,
+          isFlying: false,
+          hasArrived: false,
+        });
+
+        dealQueue.push({ seat, cardIndex: 0, deckPosition });
+        deckPosition++;
+      }
+
+      // Second card to each player
+      for (let seat = 0; seat < state.playerCount; seat++) {
+        const key = getCardKey(seat, 1);
+        newCards.set(key, {
+          position: 1,
+          targetPlayerPublicKey: state.viewerPublicKey ?? '',
+          targetPlayerSeat: seat,
+          blindingShares: new Map(),
+          partialUnblindingShares: new Map(),
+          requiredSharesPerType: state.playerCount,
+          revealed: false,
+          decryptable: false,
+          isFlying: false,
+          hasArrived: false,
+        });
+
+        dealQueue.push({ seat, cardIndex: 1, deckPosition });
+        deckPosition++;
       }
 
       return {
         ...state,
         clientDeck: action.clientDeck,
         cards: newCards,
+        dealQueue,
         statusMessage: 'Dealing hole cards...',
       };
     }
@@ -227,9 +253,14 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
       const updatedCards = new Map(state.cards);
       updatedCards.set(key, { ...cardState, hasArrived: true });
 
+      // Check if all cards have been dealt
+      const allCardsDealt = Array.from(updatedCards.values()).every((card) => card.hasArrived);
+
       return {
         ...state,
         cards: updatedCards,
+        // Clear deal queue once all cards have arrived
+        dealQueue: allCardsDealt ? [] : state.dealQueue,
         statusMessage:
           action.seat === state.viewerSeat
             ? `Card ${action.cardIndex + 1} dealt to you`

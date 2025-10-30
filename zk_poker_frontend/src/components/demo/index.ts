@@ -2,15 +2,16 @@
  * Demo Components - Public exports
  */
 
-export { DemoScene } from './DemoScene';
+// Main demo scenes
 export { EmbeddedDemoScene } from './EmbeddedDemoScene';
-export { PokerTable } from './PokerTable';
-export { PlayerSeat } from './PlayerSeat';
+
+// Overlay components (still used)
 export { ShuffleOverlay } from './ShuffleOverlay';
 export { DealingOverlay } from './DealingOverlay';
+export { CompletionOverlay } from './CompletionOverlay';
+
+// UI components (still used)
+export { Card } from './Card';
 export { ProgressBar } from './ProgressBar';
 export { CornerProgress } from './CornerProgress';
-export { Card } from './Card';
-export { FlyingCard } from './FlyingCard';
 export { StatusText } from './StatusText';
-export { CompletionOverlay } from './CompletionOverlay';
