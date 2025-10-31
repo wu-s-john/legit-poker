@@ -42,6 +42,9 @@ where
     GameEvent {
         #[serde(flatten)]
         envelope: FinalizedAnyMessageEnvelope<C>,
+
+        /// Total processing duration (cryptographic operation + snapshot application) in milliseconds
+        processing_duration_ms: u64,
     },
 
     /// Community board decrypted on the backend (revealed cards).

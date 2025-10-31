@@ -110,6 +110,8 @@ where
             state.actor()
         };
 
+        // Start timing for total processing duration
+        let processing_start = std::time::Instant::now();
         let any_envelope = {
             let state = &mut shuffler_states[index];
             state.try_emit_shuffle::<S, _>(&shuffler_engines[index], &actor)?
@@ -128,8 +130,11 @@ where
             (&any_envelope).try_into()?;
 
         let current_snapshot_any = AnyTableSnapshot::Shuffling(current_snapshot.clone());
+
         match apply_transition(current_snapshot.clone(), &shuffle_envelope, hasher) {
             Ok(next_snapshot) => {
+                let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                 let finalized = FinalizedAnyMessageEnvelope::new(
                     any_envelope,
                     SnapshotStatus::Success,
@@ -138,16 +143,23 @@ where
                 );
                 let _ = event_tx.try_send(DemoStreamEvent::GameEvent {
                     envelope: finalized,
+                    processing_duration_ms,
                 });
+
+                debug!(
+                    target: LOG_TARGET,
+                    sequence = next_snapshot.sequence(),
+                    processing_duration_ms,
+                    "✅ Shuffle applied"
+                );
 
                 match next_snapshot {
                     AnyTableSnapshot::Shuffling(snapshot) => {
                         debug!(
                             target: LOG_TARGET,
-                            sequence = snapshot.sequence,
                             steps_completed = snapshot.shuffling.steps.len(),
                             total_steps = expected_shuffles,
-                            "✅ Shuffle applied"
+                            "Shuffle state updated"
                         );
 
                         for state in shuffler_states.iter_mut() {
@@ -177,6 +189,8 @@ where
                 }
             }
             Err(err) => {
+                let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                 let reason = err.to_string();
                 let failure_snapshot =
                     clone_snapshot_for_failure(&current_snapshot_any, hasher, reason.clone());
@@ -188,6 +202,7 @@ where
                 );
                 let _ = event_tx.try_send(DemoStreamEvent::GameEvent {
                     envelope: finalized,
+                    processing_duration_ms,
                 });
                 return Err(anyhow::anyhow!(err));
             }
@@ -280,6 +295,8 @@ where
                 let state = &mut shuffler_states[idx];
                 let ctx = state.next_metadata_envelope();
 
+                // Start timing for total processing duration
+                let processing_start = std::time::Instant::now();
                 let (_, any_envelope) = engine.player_blinding_and_sign(
                     aggregated_shuffler_public_key,
                     &ctx,
@@ -293,8 +310,11 @@ where
 
                 if let Some(tx) = event_tx {
                     let current_snapshot_any = AnyTableSnapshot::Dealing(current_snapshot.clone());
+
                     match apply_transition(current_snapshot.clone(), &blinding_envelope, hasher) {
                         Ok(next_snapshot) => {
+                            let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                             let finalized = FinalizedAnyMessageEnvelope::new(
                                 any_envelope,
                                 SnapshotStatus::Success,
@@ -303,12 +323,24 @@ where
                             );
                             let _ = tx.try_send(DemoStreamEvent::GameEvent {
                                 envelope: finalized,
+                                processing_duration_ms,
                             });
+
+                            debug!(
+                                target: LOG_TARGET,
+                                seat,
+                                hole_index = hole_card.hole_index,
+                                shuffler_index = idx,
+                                processing_duration_ms,
+                                "         ✅ Shuffler blinding applied"
+                            );
 
                             let dealing_ref: &TableAtDealing<C> = (&next_snapshot).try_into()?;
                             *current_snapshot = dealing_ref.clone();
                         }
                         Err(err) => {
+                            let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                             let reason = err.to_string();
                             let failure_snapshot = clone_snapshot_for_failure(
                                 &current_snapshot_any,
@@ -323,6 +355,7 @@ where
                             );
                             let _ = tx.try_send(DemoStreamEvent::GameEvent {
                                 envelope: finalized,
+                                processing_duration_ms,
                             });
                             return Err(anyhow::anyhow!("Blinding failed: {}", reason));
                         }
@@ -333,12 +366,6 @@ where
                     let dealing_ref: &TableAtDealing<C> = (&any_snapshot).try_into()?;
                     *current_snapshot = dealing_ref.clone();
                 }
-
-                debug!(
-                    target: LOG_TARGET,
-                    shuffler_index = idx,
-                    "         ✅ Shuffler blinding applied"
-                );
             }
 
             let player_ciphertext = current_snapshot
@@ -355,6 +382,8 @@ where
                 let state = &mut shuffler_states[idx];
                 let ctx = state.next_metadata_envelope();
 
+                // Start timing for total processing duration
+                let processing_start = std::time::Instant::now();
                 let (_, any_envelope) = engine.player_unblinding_and_sign(
                     &ctx,
                     deal_index,
@@ -369,8 +398,11 @@ where
 
                 if let Some(tx) = event_tx {
                     let current_snapshot_any = AnyTableSnapshot::Dealing(current_snapshot.clone());
+
                     match apply_transition(current_snapshot.clone(), &unblinding_envelope, hasher) {
                         Ok(next_snapshot) => {
+                            let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                             let finalized = FinalizedAnyMessageEnvelope::new(
                                 any_envelope,
                                 SnapshotStatus::Success,
@@ -379,6 +411,7 @@ where
                             );
                             let _ = tx.try_send(DemoStreamEvent::GameEvent {
                                 envelope: finalized,
+                                processing_duration_ms,
                             });
 
                             match next_snapshot {
@@ -404,6 +437,8 @@ where
                             }
                         }
                         Err(err) => {
+                            let processing_duration_ms = processing_start.elapsed().as_millis() as u64;
+
                             let reason = err.to_string();
                             let failure_snapshot = clone_snapshot_for_failure(
                                 &current_snapshot_any,
@@ -418,6 +453,7 @@ where
                             );
                             let _ = tx.try_send(DemoStreamEvent::GameEvent {
                                 envelope: finalized,
+                                processing_duration_ms,
                             });
                             return Err(anyhow::anyhow!("Unblinding failed: {}", reason));
                         }
