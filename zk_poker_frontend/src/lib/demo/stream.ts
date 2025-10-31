@@ -1,5 +1,16 @@
 /**
  * Demo SSE stream connection
+ *
+ * @deprecated This module is deprecated and uses the old auto-play demo endpoint `/games/demo/stream`.
+ *
+ * The old endpoint has been removed from the backend. Please use the new API functions from
+ * `~/lib/api/demoApi` instead:
+ * - `createInteractiveDemo()` - Create demo session (POST /games/demo)
+ * - `connectShuffleStream(demoId)` - Connect to shuffle phase (GET /games/demo/:id/shuffle)
+ * - `connectDealStream(demoId)` - Connect to deal phase (GET /games/demo/:id/deal)
+ *
+ * For components that need backward compatibility with the old auto-play behavior,
+ * use `EmbeddedDemoScene` which wraps `InteractiveDemoScene` with automatic phase progression.
  */
 
 import type { DemoStreamEvent } from './events';
@@ -15,6 +26,8 @@ export interface DemoStreamOptions {
 
 /**
  * Connect to the demo SSE stream
+ *
+ * @deprecated Use the new three-endpoint API instead (createInteractiveDemo, connectShuffleStream, connectDealStream)
  */
 export function connectDemoStream(options: DemoStreamOptions): () => void {
   const { onEvent, onError, onComplete } = options;

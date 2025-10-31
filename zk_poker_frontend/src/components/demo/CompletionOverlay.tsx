@@ -13,6 +13,7 @@ interface CompletionOverlayProps {
   isVisible: boolean;
   viewerCards: CardType[];
   onNewHand?: () => void;
+  onSubscribe?: () => void;
 }
 
 const TIER_COLORS = {
@@ -29,7 +30,7 @@ const TIER_BACKGROUNDS = {
   marginal: 'rgba(100, 116, 139, 0.1)',
 };
 
-export function CompletionOverlay({ isVisible, viewerCards, onNewHand }: CompletionOverlayProps) {
+export function CompletionOverlay({ isVisible, viewerCards, onNewHand, onSubscribe }: CompletionOverlayProps) {
   const [isAnimated, setIsAnimated] = React.useState(false);
 
   React.useEffect(() => {
@@ -44,7 +45,9 @@ export function CompletionOverlay({ isVisible, viewerCards, onNewHand }: Complet
   if (!isVisible) return null;
 
   // Get hand label if we have both cards
-  const handLabel = viewerCards.length === 2 ? labelHand(viewerCards[0], viewerCards[1]) : null;
+  const handLabel = viewerCards.length === 2 && viewerCards[0] && viewerCards[1]
+    ? labelHand(viewerCards[0], viewerCards[1])
+    : null;
 
   return (
     <div
@@ -99,7 +102,7 @@ export function CompletionOverlay({ isVisible, viewerCards, onNewHand }: Complet
               letterSpacing: '0.1em',
             }}
           >
-            HAND COMPLETE
+            DEMO COMPLETE
           </span>
         </div>
 
@@ -174,34 +177,81 @@ export function CompletionOverlay({ isVisible, viewerCards, onNewHand }: Complet
           </div>
         )}
 
-        {/* Action Button */}
-        {onNewHand && (
-          <button
-            onClick={onNewHand}
-            style={{
-              padding: '14px 32px',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              border: 'none',
-              borderRadius: '10px',
-              color: 'white',
-              fontSize: '15px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 200ms ease',
-              boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)';
-              e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.4)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.3)';
-            }}
-          >
-            Start New Hand
-          </button>
-        )}
+        {/* Action Buttons */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '12px',
+            justifyContent: 'center',
+            alignItems: 'center',
+          }}
+        >
+          {onNewHand && (
+            <button
+              onClick={onNewHand}
+              style={{
+                padding: '20px 32px',
+                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                border: 'none',
+                borderRadius: '10px',
+                color: 'white',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 200ms ease',
+                boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
+                height: '60px',
+                lineHeight: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(59, 130, 246, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.3)';
+              }}
+            >
+              Replay Demo
+            </button>
+          )}
+
+          {onSubscribe && (
+            <button
+              onClick={onSubscribe}
+              style={{
+                padding: '20px 28px',
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                border: 'none',
+                borderRadius: '10px',
+                color: 'white',
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 200ms ease',
+                boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                height: '60px',
+                lineHeight: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 6px 16px rgba(16, 185, 129, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.3)';
+              }}
+            >
+              🔔 Stay Updated
+            </button>
+          )}
+        </div>
 
         {/* Footer Message */}
         <p

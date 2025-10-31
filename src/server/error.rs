@@ -14,6 +14,12 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    pub fn not_found(message: impl Into<String>) -> Self {
+        // For now, we'll use BadRequest with a not found message
+        // Could extend the enum to have NotFound(String) variant
+        ApiError::NotFound
+    }
+
     pub fn bad_request(message: impl Into<String>) -> Self {
         ApiError::BadRequest(message.into())
     }

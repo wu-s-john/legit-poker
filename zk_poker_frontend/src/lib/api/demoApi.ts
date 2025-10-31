@@ -4,6 +4,8 @@
  * API functions for initializing and controlling the poker demo.
  */
 
+import { z } from 'zod';
+import { tableSnapshotShufflingSchema } from '../schemas/tableSnapshotSchema';
 import type { FinalizedAnyMessageEnvelope } from '../schemas/finalizedEnvelopeSchema';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_SERVER_API_URL ?? 'http://localhost:4000';
@@ -29,11 +31,12 @@ export function generateViewerPublicKey(): string {
 }
 
 /**
- * @deprecated DO NOT USE - Use /games/demo/stream instead
- * Create demo game (viewer is always seat 0)
+ * @deprecated This function is deprecated. Use `createInteractiveDemo()` instead.
  *
- * This endpoint should not be called directly.
- * The streaming endpoint /games/demo/stream handles game creation automatically.
+ * The old endpoints have been removed. Use the new interactive demo API:
+ * - `createInteractiveDemo()` - Create demo session
+ * - `connectShuffleStream(demoId)` - Connect to shuffle phase
+ * - `connectDealStream(demoId)` - Connect to deal phase
  */
 export async function createDemoGame(publicKey: string): Promise<DemoGameInfo> {
   const response = await fetch(`${API_BASE}/game/demo/?public_key=${publicKey}`, {
@@ -48,11 +51,12 @@ export async function createDemoGame(publicKey: string): Promise<DemoGameInfo> {
 }
 
 /**
- * @deprecated DO NOT USE - Use /games/demo/stream instead
- * Start demo protocol execution
+ * @deprecated This function is deprecated. Use the new interactive demo API instead.
  *
- * This endpoint should not be called directly.
- * The streaming endpoint /games/demo/stream handles game initialization automatically.
+ * The old endpoints have been removed. Use:
+ * - `createInteractiveDemo()` - Create demo session
+ * - `connectShuffleStream(demoId)` - Connect to shuffle phase
+ * - `connectDealStream(demoId)` - Connect to deal phase
  */
 export async function startDemo(gameId: number, handId: number): Promise<void> {
   const response = await fetch(`${API_BASE}/game/demo/${gameId}/hand/${handId}`, {
@@ -62,6 +66,48 @@ export async function startDemo(gameId: number, handId: number): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to start demo: ${response.statusText}`);
   }
+}
+
+/**
+ * Interactive Demo API - Create a new demo session
+ */
+export const createDemoResponseSchema = z.object({
+  demo_id: z.string().uuid(),
+  game_id: z.number().int(),
+  hand_id: z.number().int(),
+  viewer_public_key: z.string(),
+  initial_snapshot: tableSnapshotShufflingSchema,
+});
+
+export type CreateDemoResponse = z.infer<typeof createDemoResponseSchema>;
+
+export async function createInteractiveDemo(): Promise<CreateDemoResponse> {
+  const response = await fetch(`${API_BASE}/games/demo`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create demo: ${response.statusText}`);
+  }
+
+  const json: unknown = await response.json();
+  return createDemoResponseSchema.parse(json);
+}
+
+/**
+ * Interactive Demo API - Connect to shuffle phase SSE stream
+ */
+export function connectShuffleStream(demoId: string): EventSource {
+  const url = `${API_BASE}/games/demo/${demoId}/shuffle`;
+  return new EventSource(url);
+}
+
+/**
+ * Interactive Demo API - Connect to deal phase SSE stream
+ */
+export function connectDealStream(demoId: string): EventSource {
+  const url = `${API_BASE}/games/demo/${demoId}/deal`;
+  return new EventSource(url);
 }
 
 /**

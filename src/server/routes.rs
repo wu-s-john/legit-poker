@@ -7,7 +7,7 @@ use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use axum::extract::{Path, Query};
 use axum::middleware;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -19,7 +19,7 @@ use crate::ledger::snapshot::SnapshotSeq;
 use crate::ledger::types::{GameId, HandId};
 use crate::ledger::LobbyService;
 
-use super::demo::{stream_demo_game_in_memory, DemoStreamQuery};
+use super::demo::{create_demo, stream_deal, stream_shuffle, DemoSessionStore};
 use super::dto::{HandMessagesResponse, LatestSnapshotResponse};
 use super::error::ApiError;
 
@@ -74,6 +74,9 @@ where
     pub fn new(coordinator: Arc<GameCoordinator<C>>, lobby: Arc<dyn LobbyService<C>>) -> Self {
         let context = Arc::new(ServerContext { coordinator, lobby });
 
+        // Create demo session store
+        let demo_store = Arc::new(DemoSessionStore::<C>::new());
+
         // Configure CORS to allow requests from the frontend
         let cors = CorsLayer::new()
             .allow_origin(Any)
@@ -81,7 +84,11 @@ where
             .allow_headers(Any);
 
         let router = Router::new()
-            .route("/games/demo/stream", get(stream_demo::<C>))
+            // Interactive demo endpoints
+            .route("/games/demo", post(create_demo::<C>))
+            .route("/games/demo/:id/shuffle", get(stream_shuffle::<C>))
+            .route("/games/demo/:id/deal", get(stream_deal::<C>))
+            // Hand query endpoints
             .route(
                 "/games/:game_id/hands/:hand_id/snapshot",
                 get(get_hand_snapshot::<C>),
@@ -91,6 +98,7 @@ where
                 get(get_hand_messages::<C>),
             )
             .layer(Extension(context))
+            .layer(Extension(demo_store))
             .layer(middleware::from_fn(super::logging::log_requests))
             .layer(cors);
 
@@ -211,30 +219,6 @@ where
         .map_err(|err| ApiError::internal(err.to_string()))?;
 
     Ok(Json(response))
-}
-
-async fn stream_demo<C>(
-    Extension(ctx): Extension<Arc<ServerContext<C>>>,
-    Query(query): Query<DemoStreamQuery>,
-) -> Result<
-    axum::response::Sse<
-        impl futures::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
-    >,
-    ApiError,
->
-where
-    C: CurveGroup
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + CurveAbsorb<C::BaseField>
-        + Send
-        + Sync
-        + 'static,
-    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync,
-    C::BaseField: PrimeField + Send + Sync,
-    C::Affine: Absorb,
-{
-    stream_demo_game_in_memory(ctx, query).await
 }
 
 #[inline]

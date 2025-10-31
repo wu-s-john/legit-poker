@@ -3,7 +3,7 @@
 "use client";
 
 import { Spade, Play } from "lucide-react";
-import { EmbeddedDemoScene } from "~/components/demo/EmbeddedDemoScene";
+import { InteractiveDemoScene } from "~/components/demo/InteractiveDemoScene";
 import type { DemoStreamEvent } from "~/lib/demo/events";
 
 interface PokerTableSectionProps {
@@ -94,11 +94,10 @@ export function PokerTableSection({
         </div>
       ) : (
         /* Active State: Live Demo Scene */
-        <EmbeddedDemoScene
+        <InteractiveDemoScene
           isActive={isDemoActive}
           onEvent={onEvent}
           showBackground={false}
-          autoScale={true}
           containerStyle={{
             width: '100%',
             // Fill the entire felt area (including padding) for overlays

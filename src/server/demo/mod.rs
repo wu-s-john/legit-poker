@@ -1,7 +1,17 @@
-pub mod in_memory_stream;
+// Interactive demo modules
+pub mod dto;
+pub mod handlers;
+pub mod phase_execution;
+pub mod session_factory;
+pub mod session_store;
+pub mod state;
 pub mod stream_event;
 
-pub use in_memory_stream::{stream_demo_game_in_memory, DemoStreamQuery};
+// Public exports for interactive demo
+pub use dto::CreateDemoResponse;
+pub use handlers::{create_demo, stream_deal, stream_shuffle};
+pub use session_store::DemoSessionStore;
+pub use state::{DemoPhase, DemoState};
 pub use stream_event::DemoStreamEvent;
 
 use std::sync::Arc;

@@ -15,6 +15,7 @@ import type { DemoState } from '../demo/demoState';
 export interface PixiDemoProps {
   onCardClick?: (seatIndex: number, cardIndex: number) => void;
   onCardAnimationComplete?: (seat: number, cardIndex: number) => void;
+  onInitialized?: () => void;
   playerCount?: number;
 }
 
@@ -23,7 +24,7 @@ export interface PixiDemoAPI {
   destroy: () => void;
 }
 
-const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, onCardAnimationComplete, playerCount = 7 }, ref) => {
+const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, onCardAnimationComplete, onInitialized, playerCount = 7 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const worldRef = useRef<Container | null>(null);
@@ -149,6 +150,10 @@ const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, onCardAn
       world.addChild(tableRef.current.getContainer());
       // Wait for table texture to load before proceeding
       await tableRef.current.waitForLoad();
+
+      // Notify parent that initialization is complete
+      console.log('[PixiDemo] Initialization complete, calling onInitialized callback');
+      onInitialized?.();
 
       // Initialize player seats with dynamic player count
       const playerPositions = calculatePlayerPositions(playerCount);

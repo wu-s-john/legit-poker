@@ -1,5 +1,18 @@
 // hooks/useDemoStream.ts
 
+/**
+ * @deprecated This hook is deprecated and uses the old auto-play demo endpoint `/games/demo/stream`.
+ *
+ * The old endpoint has been removed from the backend. Please use `useInteractiveDemo` from
+ * `~/hooks/useInteractiveDemo` instead for the new user-controlled demo flow:
+ * - POST /games/demo - Create demo session
+ * - GET /games/demo/:id/shuffle - Stream shuffle phase
+ * - GET /games/demo/:id/deal - Stream deal phase
+ *
+ * For components that need backward compatibility with the old auto-play behavior,
+ * use `EmbeddedDemoScene` which wraps `InteractiveDemoScene` with automatic phase progression.
+ */
+
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -24,6 +37,7 @@ interface DemoStreamState {
  * Messages are prepended (newest first)
  *
  * @param enabled - If false, no connection is made. When true, connects to SSE stream.
+ * @deprecated Use `useInteractiveDemo` instead
  */
 export function useDemoStream(enabled = true) {
   const [state, setState] = useState<DemoStreamState>({

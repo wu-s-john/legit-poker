@@ -1,6 +1,4 @@
-use std::convert::Infallible;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use ark_crypto_primitives::crh::sha256::Sha256;
@@ -9,47 +7,34 @@ use ark_crypto_primitives::sponge::Absorb;
 use ark_ec::CurveGroup;
 use ark_ff::{PrimeField, UniformRand};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use axum::response::sse::{Event, KeepAlive, Sse};
-use futures::StreamExt;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
-use serde::Deserialize;
-use serde_json::json;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, info, warn};
+use rand::rngs::StdRng;
+use rand::{RngCore, SeedableRng};
+use tracing::{debug, info};
+use uuid::Uuid;
 
 use crate::curve_absorb::CurveAbsorb;
 use crate::engine::nl::types::{HandConfig, PlayerId, SeatId, TableStakes};
-use crate::ledger::hash::LedgerHasherSha256;
 use crate::ledger::lobby::service::LobbyServiceFactory;
 use crate::ledger::lobby::types::{
     CommenceGameParams, GameLobbyConfig, PlayerRecord, ShufflerRecord, ShufflerRegistrationConfig,
 };
+use crate::ledger::snapshot::AnyTableSnapshot;
 use crate::ledger::types::{GameId, HandId, ShufflerId};
 use crate::ledger::typestate::MaybeSaved;
-use crate::server::demo::DemoStreamEvent;
-use crate::server::error::ApiError;
-use crate::server::routes::ServerContext;
-use crate::shuffler::{run_dealing_phase, run_shuffling_phase, ShufflerEngine, ShufflerHandState};
+use crate::ledger::LobbyService;
+use crate::shuffler::{ShufflerEngine, ShufflerHandState};
 
-const LOG_TARGET: &str = "legit_poker::server::demo::in_memory_stream";
+use super::state::DemoState;
+
+const LOG_TARGET: &str = "legit_poker::server::demo::session_factory";
 const NUM_SHUFFLERS: usize = 5;
 const NUM_PLAYERS: usize = 7;
-const CHANNEL_BUFFER_SIZE: usize = 512;
 
 type Schnorr254<C> = Schnorr<C, Sha256>;
 
-#[derive(Debug, Deserialize)]
-pub struct DemoStreamQuery {
-    pub public_key: Option<String>,
-}
-
-/// Entry point for the in-memory SSE demo stream.
-/// Each request runs independently with no database or coordinator dependencies.
-pub async fn stream_demo_game_in_memory<C>(
-    ctx: Arc<ServerContext<C>>,
-    query: DemoStreamQuery,
-) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, ApiError>
+/// Create a new demo session with all necessary setup.
+/// Returns a DemoState in Initialized phase ready for shuffling.
+pub fn create_demo_session<C>() -> Result<DemoState<C>>
 where
     C: CurveGroup
         + CanonicalSerialize
@@ -62,68 +47,36 @@ where
     C::BaseField: PrimeField + Send + Sync,
     C::Affine: Absorb + CanonicalSerialize,
 {
-    if query.public_key.is_some() {
-        return Err(ApiError::bad_request(
-            "public_key query parameter is not supported for the in-memory demo stream",
-        ));
-    }
-
-    let (event_tx, event_rx) = mpsc::channel::<DemoStreamEvent<C>>(CHANNEL_BUFFER_SIZE);
-
-    // Run the game flow in a blocking task to avoid blocking the async runtime
-    tokio::task::spawn_blocking(move || {
-        if let Err(err) = execute_demo_flow(event_tx, ctx) {
-            error!(target: LOG_TARGET, ?err, "demo flow failed");
-        }
-    });
-
-    // Convert events to SSE
-    let sse_stream = ReceiverStream::new(event_rx).map(|event| {
-        let event_name = event.event_name();
-        let data = serde_json::to_string(&event)
-            .unwrap_or_else(|err| json!({ "error": err.to_string() }).to_string());
-        Ok::<Event, Infallible>(Event::default().event(event_name).data(data))
-    });
-
-    Ok(Sse::new(sse_stream)
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text(":")))
-}
-
-/// Main execution flow - runs synchronously in a blocking task.
-fn execute_demo_flow<C>(
-    event_tx: mpsc::Sender<DemoStreamEvent<C>>,
-    _ctx: Arc<ServerContext<C>>,
-) -> Result<()>
-where
-    C: CurveGroup
-        + CanonicalSerialize
-        + CanonicalDeserialize
-        + CurveAbsorb<C::BaseField>
-        + Send
-        + Sync
-        + 'static,
-    C::ScalarField: PrimeField + UniformRand + Absorb + CanonicalSerialize + Send + Sync + Clone,
-    C::BaseField: PrimeField + Send + Sync,
-    C::Affine: Absorb + CanonicalSerialize,
-{
-    info!(target: LOG_TARGET, "🎰 Starting in-memory demo flow");
+    let demo_id = Uuid::new_v4();
+    info!(
+        target: LOG_TARGET,
+        demo_id = %demo_id,
+        "🎰 Creating new demo session"
+    );
 
     // Step 1: Initialize RNG and hasher
     let mut rng = StdRng::from_entropy();
-    let hasher = Arc::new(LedgerHasherSha256);
+    let hasher = Arc::new(crate::ledger::hash::LedgerHasherSha256);
 
     // Step 2: Set up in-memory lobby service
-    let lobby: Arc<dyn crate::ledger::LobbyService<C>> =
-        Arc::new(LobbyServiceFactory::<C>::in_memory());
+    let lobby: Arc<dyn LobbyService<C>> = Arc::new(LobbyServiceFactory::<C>::in_memory());
 
     // Step 3: Generate shuffler identities and keys
-    info!(target: LOG_TARGET, num_shufflers = NUM_SHUFFLERS, "🔀 Generating shuffler identities");
+    info!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        "🔀 Generating shuffler identities"
+    );
     let shuffler_engines = generate_shuffler_engines(&mut rng)?;
     let shuffler_records = create_shuffler_records(&shuffler_engines);
     let aggregated_public_key = compute_aggregated_public_key(&shuffler_engines);
 
     // Step 4: Generate player identities
-    info!(target: LOG_TARGET, num_players = NUM_PLAYERS, "👥 Generating player identities");
+    info!(
+        target: LOG_TARGET,
+        num_players = NUM_PLAYERS,
+        "👥 Generating player identities"
+    );
     let player_keys = generate_player_keys(&mut rng, NUM_PLAYERS);
     let player_records = create_player_records(&player_keys);
 
@@ -137,31 +90,19 @@ where
 
     let game_id: GameId = metadata.record.state.id;
 
-    // Emit PlayerCreated for host (player 0)
-    if event_tx
-        .try_send(DemoStreamEvent::PlayerCreated {
-            game_id,
-            seat: 0,
-            display_name: metadata.host.display_name.clone(),
-            public_key: metadata.host.public_key.clone(),
-        })
-        .is_err()
-    {
-        warn!(target: LOG_TARGET, "dropped player_created event");
-    }
-
     // Step 6: Register shufflers
-    info!(target: LOG_TARGET, num_shufflers = NUM_SHUFFLERS, "🔀 Registering shufflers");
+    info!(
+        target: LOG_TARGET,
+        num_shufflers = NUM_SHUFFLERS,
+        "🔀 Registering shufflers"
+    );
     for (idx, shuffler_record) in shuffler_records.into_iter().enumerate() {
         let cfg = ShufflerRegistrationConfig {
             sequence: Some(idx as u16),
         };
-        let output = tokio::runtime::Handle::current()
-            .block_on(lobby.register_shuffler(
-                &metadata.record,
-                shuffler_record.clone(),
-                cfg,
-            ))?;
+        let output = tokio::runtime::Handle::current().block_on(
+            lobby.register_shuffler(&metadata.record, shuffler_record.clone(), cfg),
+        )?;
         debug!(
             target: LOG_TARGET,
             shuffler_index = idx,
@@ -171,16 +112,17 @@ where
     }
 
     // Step 7: Join players to the game
-    info!(target: LOG_TARGET, num_players = NUM_PLAYERS, "👥 Joining players");
+    info!(
+        target: LOG_TARGET,
+        num_players = NUM_PLAYERS,
+        "👥 Joining players"
+    );
     let mut saved_player_records = Vec::with_capacity(NUM_PLAYERS);
     for (idx, player_record) in player_records.into_iter().enumerate() {
         let seat_id = idx as SeatId;
-        let output = tokio::runtime::Handle::current()
-            .block_on(lobby.join_game(
-                &metadata.record,
-                player_record.clone(),
-                Some(seat_id),
-            ))?;
+        let output = tokio::runtime::Handle::current().block_on(
+            lobby.join_game(&metadata.record, player_record.clone(), Some(seat_id)),
+        )?;
         saved_player_records.push((output.player, seat_id));
     }
 
@@ -203,22 +145,11 @@ where
     let hand_id: HandId = outcome.hand.state.id;
     let initial_snapshot = outcome.initial_snapshot.clone();
 
-    // Emit HandCreated
-    if event_tx
-        .try_send(DemoStreamEvent::HandCreated {
-            game_id,
-            hand_id,
-            player_count: NUM_PLAYERS,
-            shuffler_count: NUM_SHUFFLERS,
-            snapshot: initial_snapshot.clone(),
-        })
-        .is_err()
-    {
-        warn!(target: LOG_TARGET, "dropped hand_created event");
-    }
-
     // Step 9: Initialize shuffler hand states
-    info!(target: LOG_TARGET, "🎲 Step 9: Initializing shuffler states");
+    info!(
+        target: LOG_TARGET,
+        "🎲 Initializing shuffler states"
+    );
     let mut shuffler_states = Vec::with_capacity(NUM_SHUFFLERS);
     for (idx, engine) in shuffler_engines.iter().enumerate() {
         let mut hand_seed = [0u8; 32];
@@ -237,36 +168,33 @@ where
         shuffler_states.push(state);
     }
 
-    // Step 10: Execute shuffle phase
-    info!(target: LOG_TARGET, "🔄 Step 10: Executing shuffle phase");
-    let dealing_snapshot = run_shuffling_phase(
-        initial_snapshot,
-        &shuffler_engines,
-        &mut shuffler_states,
-        hasher.as_ref(),
-        &event_tx,
-    )?;
+    // Step 10: Create DemoState
+    let demo_state = DemoState::new(
+        demo_id,
+        game_id,
+        hand_id,
+        outcome.nonce_seed,
+        AnyTableSnapshot::Shuffling(initial_snapshot),
+        shuffler_engines,
+        shuffler_states,
+        saved_player_records,
+        player_keys,
+        aggregated_public_key,
+        rng,
+    );
 
-    // Step 11: Execute dealing phase
-    info!(target: LOG_TARGET, "🎴 Step 11: Executing dealing phase");
+    info!(
+        target: LOG_TARGET,
+        demo_id = %demo_id,
+        game_id = game_id,
+        hand_id = hand_id,
+        "✅ Demo session created successfully"
+    );
 
-    let mut dealing_snapshot_mut = dealing_snapshot;
-    run_dealing_phase(
-        &mut dealing_snapshot_mut,
-        &shuffler_engines,
-        &saved_player_records,
-        &player_keys,
-        &aggregated_public_key,
-        &mut rng,
-        hasher.as_ref(),
-        Some(&event_tx),
-    )?;
-
-    info!(target: LOG_TARGET, "✅ Demo flow completed successfully");
-    Ok(())
+    Ok(demo_state)
 }
 
-// Helper functions from game_launch_and_shuffle_flow.rs
+// Helper functions
 
 fn generate_shuffler_engines<C>(rng: &mut StdRng) -> Result<Vec<ShufflerEngine<C, Schnorr254<C>>>>
 where
@@ -336,6 +264,8 @@ where
 }
 
 fn build_lobby_config() -> GameLobbyConfig {
+    use std::time::Duration;
+
     GameLobbyConfig {
         stakes: TableStakes {
             ante: 10,

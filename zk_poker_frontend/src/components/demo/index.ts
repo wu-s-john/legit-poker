@@ -2,9 +2,6 @@
  * Demo Components - Public exports
  */
 
-// Main demo scenes
-export { EmbeddedDemoScene } from './EmbeddedDemoScene';
-
 // Overlay components (still used)
 export { ShuffleOverlay } from './ShuffleOverlay';
 export { DealingOverlay } from './DealingOverlay';
