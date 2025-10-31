@@ -14,6 +14,7 @@ import type { DemoState } from '../demo/demoState';
 
 export interface PixiDemoProps {
   onCardClick?: (seatIndex: number, cardIndex: number) => void;
+  onCardAnimationComplete?: (seat: number, cardIndex: number) => void;
   playerCount?: number;
 }
 
@@ -22,7 +23,7 @@ export interface PixiDemoAPI {
   destroy: () => void;
 }
 
-const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, playerCount = 7 }, ref) => {
+const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, onCardAnimationComplete, playerCount = 7 }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const worldRef = useRef<Container | null>(null);
@@ -311,13 +312,17 @@ const PixiDemo = forwardRef<PixiDemoAPI, PixiDemoProps>(({ onCardClick, playerCo
       inputManagerRef.current?.makeCardInteractive(card);
 
       // Animate card from deck to player
-      const delay = index * 200; // 200ms stagger
+      // All cards fly simultaneously with 400ms duration
       void animationManagerRef.current?.dealCard({
         card,
         start: deckPosition,
         end: cardPosition,
         duration: 400,
-        delay,
+        delay: 0, // No delay - all cards start flying immediately
+        onComplete: () => {
+          // Notify parent that this card's animation has completed
+          onCardAnimationComplete?.(seatIndex, cardIndex);
+        },
       });
     });
   };

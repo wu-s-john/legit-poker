@@ -43,6 +43,8 @@ export interface DemoState {
   // UI State
   statusMessage: string;
   errorMessage: string | null;
+  canShowCompletionOverlay: boolean; // True after 500ms buffer following all cards dealt
+  canShowOverlayAfterViewerCardsDecryptable: boolean; // True after 300ms buffer following viewer's cards becoming decryptable
 }
 
 export type DemoAction =
@@ -63,6 +65,8 @@ export type DemoAction =
   | { type: 'CARD_DECRYPTABLE'; seat: number; cardIndex: number }
   | { type: 'CARD_REVEALED'; seat: number; cardIndex: number; card: Card }
   | { type: 'HAND_COMPLETE' }
+  | { type: 'ENABLE_COMPLETION_OVERLAY' }
+  | { type: 'ENABLE_VIEWER_CARDS_OVERLAY_TIMER' }
   | { type: 'UPDATE_STATUS'; message: string }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'EVENT_PROCESSED'; seqId: number };
@@ -114,6 +118,30 @@ export function areViewerCardsRevealed(state: DemoState): boolean {
 }
 
 /**
+ * Helper: Check if all cards have been dealt (animation complete)
+ */
+export function areAllCardsDealt(state: DemoState): boolean {
+  const allCards = Array.from(state.cards.values());
+  return allCards.length > 0 && allCards.every((card) => card.hasArrived);
+}
+
+/**
+ * Helper: Check if all cards are decryptable (key badge showing)
+ */
+export function areAllCardsDecryptable(state: DemoState): boolean {
+  const allCards = Array.from(state.cards.values());
+  return allCards.length > 0 && allCards.every((card) => card.decryptable);
+}
+
+/**
+ * Helper: Check if viewer's cards are decryptable
+ */
+export function areViewerCardsDecryptable(state: DemoState): boolean {
+  const viewerCards = getCardsForSeat(state, state.viewerSeat);
+  return viewerCards.length === 2 && viewerCards.every((card) => card.decryptable);
+}
+
+/**
  * Initial state
  */
 export const initialDemoState: DemoState = {
@@ -140,6 +168,8 @@ export const initialDemoState: DemoState = {
 
   statusMessage: 'Initializing...',
   errorMessage: null,
+  canShowCompletionOverlay: false,
+  canShowOverlayAfterViewerCardsDecryptable: false,
 };
 
 /**
@@ -238,6 +268,8 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         cards: newCards,
         dealQueue,
         statusMessage: 'Dealing hole cards...',
+        canShowCompletionOverlay: false, // Reset for new hand
+        canShowOverlayAfterViewerCardsDecryptable: false, // Reset for new hand
       };
     }
 
@@ -379,6 +411,18 @@ export function demoReducer(state: DemoState, action: DemoAction): DemoState {
         ...state,
         currentPhase: 'complete',
         statusMessage: 'Hand complete!',
+      };
+
+    case 'ENABLE_COMPLETION_OVERLAY':
+      return {
+        ...state,
+        canShowCompletionOverlay: true,
+      };
+
+    case 'ENABLE_VIEWER_CARDS_OVERLAY_TIMER':
+      return {
+        ...state,
+        canShowOverlayAfterViewerCardsDecryptable: true,
       };
 
     case 'UPDATE_STATUS':

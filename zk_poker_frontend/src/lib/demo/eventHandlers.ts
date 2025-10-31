@@ -343,27 +343,17 @@ export class DemoEventHandler {
    */
   private startCardDealingAnimations(): void {
     // Trigger animations for all players' cards (2 cards each)
-    // Animation order: round-robin (card 1 to all players, then card 2 to all players)
+    // All cards fly simultaneously (parallel, not round-robin)
+    // Note: CARD_DEALT dispatch now happens in PixiDemo after animation completes
     let deckPosition = 0;
 
-    // First card to each player
+    // Notify callbacks to start animations - no state updates yet
     for (let seat = 0; seat < this.playerCount; seat++) {
-      setTimeout(() => {
-        this.dispatch({ type: "CARD_DEALT", seat, cardIndex: 0 });
-        this.callbacks.onCardDealt?.(seat, 0, deckPosition);
-      }, seat * 200); // Stagger by 200ms
+      // Trigger animation callbacks for both cards
+      this.callbacks.onCardDealt?.(seat, 0, deckPosition);
       deckPosition++;
-    }
 
-    // Second card to each player
-    for (let seat = 0; seat < this.playerCount; seat++) {
-      setTimeout(
-        () => {
-          this.dispatch({ type: "CARD_DEALT", seat, cardIndex: 1 });
-          this.callbacks.onCardDealt?.(seat, 1, deckPosition);
-        },
-        1400 + seat * 200,
-      ); // Start after first round (playerCount × 200ms) + delay
+      this.callbacks.onCardDealt?.(seat, 1, deckPosition);
       deckPosition++;
     }
   }

@@ -12,7 +12,15 @@
 
 import React, { useEffect, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { connectDemoStream } from '~/lib/demo/stream';
-import { demoReducer, initialDemoState, getCardsForSeat, getShuffleProgress } from '~/lib/demo/demoState';
+import {
+  demoReducer,
+  initialDemoState,
+  getCardsForSeat,
+  getShuffleProgress,
+  areAllCardsDealt,
+  areAllCardsDecryptable,
+  areViewerCardsDecryptable,
+} from '~/lib/demo/demoState';
 import { DemoEventHandler } from '~/lib/demo/eventHandlers';
 import { GapDetector } from '~/lib/demo/gapRecovery';
 import { fetchDemoEvents } from '~/lib/api/demoApi';
@@ -159,6 +167,28 @@ export function EmbeddedDemoScene({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, onEvent]);
 
+  // After all cards dealt, wait 500ms before allowing completion overlay
+  useEffect(() => {
+    if (areAllCardsDealt(state) && !state.canShowCompletionOverlay) {
+      const timer = setTimeout(() => {
+        dispatch({ type: 'ENABLE_COMPLETION_OVERLAY' });
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [areAllCardsDealt(state), state.canShowCompletionOverlay]);
+
+  // After viewer's cards are decryptable, wait 300ms before enabling final overlay condition
+  useEffect(() => {
+    if (areViewerCardsDecryptable(state) && !state.canShowOverlayAfterViewerCardsDecryptable) {
+      const timer = setTimeout(() => {
+        dispatch({ type: 'ENABLE_VIEWER_CARDS_OVERLAY_TIMER' });
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [areViewerCardsDecryptable(state), state.canShowOverlayAfterViewerCardsDecryptable]);
+
   // Gap recovery function
   async function handleGapRecovery(missingSeqIds: number[]): Promise<void> {
     if (!state.gameId || !state.handId) return;
@@ -274,6 +304,10 @@ export function EmbeddedDemoScene({
             console.log('Card clicked:', seatIndex, cardIndex);
             // Handle card clicks (e.g., trigger decryption)
           }}
+          onCardAnimationComplete={(seat, cardIndex) => {
+            // Dispatch CARD_DEALT after animation completes (not before it starts)
+            dispatch({ type: 'CARD_DEALT', seat, cardIndex });
+          }}
         />
       )}
 
@@ -290,7 +324,13 @@ export function EmbeddedDemoScene({
       {/* DealingOverlay removed to allow unobstructed view of card animations */}
 
       <CompletionOverlay
-        isVisible={state.currentPhase === 'complete'}
+        isVisible={
+          state.currentPhase === 'complete' &&
+          areAllCardsDealt(state) &&
+          areAllCardsDecryptable(state) &&
+          state.canShowCompletionOverlay &&
+          state.canShowOverlayAfterViewerCardsDecryptable
+        }
         viewerCards={viewerRevealedCards}
         onNewHand={handleNewHand}
       />
