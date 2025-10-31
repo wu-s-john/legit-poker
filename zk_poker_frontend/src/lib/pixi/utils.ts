@@ -55,7 +55,7 @@ export function calculatePlayerPositions(
   radiusY = 360
 ): Point[] {
   const angleIncrement = (2 * Math.PI) / numPlayers;
-  const startAngle = -Math.PI / 2; // Start at top
+  const startAngle = Math.PI / 2; // Start at bottom (viewer position)
 
   return Array.from({ length: numPlayers }, (_, i) => {
     const angle = startAngle + i * angleIncrement;
