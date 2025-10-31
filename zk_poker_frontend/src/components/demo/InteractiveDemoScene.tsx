@@ -195,6 +195,7 @@ export function InteractiveDemoScene({
         applied_phase: env.applied_phase,
         snapshot_sequence_id: env.snapshot_sequence_id,
         created_timestamp: env.created_timestamp,
+        processing_duration_ms: 0, // Not available for gap-recovered events
       }));
 
       const readyEvents = gapDetectorRef.current.processFetchedEvents(events);
@@ -339,6 +340,7 @@ export function InteractiveDemoScene({
             totalShufflers={gameState.totalShuffleSteps > 0 ? gameState.totalShuffleSteps : undefined}
             isComplete={demoState.phase === 'shuffle_complete'}
             onStartDeal={handleStartDeal}
+            shuffleDuration={demoState.shuffleDuration ?? undefined}
           />
 
           {/* Completion Overlay - Show dealt cards */}
@@ -371,6 +373,8 @@ export function InteractiveDemoScene({
             viewerCards={viewerRevealedCards}
             onNewHand={handleNewHand}
             onSubscribe={handleSubscribe}
+            shuffleDuration={demoState.shuffleDuration ?? undefined}
+            dealDuration={demoState.dealDuration ?? undefined}
           />
         </>
       )}

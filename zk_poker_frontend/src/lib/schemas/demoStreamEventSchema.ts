@@ -41,6 +41,7 @@ export const demoStreamEventSchema = z.discriminatedUnion('type', [
     applied_phase: eventPhaseSchema,
     snapshot_sequence_id: z.number().int().nonnegative(),
     created_timestamp: z.number().int().nonnegative(),
+    processing_duration_ms: z.number().int().nonnegative(),
   }),
   z.object({
     type: z.literal('community_decrypted'),

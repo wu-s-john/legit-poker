@@ -47,6 +47,7 @@ export function DemoSection({ isVisible }: DemoSectionProps) {
         applied_phase: e.applied_phase,
         snapshot_sequence_id: e.snapshot_sequence_id,
         created_timestamp: e.created_timestamp,
+        processing_duration_ms: e.processing_duration_ms,
       }));
   }, [demoEvents]);
 

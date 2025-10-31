@@ -12,6 +12,7 @@ interface ShuffleOverlayProps {
   totalShufflers?: number; // 7 (total number of shufflers)
   isComplete?: boolean; // When true, shows completion state with button
   onStartDeal?: () => void; // Called when user clicks "Start Dealing"
+  shuffleDuration?: number; // Total shuffle duration in milliseconds
 }
 
 export function ShuffleOverlay({
@@ -21,8 +22,15 @@ export function ShuffleOverlay({
   totalShufflers,
   isComplete = false,
   onStartDeal,
+  shuffleDuration,
 }: ShuffleOverlayProps) {
   if (!isVisible) return null;
+
+  // Format duration for display (e.g., "11.5s" or "1.2s")
+  const formatDuration = (ms: number): string => {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
 
   // Completion state - show "Shuffle Complete" with button
   if (isComplete) {
@@ -47,7 +55,17 @@ export function ShuffleOverlay({
 
           <div className="phase-detail">
             <span className="detail-icon">✅</span>
-            <span className="detail-text">All cryptographic proofs verified</span>
+            <span className="detail-text">
+              All cryptographic proofs verified
+              {shuffleDuration !== undefined && shuffleDuration !== null && (
+                <>
+                  {' • '}
+                  <span className="detail-icon">🔐</span>
+                  {' '}
+                  {formatDuration(shuffleDuration)}
+                </>
+              )}
+            </span>
           </div>
         </div>
       </div>

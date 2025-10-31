@@ -223,6 +223,9 @@ export type AnyMessageEnvelope = z.infer<typeof anyMessageEnvelopeSchema>;
 /**
  * Finalized envelope – mirrors `FinalizedAnyMessageEnvelope<C>` in Rust.
  * The envelope field is nested (not flattened).
+ *
+ * Note: processing_duration_ms is optional because it's only present in SSE game_event
+ * messages, not in messages fetched from the /messages endpoint.
  */
 export const finalizedEnvelopeSchema = z.object({
   envelope: anyMessageEnvelopeSchema,
@@ -230,6 +233,7 @@ export const finalizedEnvelopeSchema = z.object({
   applied_phase: eventPhaseSchema,
   snapshot_sequence_id: z.number().int().nonnegative(),
   created_timestamp: z.number().int().nonnegative(),
+  processing_duration_ms: z.number().int().nonnegative().optional(),
 });
 export type FinalizedAnyMessageEnvelope = z.infer<
   typeof finalizedEnvelopeSchema

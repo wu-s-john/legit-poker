@@ -38,6 +38,23 @@ function formatTimestampWithMilliseconds(timestamp: string | number): string {
 }
 
 /**
+ * Format processing duration
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(2)}s`;
+}
+
+/**
+ * Get duration color based on performance thresholds
+ */
+function getDurationColor(ms: number): string {
+  if (ms < 200) return '#10b981';      // Green (fast)
+  if (ms < 500) return '#f59e0b';      // Yellow (medium)
+  return '#ef4444';                     // Red (slow)
+}
+
+/**
  * Get phase badge emoji, color, and background
  */
 function getPhaseStyle(label: string): {
@@ -129,6 +146,12 @@ export function CompactTableRow({
   const phaseStyle = getPhaseStyle(phaseConfig.label);
   const statusDisplay = getStatusDisplay(message.snapshot_status);
 
+  // Extract processing duration if available
+  const processingDurationMs =
+    'processing_duration_ms' in message && typeof message.processing_duration_ms === 'number'
+      ? message.processing_duration_ms
+      : null;
+
   return (
     <div
       className="border-b transition-colors cursor-pointer"
@@ -170,14 +193,29 @@ export function CompactTableRow({
           />
         </div>
 
-        {/* Second row: Timestamp (left) + Status badge (right) */}
+        {/* Second row: Timestamp + Duration (left) + Status badge (right) */}
         <div className="flex items-center justify-between mb-2">
-          <div
-            className="text-xs font-mono"
-            style={{ color: "#94a3b8" }}
-          >
-            {formatTimestampWithMilliseconds(message.created_timestamp)}
+          {/* Left: Timestamp + Duration */}
+          <div className="flex items-center gap-2">
+            <div
+              className="text-xs font-mono"
+              style={{ color: "#94a3b8" }}
+            >
+              {formatTimestampWithMilliseconds(message.created_timestamp)}
+            </div>
+
+            {processingDurationMs !== null && processingDurationMs > 0 && (
+              <div
+                className="flex items-center gap-1 text-xs font-mono"
+                style={{ color: getDurationColor(processingDurationMs) }}
+              >
+                <span>⚡</span>
+                <span>{formatDuration(processingDurationMs)}</span>
+              </div>
+            )}
           </div>
+
+          {/* Right: Status Badge */}
           <div
             className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
             style={{

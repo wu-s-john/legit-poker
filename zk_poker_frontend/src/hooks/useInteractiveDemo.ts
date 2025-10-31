@@ -21,6 +21,10 @@ export interface InteractiveDemoState {
   gameId: number | null;
   handId: number | null;
   error: string | null;
+  shuffleStartTime: number | null;
+  shuffleDuration: number | null;
+  dealStartTime: number | null;
+  dealDuration: number | null;
 }
 
 export interface InteractiveDemoActions {
@@ -39,6 +43,10 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
     gameId: null,
     handId: null,
     error: null,
+    shuffleStartTime: null,
+    shuffleDuration: null,
+    dealStartTime: null,
+    dealDuration: null,
   });
 
   // Store EventSource refs to allow cleanup
@@ -80,6 +88,10 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
         gameId: response.game_id,
         handId: response.hand_id,
         error: null,
+        shuffleStartTime: null,
+        shuffleDuration: null,
+        dealStartTime: null,
+        dealDuration: null,
       });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to create demo';
@@ -109,7 +121,8 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
         shuffleStreamRef.current.close();
       }
 
-      setState((prev) => ({ ...prev, phase: 'shuffling', error: null }));
+      const shuffleStartTime = Date.now();
+      setState((prev) => ({ ...prev, phase: 'shuffling', error: null, shuffleStartTime }));
 
       const eventSource = connectShuffleStream(demoIdRef.current);
       shuffleStreamRef.current = eventSource;
@@ -141,7 +154,10 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
 
         // Stream closure indicates shuffle phase completed successfully
         // Backend closes stream after transitioning to ShuffleComplete phase
-        setState((prev) => ({ ...prev, phase: 'shuffle_complete' }));
+        setState((prev) => {
+          const shuffleDuration = prev.shuffleStartTime ? Date.now() - prev.shuffleStartTime : null;
+          return { ...prev, phase: 'shuffle_complete', shuffleDuration };
+        });
 
         eventSource.close();
         shuffleStreamRef.current = null;
@@ -166,7 +182,8 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
         dealStreamRef.current.close();
       }
 
-      setState((prev) => ({ ...prev, phase: 'dealing', error: null }));
+      const dealStartTime = Date.now();
+      setState((prev) => ({ ...prev, phase: 'dealing', error: null, dealStartTime }));
 
       const eventSource = connectDealStream(demoIdRef.current);
       dealStreamRef.current = eventSource;
@@ -224,7 +241,10 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
 
         // Stream closure indicates dealing phase completed successfully
         // Backend closes stream after all events have been sent
-        setState((prev) => ({ ...prev, phase: 'complete' }));
+        setState((prev) => {
+          const dealDuration = prev.dealStartTime ? Date.now() - prev.dealStartTime : null;
+          return { ...prev, phase: 'complete', dealDuration };
+        });
 
         eventSource.close();
         dealStreamRef.current = null;
@@ -257,6 +277,10 @@ export function useInteractiveDemo(): UseInteractiveDemoReturn {
       gameId: null,
       handId: null,
       error: null,
+      shuffleStartTime: null,
+      shuffleDuration: null,
+      dealStartTime: null,
+      dealDuration: null,
     });
   }, []);
 

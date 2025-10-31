@@ -14,6 +14,8 @@ interface CompletionOverlayProps {
   viewerCards: CardType[];
   onNewHand?: () => void;
   onSubscribe?: () => void;
+  shuffleDuration?: number; // Shuffle phase duration in milliseconds
+  dealDuration?: number; // Deal phase duration in milliseconds
 }
 
 const TIER_COLORS = {
@@ -35,8 +37,16 @@ export function CompletionOverlay({
   viewerCards,
   onNewHand,
   onSubscribe,
+  shuffleDuration,
+  dealDuration,
 }: CompletionOverlayProps) {
   const [isAnimated, setIsAnimated] = React.useState(false);
+
+  // Format duration for display (e.g., "11.5s" or "1.2s")
+  const formatDuration = (ms: number): string => {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
 
   React.useEffect(() => {
     if (isVisible) {
@@ -279,6 +289,50 @@ export function CompletionOverlay({
           <br />
           No central dealer. Provably fair.
         </p>
+
+        {/* Timing Information */}
+        {(shuffleDuration !== undefined || dealDuration !== undefined) && (
+          <div
+            style={{
+              marginTop: "16px",
+              paddingTop: "16px",
+              borderTop: "1px solid rgba(255, 255, 255, 0.1)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "6px",
+              alignItems: "center",
+            }}
+          >
+            {shuffleDuration !== undefined && shuffleDuration !== null && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "rgba(255, 255, 255, 0.5)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span>🔐</span>
+                <span>Shuffled in {formatDuration(shuffleDuration)}</span>
+              </div>
+            )}
+            {dealDuration !== undefined && dealDuration !== null && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "rgba(255, 255, 255, 0.5)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span>⚡</span>
+                <span>Dealt in {formatDuration(dealDuration)}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
